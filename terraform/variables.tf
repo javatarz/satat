@@ -32,6 +32,12 @@ variable "satat_domain" {
   type        = string
 }
 
+# Let's Encrypt configuration
+variable "satat_email" {
+  description = "Email for Let's Encrypt certificate expiry notices"
+  type        = string
+}
+
 # Cloudflare DNS configuration (example - uncomment and configure as needed)
 # variable "cloudflare_zone_id" {
 #   description = "Cloudflare zone ID"

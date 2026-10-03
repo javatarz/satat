@@ -1,6 +1,7 @@
 #cloud-config
 # Satat cloud-init bootstrap
 # T2: VM + firewall + DNS + cloud-init bootstrap
+# T3: nginx reverse proxy + Let's Encrypt
 
 # Create satat user
 users:
@@ -17,6 +18,9 @@ packages:
   - wireguard
   - curl
   - git
+  - nginx
+  - certbot
+  - python3-certbot-nginx
 
 # Run commands on first boot
 runcmd:
@@ -31,6 +35,13 @@ runcmd:
   # Set up WireGuard (configuration will be added later)
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
+  
+  # Set up nginx configuration
+  - mkdir -p /var/www/certbot
+  - echo "Satat is running" > /var/www/html/index.html
+  
+  # Set up certbot auto-renewal cron job
+  - echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
   
   # Print completion message
   - echo "Satat cloud-init bootstrap completed"
