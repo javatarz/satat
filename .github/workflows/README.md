@@ -5,8 +5,11 @@ This directory contains the GitHub Actions workflows for Satat.
 ## Files
 
 - `deploy.yml` - Deploy configuration to VM workflow
+- `story-refinement.yml` - Story refinement gate workflow
 
 ## Workflow Details
+
+### Deploy Workflow
 
 The deploy workflow is triggered on pushes to the main branch that modify files in the gateway/, ntfy/, or automations/ directories. It:
 
@@ -16,6 +19,18 @@ The deploy workflow is triggered on pushes to the main branch that modify files 
 4. Restarts affected services
 5. Cleans up the WireGuard connection
 6. Notifies via ntfy on failure
+
+### Story Refinement Workflow
+
+The story refinement workflow is triggered when an issue is labeled with `ready-for-dev`. It performs deterministic checks on issue quality:
+
+1. Checks that the issue body is longer than 50 characters
+2. Checks that the issue includes an "## Acceptance" section
+3. Checks that the issue references specific files or components
+4. Checks that the issue doesn't contain tribal knowledge phrases
+5. Checks that the issue title and body don't contain vague verbs
+
+If any checks fail, it comments on the issue with specific failures, removes the `ready-for-dev` label, and adds the `needs-refinement` label.
 
 ## Required GitHub Secrets
 

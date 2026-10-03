@@ -1,0 +1,91 @@
+# Satat story refinement gate
+# T10: Story refinement gate — deterministic checks
+
+name: Story Refinement Gate
+
+on:
+  issues:
+    types: [labeled]
+
+jobs:
+  refine-story:
+    name: Refine story quality
+    runs-on: ubuntu-latest
+    if: github.event.label.name == 'ready-for-dev'
+    
+    steps:
+    - name: Check issue quality
+      id: check
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const issue = await github.rest.issues.get({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number
+          });
+          
+          const body = issue.data.body || '';
+          const title = issue.data.title || '';
+          
+          const checks = {
+            hasBody: body.length > 50,
+            hasAcceptance: body.includes('## Acceptance'),
+            hasFileReferences: body.includes('.py') || body.includes('.js') || body.includes('.ts') || body.includes('.java') || body.includes('.go') || body.includes('.rs') || body.includes('.cpp') || body.includes('.h') || body.includes('.cs') || body.includes('.php') || body.includes('.rb') || body.includes('.swift') || body.includes('.kt') || body.includes('.scala') || body.includes('.sh') || body.includes('.yml') || body.includes('.yaml') || body.includes('.json') || body.includes('.xml') || body.includes('.md'),
+            noTribalKnowledge: !body.includes('as discussed') && !body.includes('the usual way') && !body.includes('you know what I mean') && !body.includes('obviously') && !body.includes('clearly'),
+            noVagueVerbs: !title.includes('improve') && !title.includes('optimize') && !title.includes('refactor') && !body.includes('improve') && !body.includes('optimize') && !body.includes('refactor')
+          };
+          
+          const failedChecks = [];
+          if (!checks.hasBody) failedChecks.push('Issue body must be longer than 50 characters');
+          if (!checks.hasAcceptance) failedChecks.push('Issue must include ## Acceptance section');
+          if (!checks.hasFileReferences) failedChecks.push('Issue must reference specific files or components');
+          if (!checks.noTribalKnowledge) failedChecks.push('Issue must not contain tribal knowledge phrases ("as discussed", "the usual way", etc.)');
+          if (!checks.noVagueVerbs) failedChecks.push('Issue title and body must not contain vague verbs ("improve", "optimize", "refactor")');
+          
+          core.setOutput('passed', failedChecks.length === 0);
+          core.setOutput('failures', failedChecks.join('\n'));
+          
+    - name: Comment on failure
+      if: steps.check.outputs.passed == 'false'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          const failures = `${{ steps.check.outputs.failures }}`;
+          const comment = `🤖 **Story refinement check failed**\n\nThe following checks failed:\n\n${failures}\n\nPlease update the issue to address these points, then re-add the \`ready-for-dev\` label.`;
+          
+          await github.rest.issues.createComment({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            body: comment
+          });
+          
+    - name: Update labels on failure
+      if: steps.check.outputs.passed == 'false'
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+        script: |
+          // Remove ready-for-dev label
+          try {
+            await github.rest.issues.removeLabel({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              name: 'ready-for-dev'
+            });
+          } catch (error) {
+            // Ignore if label doesn't exist
+            if (error.status !== 404) throw error;
+          }
+          
+          // Add needs-refinement label
+          await github.rest.issues.addLabels({
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            issue_number: context.issue.number,
+            labels: ['needs-refinement']
+          });
