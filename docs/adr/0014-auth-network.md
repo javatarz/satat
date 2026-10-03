@@ -59,12 +59,24 @@ Internet
 
 ### ntfy interaction model
 
-- **Low-sensitivity actions** (view PR, mute): ntfy action buttons with `view`
-  type open the Canvas UI. The user is already authenticated in their browser.
-- **Sensitive actions** (re-trigger agent, cancel run): same pattern — action
-  button opens Canvas UI. No static API key embedded in action button URLs.
+- Action buttons use `view` type with URL — no API keys in notification payloads.
+- **View PR**: opens the GitHub PR in the GitHub app (for mobile code review).
+- **View Canvas**: opens Canvas UI (for debugging, retry, cancel).
 - Notification content is E2E encrypted between the self-hosted ntfy server and
   the iOS app. The ntfy.sh relay carrier sees only encrypted payloads.
+
+### Notification events
+
+| Event | Priority | Title | Actions |
+|---|---|---|---|
+| Agent started | 1 | `{repo}#{issue} — Agent started` | — |
+| PR opened | 3 | `{repo}#{issue} — PR #{num} open` | View PR, View Canvas |
+| PR updated | 4 | `{repo}#{issue} — PR #{num} updated` | View PR, View Canvas |
+| Agent timeout | 5 | `{repo}#{issue} — Running >{min}min` | View Canvas |
+| Agent failed | 5 | `{repo}#{issue} — Agent failed` | View Canvas |
+| Budget warning | 5 | `Satat — Monthly budget >80%` | View Canvas |
+
+Agent started will be dropped once Satat is stable. Click action on all notifications opens Canvas. Tags: `satat` for filtering.
 
 ## Consequences
 
