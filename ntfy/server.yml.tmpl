@@ -1,0 +1,46 @@
+# Satat ntfy server configuration
+# T7: ntfy server + Grafana Alloy monitoring
+
+# Server configuration
+base-url: "${NTFY_BASE_URL}"
+listen-http: ":8080"
+
+# Cache configuration
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "12h"
+
+# Authentication
+auth-file: "/etc/ntfy/auth.db"
+auth-default-access: "deny-all"
+
+# Access control
+visitor-subscription-limit: 100
+visitor-request-limit-burst: 1000
+visitor-request-limit-replenish: "1s"
+visitor-message-daily-limit: 10000
+visitor-email-limit-burst: 100
+visitor-email-limit-replenish: "1h"
+
+# Upstream settings for iOS push relay
+upstream-base-url: "https://ntfy.sh"
+upstream-access-token: ""  # Use public relay
+
+# Firebase settings (disabled)
+firebase-key-file: ""
+
+# SMTP settings (disabled)
+smtp-sender-addr: ""
+smtp-sender-user: ""
+smtp-sender-pass: ""
+smtp-sender-from: ""
+
+# Message defaults
+message-default-priority: "default"
+message-max-size: 4096
+
+# Logging
+log-format: "json"
+log-level: "info"
+
+# Topics configuration
+# Six notification topics with action buttons will be configured via API

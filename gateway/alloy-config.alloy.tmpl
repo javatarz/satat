@@ -1,0 +1,53 @@
+// Satat Grafana Alloy configuration
+// T7: ntfy server + Grafana Alloy monitoring
+
+// OTLP receiver for LiteLLM metrics
+otelcol.receiver.otlp "litellm" {
+  grpc {
+    endpoint = "localhost:4317"
+  }
+  http {
+    endpoint = "localhost:4318"
+  }
+  output {
+    metrics = [otelcol.exporter.otlp.grafana_cloud.input]
+  }
+}
+
+// Node exporter for VM health metrics
+prometheus.exporter.unix "node" {
+  set_collectors = ["cpu", "meminfo", "diskstats", "filesystem", "loadavg", "netdev", "time"]
+}
+
+// Scrape node metrics
+prometheus.scrape "node" {
+  targets    = prometheus.exporter.unix.node.targets
+  forward_to = [otelcol.exporter.otlp.grafana_cloud.input]
+}
+
+// Export metrics to Grafana Cloud
+otelcol.exporter.otlp "grafana_cloud" {
+  client {
+    endpoint = "${GRAFANA_CLOUD_OTLP_ENDPOINT}"
+    headers  = {
+      "Authorization" = "Bearer ${GRAFANA_CLOUD_API_KEY}",
+    }
+    tls {
+      insecure = false
+    }
+  }
+}
+
+// Healthchecks.io ping
+local.file "healthchecks_ping" {
+  filename  = "/etc/healthchecks-ping-url"
+  is_secret = true
+}
+
+prometheus.scrape "health" {
+  targets = [{
+    __address__ = "localhost:80",
+    job         = "satat-health",
+  }]
+  forward_to = [otelcol.exporter.otlp.grafana_cloud.input]
+}

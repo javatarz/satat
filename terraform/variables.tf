@@ -38,11 +38,39 @@ variable "satat_email" {
   type        = string
 }
 
+# Monitoring configuration
+variable "grafana_cloud_otlp_endpoint" {
+  description = "Grafana Cloud OTLP endpoint URL"
+  type        = string
+}
+
+variable "grafana_cloud_api_key" {
+  description = "Grafana Cloud API key"
+  type        = string
+  sensitive   = true
+}
+
+variable "healthchecks_ping_url" {
+  description = "Healthchecks.io ping URL"
+  type        = string
+}
+
+variable "ntfy_base_url" {
+  description = "ntfy base URL (e.g. https://ntfy.sh)"
+  type        = string
+}
+
 # Cloudflare DNS configuration (example - uncomment and configure as needed)
 # variable "cloudflare_zone_id" {
 #   description = "Cloudflare zone ID"
 #   type        = string
 #   sensitive   = true
+# }
+
+# AWS Route53 DNS configuration (example - uncomment and configure as needed)
+# variable "route53_zone_id" {
+#   description = "Route53 zone ID"
+#   type        = string
 # }
 
 # AWS Route53 DNS configuration (example - uncomment and configure as needed)

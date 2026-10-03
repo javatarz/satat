@@ -2,6 +2,7 @@
 # Satat cloud-init bootstrap
 # T2: VM + firewall + DNS + cloud-init bootstrap
 # T3: nginx reverse proxy + Let's Encrypt
+# T7: ntfy server + Grafana Alloy monitoring
 
 # Create satat user
 users:
@@ -36,12 +37,24 @@ runcmd:
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
   
+  # Install ntfy
+  - curl -fsSL https://raw.githubusercontent.com/binwiederhier/ntfy/main/dist/ntfy.sh | bash -s -- install
+  
+  # Install Grafana Alloy
+  - wget https://github.com/grafana/alloy/releases/download/v1.0.0/alloy-linux-amd64.zip
+  - unzip alloy-linux-amd64.zip
+  - mv alloy-linux-amd64 /usr/local/bin/alloy
+  - rm alloy-linux-amd64.zip
+  
   # Set up nginx configuration
   - mkdir -p /var/www/certbot
   - echo "Satat is running" > /var/www/html/index.html
   
   # Set up certbot auto-renewal cron job
   - echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
+  
+  # Set up healthchecks.io ping
+  - echo "*/5 * * * * curl -fsS --max-time 10 ${HEALTHCHECKS_PING_URL} || true" | crontab -
   
   # Print completion message
   - echo "Satat cloud-init bootstrap completed"
