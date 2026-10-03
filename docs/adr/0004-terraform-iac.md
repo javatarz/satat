@@ -1,0 +1,3 @@
+# Terraform for infrastructure-as-code
+
+The VM, firewall, DNS, and all supporting infrastructure are defined as Terraform resources in this repo and applied exclusively through CI (GitHub Actions), never from a local machine. This ensures every change is reviewable via pull request, the infrastructure state is always reproducible, and no manual console changes drift the system. Terraform state lives in a remote backend (provider TBD; see wayfinder ticket "Remote state backend"). Alternatives: Ansible (mutation-oriented rather than declarative, harder to reason about drift) or manual provisioning (unreviewable, unreproducible).

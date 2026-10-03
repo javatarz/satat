@@ -1,0 +1,3 @@
+# Secrets isolation from Terraform state and cloud-init
+
+Secrets (LLM Gateway key, GitHub App private key, Canvas API key, ntfy credentials) are never written to Terraform state or cloud-init user-data. Instead, CI applies infrastructure first (containing zero secrets), then a separate `inject-secrets` step SSHs into the VM and writes /etc/satat/*.env (chmod 600, root-only). This prevents secrets from leaking into Terraform state files (remote backend), Hetzner/Contabo metadata APIs, and cloud-init logs. The alternative of baking secrets into cloud-init or Terraform provisioners would expose them in state snapshots and the cloud provider's console — unacceptable for an always-on agent that must not lose its keys.

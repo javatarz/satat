@@ -1,0 +1,3 @@
+# ntfy for notifications
+
+Satat uses a self-hosted ntfy instance on the VM for all agent notifications — PR opened, agent stuck, build failed, cost alerts, daily summaries — pushed to iOS via ntfy.sh upstream relay. We chose ntfy because it is the simplest self-hostable pub-sub push service with native iOS support, no external dependency beyond the optional APNs relay, and a trivial HTTP API the automation prompt can call directly. Alternatives: Slack webhooks (adds a Slack workspace dependency for a solo user), email/SMTP (delayed, no push priority levels, harder to act on), or ntfy.sh cloud-only (loses self-hosting, adds third-party message visibility).

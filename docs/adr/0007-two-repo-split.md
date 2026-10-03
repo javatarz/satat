@@ -1,0 +1,3 @@
+# Two-repo split: public infra, private config
+
+The Satat system is split across two repositories: `satat` (public) contains the infrastructure recipe — Terraform, cloud-init, service configs, CI, and documentation — while `satat-automations` (private) contains the Git-Sync'd automation YAML files that define which repos Satat watches, under which labels, with which prompts. This split keeps repo-specific configuration (owner names, label choices, prompt templates) out of the public showcase repo while still allowing anyone to see and reproduce the infrastructure setup. The alternative of a single private repo hides the recipe from the community; a single public repo would expose automation details.

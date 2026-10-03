@@ -1,0 +1,3 @@
+# OpenHands for orchestration
+
+Satat runs on OpenHands — specifically Agent Canvas (browser UI + control plane), Agent Server (conversation execution and tools), and Automation Server (scheduled/event-driven dispatch). We chose OpenHands because it is the only open-source platform that bundles the full lifecycle — GitHub webhook ingestion, Docker-sandboxed agent execution, critic-driven iterative refinement, and Git Sync for automation-as-code — into a single `agent-canvas` launcher. Alternatives considered: building a custom orchestrator with the OpenHands SDK directly (more control, but reinvents scheduling, webhooks, and the Canvas UI) or using a CI runner like GitHub Actions to spawn agents (no sandbox isolation, no conversation persistence).
