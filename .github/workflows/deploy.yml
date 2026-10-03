@@ -1,0 +1,124 @@
+# Satat config deploy pipeline
+# T9: GH Actions config deploy pipeline
+
+name: Deploy Config to VM
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'gateway/**'
+      - 'ntfy/**'
+      - 'automations/**'
+
+jobs:
+  deploy:
+    name: Deploy configuration
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Set up WireGuard
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y wireguard-tools
+        
+        # Generate private key
+        wg genkey | tee /tmp/wg-private.key | wg pubkey > /tmp/wg-public.key
+        
+        # Create WireGuard config
+        sudo tee /etc/wireguard/wg0.conf > /dev/null <<EOF
+        [Interface]
+        PrivateKey = $(cat /tmp/wg-private.key)
+        Address = 100.64.0.2/32
+        
+        [Peer]
+        PublicKey = ${{ secrets.HEADSCALE_PUBLIC_KEY }}
+        AllowedIPs = 100.64.0.0/10
+        Endpoint = ${{ secrets.SATAT_DOMAIN }}:8080
+        PersistentKeepalive = 25
+        EOF
+        
+        sudo chmod 600 /etc/wireguard/wg0.conf
+        sudo wg-quick up wg0
+        
+    - name: Render templates
+      run: |
+        # Create temp directory for rendered configs
+        mkdir -p /tmp/rendered-configs
+        
+        # Render gateway templates
+        find gateway -name "*.tmpl" -type f | while read template; do
+          output_file="/tmp/rendered-configs/${template%.tmpl}"
+          mkdir -p "$(dirname "$output_file")"
+          envsubst < "$template" > "$output_file"
+        done
+        
+        # Render ntfy templates
+        find ntfy -name "*.tmpl" -type f | while read template; do
+          output_file="/tmp/rendered-configs/${template%.tmpl}"
+          mkdir -p "$(dirname "$output_file")"
+          envsubst < "$template" > "$output_file"
+        done
+        
+        # Render automations templates
+        find automations -name "*.tmpl" -type f | while read template; do
+          output_file="/tmp/rendered-configs/${template%.tmpl}"
+          mkdir -p "$(dirname "$output_file")"
+          envsubst < "$template" > "$output_file"
+        done
+      env:
+        SATAT_DOMAIN: ${{ secrets.SATAT_DOMAIN }}
+        SATAT_EMAIL: ${{ secrets.SATAT_EMAIL }}
+        LLMGATEWAY_API_KEY: ${{ secrets.LLMGATEWAY_API_KEY }}
+        SATAT_MODEL_CHEAP: ${{ secrets.SATAT_MODEL_CHEAP }}
+        SATAT_MODEL_STANDARD: ${{ secrets.SATAT_MODEL_STANDARD }}
+        SATAT_MODEL_EXPENSIVE: ${{ secrets.SATAT_MODEL_EXPENSIVE }}
+        CANVAS_API_KEY: ${{ secrets.CANVAS_API_KEY }}
+        OAUTH2_PROXY_CLIENT_ID: ${{ secrets.OAUTH2_PROXY_CLIENT_ID }}
+        OAUTH2_PROXY_CLIENT_SECRET: ${{ secrets.OAUTH2_PROXY_CLIENT_SECRET }}
+        OAUTH2_PROXY_COOKIE_SECRET: ${{ secrets.OAUTH2_PROXY_COOKIE_SECRET }}
+        GRAFANA_CLOUD_OTLP_ENDPOINT: ${{ secrets.GRAFANA_CLOUD_OTLP_ENDPOINT }}
+        GRAFANA_CLOUD_API_KEY: ${{ secrets.GRAFANA_CLOUD_API_KEY }}
+        HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}
+        NTFY_BASE_URL: ${{ secrets.NTFY_BASE_URL }}
+        GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+        GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+        WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
+        TARGET_REPOSITORY: ${{ secrets.TARGET_REPOSITORY }}
+        TARGET_USER: ${{ secrets.TARGET_USER }}
+        
+    - name: Deploy configs to VM
+      run: |
+        # Set up SSH
+        mkdir -p ~/.ssh
+        echo "${{ secrets.DEPLOY_SSH_KNOWN_HOSTS }}" > ~/.ssh/known_hosts
+        echo "${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}" > ~/.ssh/id_ed25519
+        chmod 600 ~/.ssh/id_ed25519
+        
+        # SCP configs to VM
+        scp -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+          -r /tmp/rendered-configs/* \
+          deploy@${{ secrets.SATAT_DOMAIN }}:/opt/satat/
+        
+        # Reload services
+        ssh -i ~/.ssh/id_ed25519 -o StrictHostKeyChecking=yes \
+          deploy@${{ secrets.SATAT_DOMAIN }} \
+          "sudo systemctl restart nginx oauth2-proxy litellm canvas ntfy headscale alloy"
+        
+    - name: Cleanup WireGuard
+      if: always()
+      run: |
+        sudo wg-quick down wg0 || true
+        
+    - name: Notify on failure
+      if: failure()
+      run: |
+        curl -X POST \
+          -H "Content-Type: application/json" \
+          -d '{"message": "Config deployment failed", "priority": "high"}' \
+          ${{ secrets.NTFY_SERVER_URL }}/deploy-failed
