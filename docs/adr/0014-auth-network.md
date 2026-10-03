@@ -22,7 +22,7 @@ port is exposed to the public internet.
 
 | Layer | Service | Mechanism |
 |-------|---------|-----------|
-| 1 — Browser access | nginx (443) | oauth2-proxy with GitHub OAuth. Allowlist lives in `gateway/oauth2-proxy.yaml` in the repo (version-controlled, PR-reviewed). Supports `users`, `orgs`, `allowed_emails` across multiple providers. |
+| 1 — Browser access | nginx (443) | oauth2-proxy with GitHub OAuth. Allowlist stored as a GitHub Variable (not in the repo — prevents email doxxing in the public repo). Supports `users`, `orgs`, `allowed_emails` across multiple providers. Config template in `gateway/oauth2-proxy.yaml.tmpl` with placeholders; actual values injected at deploy time. |
 | 2 — Canvas | Canvas (localhost:8000) | OpenHands API key. Inner layer — oauth2-proxy blocks unauthenticated visitors before they reach Canvas. |
 | 3 — SSH | VM (WireGuard interface only) | Headscale (self-hosted, open-source Tailscale-compatible control server). SSH daemon binds to WireGuard interface only. No SSH port on public IP. |
 | 4 — CI deployment | VM (WireGuard interface only) | Headscale ephemeral auth keys. GH Actions runner joins the tailnet for the duration of the deploy workflow, deploys via SSH over WireGuard, then leaves. Auth key stored as a GitHub secret. |
@@ -75,7 +75,9 @@ Internet
   is useless without GitHub auth.
 - **CI deployment requires Headscale**: the deploy workflow must join the
   tailnet before SSHing. Ephemeral keys make this secure and zero-persistence.
-- **Allowlist lives in the repo**: oauth2-proxy config is version-controlled
-  and deployed automatically. Adding a new user is a PR.
+- **Allowlist in GitHub Variables**: oauth2-proxy config template lives in the
+  repo with placeholders. Actual user/org/email values are stored as GitHub
+  Variables (not committed — avoids doxxing in the public repo). Adding a user
+  is done via the GitHub Actions Variables UI without a code change.
 - **ntfy.sh relay privacy**: E2E encryption means the relay never sees
   notification content. Only the iOS app can decrypt.
