@@ -2,6 +2,7 @@
 # Satat cloud-init bootstrap
 # T2: VM + firewall + DNS + cloud-init bootstrap
 # T3: nginx reverse proxy + Let's Encrypt
+# T6: oauth2-proxy + Headscale WireGuard
 
 # Create satat user
 users:
@@ -35,6 +36,15 @@ runcmd:
   # Set up WireGuard (configuration will be added later)
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
+  
+  # Install oauth2-proxy
+  - wget https://github.com/oauth2-proxy/oauth2-proxy/releases/download/v7.6.0/oauth2-proxy-7.6.0.linux-amd64.tar.gz
+  - tar -xzf oauth2-proxy-7.6.0.linux-amd64.tar.gz
+  - mv oauth2-proxy-7.6.0.linux-amd64/oauth2-proxy /usr/local/bin/
+  - rm -rf oauth2-proxy-7.6.0.linux-amd64*
+  
+  # Install Headscale
+  - curl -fsSL https://raw.githubusercontent.com/juanfont/headscale/main/scripts/install.sh | bash
   
   # Set up nginx configuration
   - mkdir -p /var/www/certbot

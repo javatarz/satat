@@ -38,11 +38,43 @@ variable "satat_email" {
   type        = string
 }
 
+# OAuth2 proxy configuration
+variable "oauth2_proxy_client_id" {
+  description = "GitHub OAuth2 client ID"
+  type        = string
+  sensitive   = true
+}
+
+variable "oauth2_proxy_client_secret" {
+  description = "GitHub OAuth2 client secret"
+  type        = string
+  sensitive   = true
+}
+
+variable "oauth2_proxy_cookie_secret" {
+  description = "OAuth2 proxy cookie secret"
+  type        = string
+  sensitive   = true
+}
+
+# Canvas configuration
+variable "canvas_api_key" {
+  description = "API key for OpenHands Canvas"
+  type        = string
+  sensitive   = true
+}
+
 # Cloudflare DNS configuration (example - uncomment and configure as needed)
 # variable "cloudflare_zone_id" {
 #   description = "Cloudflare zone ID"
 #   type        = string
 #   sensitive   = true
+# }
+
+# AWS Route53 DNS configuration (example - uncomment and configure as needed)
+# variable "route53_zone_id" {
+#   description = "Route53 zone ID"
+#   type        = string
 # }
 
 # AWS Route53 DNS configuration (example - uncomment and configure as needed)

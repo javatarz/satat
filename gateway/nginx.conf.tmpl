@@ -1,5 +1,6 @@
 # Satat nginx reverse proxy configuration
 # T3: nginx reverse proxy + Let's Encrypt
+# T6: oauth2-proxy + Headscale WireGuard
 
 # HTTP server - redirect to HTTPS
 server {
@@ -35,27 +36,29 @@ server {
         add_header Content-Type text/plain;
     }
     
-    # Canvas reverse proxy
-    location /canvas/ {
-        proxy_pass http://localhost:8000/;
+    # OAuth2 proxy for Canvas and ntfy
+    location / {
+        proxy_pass http://127.0.0.1:4180;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+        proxy_set_header X-Forwarded-Uri $request_uri;
     }
     
-    # ntfy reverse proxy
-    location /ntfy/ {
-        proxy_pass http://localhost:8080/;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-    
-    # LiteLLM reverse proxy
+    # LiteLLM reverse proxy (no OAuth protection)
     location /litellm/ {
         proxy_pass http://localhost:4000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+    
+    # Headscale reverse proxy
+    location /headscale/ {
+        proxy_pass http://localhost:8080/;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;

@@ -1,0 +1,49 @@
+# Satat oauth2-proxy configuration
+# T6: oauth2-proxy + Headscale WireGuard
+
+# Server configuration
+http_address: "127.0.0.1:4180"
+
+# OAuth2 provider configuration
+provider: "github"
+client_id: "${OAUTH2_PROXY_CLIENT_ID}"
+client_secret: "${OAUTH2_PROXY_CLIENT_SECRET}"
+cookie_secret: "${OAUTH2_PROXY_COOKIE_SECRET}"
+
+# GitHub OAuth settings
+github_org: ""  # Allow any GitHub user
+github_team: ""  # No team restriction
+
+# Cookie settings
+cookie_name: "_oauth2_proxy"
+cookie_expire: "168h"
+cookie_refresh: "24h"
+cookie_secure: true
+cookie_httponly: true
+
+# Session storage
+session_store_type: "cookie"
+
+# Upstream configuration
+upstreams:
+  - "http://localhost:8000/"  # Canvas
+  - "http://localhost:8080/"  # ntfy
+
+# Email domains (allow all)
+email_domains:
+  - "*"
+
+# User allowlist (comma-separated GitHub usernames)
+authenticated_emails_file: "/opt/satat/gateway/oauth2-allowlist.txt"
+
+# Logging
+silence_ping_logging: true
+standard_logging: true
+standard_logging_format: "[{{.Timestamp}}] [{{.Status}}] {{.Message}}"
+request_logging: true
+request_logging_format: "[{{.Timestamp}}] [{{.Status}}] {{.Method}} {{.Path}} {{.RequestURI}} {{.RemoteAddr}}"
+auth_logging: true
+auth_logging_format: "[{{.Timestamp}}] [{{.Status}}] {{.Message}} {{.User}} {{.Email}} {{.RemoteAddr}}"
+
+# Security
+ssl_insecure_skip_verify: false

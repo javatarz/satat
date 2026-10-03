@@ -1,0 +1,55 @@
+# Satat Headscale configuration
+# T6: oauth2-proxy + Headscale WireGuard
+
+# Server configuration
+server_url: "https://${SATAT_DOMAIN}:8080"
+listen_addr: "0.0.0.0:8080"
+metrics_listen_addr: "127.0.0.1:9090"
+
+# Database configuration
+db_type: "sqlite3"
+db_path: "/var/lib/headscale/db.sqlite"
+
+# TLS configuration
+tls_cert_path: "/etc/letsencrypt/live/${SATAT_DOMAIN}/fullchain.pem"
+tls_key_path: "/etc/letsencrypt/live/${SATAT_DOMAIN}/privkey.pem"
+
+# ACME configuration for Let's Encrypt
+acme_url: "https://acme-v02.api.letsencrypt.org/directory"
+acme_email: "${SATAT_EMAIL}"
+
+# DNS configuration
+dns_config:
+  nameservers:
+    - "1.1.1.1"
+    - "8.8.8.8"
+  domains: []
+  magic_dns: true
+
+# IP prefixes
+ip_prefixes:
+  - "100.64.0.0/10"
+
+# DERP configuration
+derp:
+  server:
+    enabled: true
+    region_id: 999
+    region_code: "satat"
+    region_name: "Satat DERP"
+    stun_listen_addr: "0.0.0.0:3478"
+
+# ACLs
+acl_policy_path: "/etc/headscale/acl.hujson"
+
+# Logging
+log:
+  level: info
+  format: json
+
+# Private key path
+private_key_path: "/var/lib/headscale/private.key"
+
+# Noise configuration
+noise:
+  private_key_path: "/var/lib/headscale/noise_private.key"
