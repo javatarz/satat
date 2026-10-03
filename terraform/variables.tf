@@ -67,11 +67,47 @@ variable "canvas_api_key" {
   sensitive   = true
 }
 
+# GitHub App configuration
+variable "github_app_id" {
+  description = "GitHub App ID"
+  type        = string
+}
+
+variable "github_app_private_key" {
+  description = "GitHub App private key"
+  type        = string
+  sensitive   = true
+}
+
+# Webhook configuration
+variable "webhook_secret" {
+  description = "Webhook secret"
+  type        = string
+  sensitive   = true
+}
+
+# Target repository configuration
+variable "target_repository" {
+  description = "Target repository for automation"
+  type        = string
+}
+
+variable "target_user" {
+  description = "Target user/organization for automation"
+  type        = string
+}
+
 # Cloudflare DNS configuration (example - uncomment and configure as needed)
 # variable "cloudflare_zone_id" {
 #   description = "Cloudflare zone ID"
 #   type        = string
 #   sensitive   = true
+# }
+
+# AWS Route53 DNS configuration (example - uncomment and configure as needed)
+# variable "route53_zone_id" {
+#   description = "Route53 zone ID"
+#   type        = string
 # }
 
 # AWS Route53 DNS configuration (example - uncomment and configure as needed)

@@ -1,0 +1,62 @@
+# Satat automation configuration
+# T8: Automation YAML + agent profile + webhook
+
+name: "Satat Issue Automation"
+description: "Automatically process issues labeled as ready-for-dev"
+
+# Event trigger
+trigger:
+  type: "github"
+  event: "issues.labeled"
+  label: "ready-for-dev"
+
+# Filter conditions
+filter:
+  repository: "${TARGET_REPOSITORY}"
+  user: "${TARGET_USER}"
+
+# Agent profile
+agent:
+  model:
+    endpoint: "http://localhost:4000"
+    model_name: "standard"  # DeepSeek V4.1 Flash
+  sandbox:
+    type: "docker"
+    image: "ubuntu:22.04"
+  github:
+    app_id: "${GITHUB_APP_ID}"
+    private_key: "${GITHUB_APP_PRIVATE_KEY}"
+
+# Conversation settings
+conversation:
+  init_message: |
+    Story refinement check: ${ORACLE_QUESTION}
+    
+    Never assume, clarify before coding.
+    
+    CI-round cap = 3
+    
+    Implement the requested feature or fix the reported bug.
+  max_rounds: 3
+
+# Branch settings
+branch:
+  prefix: "issue-"
+  draft: true
+
+# Notification settings
+notifications:
+  ntfy:
+    server: "http://localhost:8080"
+    topics:
+      - "agent-started"
+      - "agent-finished"
+      - "pr-opened"
+      - "agent-stuck"
+      - "budget-warning"
+      - "ci-failed"
+
+# Webhook configuration
+webhook:
+  secret: "${WEBHOOK_SECRET}"
+  validate: true
