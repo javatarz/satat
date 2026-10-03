@@ -55,7 +55,7 @@ Internet
    over WireGuard.
 3. SSH was never open on the public IP. From first boot, access is via
    Headscale only.
-4. If cloud-init fails, debug via Hetzner console/rescue mode — no SSH needed.
+4. If cloud-init fails, debug via Contabo console/rescue mode — no SSH needed.
 
 ### ntfy interaction model
 

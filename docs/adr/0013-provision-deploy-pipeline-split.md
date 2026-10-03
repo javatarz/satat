@@ -12,9 +12,9 @@ Satat has two distinct classes of change in the repo:
 2. **Deploy**: Changes to service configs (`gateway/`, `ntfy/`, `automations/`, etc.) —
    update LiteLLM model tiers, ntfy notification rules, agent runtime configs. Frequent
    (multiple times per week).
+Both need to reach the Contabo VM, but with very different execution contexts.
 
-Both need to reach the Hetzner VM, but with very different execution contexts.
-Provisionings need Hetzner API access and a locked state; config deploys need SSH
+Provisionings need Contabo API access and a locked state; config deploys need SSH
 access and a running VM.
 
 ## Decision

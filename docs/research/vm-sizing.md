@@ -11,19 +11,21 @@ the linked page.
 
 The dominant cost is **Docker sandboxes (one per concurrent agent)**, not the control plane. OpenHands'
 official planning unit is **0.5 vCPU + 4 GiB RAM per sandbox**. A fixed base of ~2.5–4 vCPU / ~6–9 GiB
-covers Agent Canvas + Agent Server + Automation Server + LiteLLM + ntfy + nginx. On Hetzner this maps
-almost one-to-one onto the shared-vCPU (CPX) line:
+covers Agent Canvas + Agent Server + Automation Server + LiteLLM + ntfy + nginx.
 
-| Concurrent agents | Min (vCPU / RAM / disk) | Recommended (vCPU / RAM / disk) | Hetzner plan (rec) |
+**Decision (ADR 0012): Contabo Core VPS 4 (4 vCPU / 8 GB / 100 GB SSD, ~€4.40/mo)** for a fixed pool
+of 1 agent. This hits the minimum spec (4 vCPU / 8 GB for base + 1 sandbox). Scale to Core VPS 6
+(6 vCPU / 12 GB, ~€6.00/mo) if headroom is needed.
+
+| Concurrent agents | Min (vCPU / RAM / disk) | Contabo plan | Est. 24mo |
 |---|---|---|---|
-| 1 | 4 / 8 GB / 40 GB | 8 / 16 GB / 80 GB | CPX42 |
-| 2 | 8 / 16 GB / 80 GB | 8 / 32 GB / 160 GB | CPX62 (or 2× CPX42) |
-| 4 | 16 / 32 GB / 160 GB | 16 / 64 GB / 320 GB | Dedicated-vCPU CCX43 / dedicated server |
+| 1 | 4 / 8 GB / 40 GB | Core VPS 4 | €4.40/mo |
+| 1 (recommended) | 8 / 16 GB / 80 GB | Core VPS 8 | €11.20/mo |
+| 2-3 (recommended) | 8-16 / 16-32 GB | Core VPS 8-12 | €11-20/mo |
 
-**Provider: Hetzner Cloud** for the base case (1–2 agents) — cheapest vCPU/RAM that satisfies the
-official sizing, 20 TB included egress in EU, first-class Terraform provider, and S3-compatible Object
-Storage for Terraform state. Contabo is a budget alternative for RAM-heavy sizes, but has no confirmed
-S3 object storage for state (falls back to Terraform Cloud) and less predictable shared CPU.
+Trade-offs vs. Hetzner: Contabo Core VPS uses older CPUs and SSD (not NVMe), has lower port speeds,
+and no S3-compatible Object Storage (Terraform state goes to Terraform Cloud). The 4x cost savings
+at the entry tier outweigh these for a single-agent deployment.
 
 ---
 
@@ -177,31 +179,28 @@ Notes:
 
 ## 8. Hosting provider recommendation (cost)
 
-**Recommended: Hetzner Cloud** for 1–2 concurrent agents; step up to Hetzner dedicated-vCPU or a
-dedicated server at 4+ agents. Rationale:
+**Decision: Contabo Core VPS 4** for the initial single-agent deployment. Rationale:
 
-1. **Price matches the sizing.** The shared-vCPU "Regular Performance" (CPX) line lines up with the
-   table: CPX32 = 4 vCPU / 8 GB / 160 GB, CPX42 = 8 vCPU / 16 GB / 320 GB, CPX62 = 16 vCPU / 32 GB /
-   640 GB NVMe ([Regular Performance](https://www.hetzner.com/cloud/regular-performance/)). **Approximate**
-   monthly prices (JS-loaded on the page; confirm there): CPX32 ≈ €6–7, CPX42 ≈ €10–11, CPX62 ≈ €20–21,
-   plus **€0.50/mo for the IPv4** address ([Cloud server overview](https://docs.hetzner.com/cloud/servers/overview/)).
-2. **No surprise egress bills.** EU servers include **≥20 TB** traffic/month (US ≥1 TB, AP ≥0.5 TB)
-   ([Regular Performance](https://www.hetzner.com/cloud/regular-performance/)). An always-on agent that
-   clones repos and streams responses fits comfortably under that; hyperscalers would bill egress.
-3. **First-class Terraform + CI integration**, explicitly listed as a supported integration
-   ([Cloud](https://www.hetzner.com/cloud/)).
-4. **Dedicated vCPU available** when sustained CPU (parallel builds) becomes the bottleneck: "General
-   Purpose" assigns dedicated vCPUs "for CPU intensive applications"
-   ([Cloud server overview](https://docs.hetzner.com/cloud/servers/overview/)).
-5. **S3-compatible Object Storage** for Terraform state (see §9).
+1. **Lowest entry cost.** Core VPS 4 at ~€4.40/mo (24-month) is ~1/3 the cost of Hetzner CPX42
+   (~€13/mo). Even the monthly plan at ~€5.50 is less than half.
+2. **Meets minimum spec.** 4 vCPU / 8 GB satisfies the planning minimum of 2.3 vCPU / 7.9 GiB
+   (base + 1 sandbox). Scale to Core VPS 6 (€6.00/mo) for headroom.
+3. **Terraform provider available.** Contabo publishes a Terraform provider with cloud-init
+   support for automated provisioning.
+4. **Upgrade path.** Core VPS line scales to 18 vCPU / 96 GB without provider migration.
 
-**Budget alternative: Contabo.** Contabo's "Performance VPS" is marketed as "AI-Ready" and offers more
-RAM per euro at the low end, with cloud-init, private networking, and an API/CLI for provisioning
-([Contabo](https://contabo.com/en/), [Contabo features](https://contabo.com/en/contabo-api/)). Trade-offs vs. Hetzner:
-shared CPU is less predictable for sustained build loads, there is no comparable included-traffic
-guarantee documented on the public pricing page, and **no S3-compatible object storage product** is
-currently listed (see §9), which forces Terraform state onto Terraform Cloud or a self-hosted store.
-Pricing is heavily JS-driven and changes frequently — confirm on [Contabo pricing](https://contabo.com/en/pricing/).
+Trade-offs vs. Hetzner:
+- **Older CPUs, slower I/O**: Contabo Core uses older CPU generations and SSD (not NVMe). Docker
+  builds and git clones will be slower than on Hetzner CPX.
+- **No S3 Object Storage**: Terraform state must use Terraform Cloud (free tier, already chosen
+  in ADR 0004). Hetzner's S3-compatible Object Storage would allow a native `s3` backend.
+- **Lower port speeds**: Core VPS 4 = 200 Mbit/s vs Hetzner ~300-500 Mbit/s. Docker image pulls
+  and git clones are noticeably slower but not blocking for a single agent.
+- **24-month commitment** for the lowest price. Monthly plan is ~€5.50/mo.
+
+Hetzner remains the stronger choice for deployments needing 2+ concurrent agents or where build
+speed matters, thanks to NVMe, higher port speeds, and S3 Object Storage. Contabo wins on pure
+cost at the single-agent entry tier.
 
 ## 9. Terraform state storage options per provider
 
