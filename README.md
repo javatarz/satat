@@ -38,48 +38,35 @@ GitHub Issue labeled ──webhook──► Automation Server dispatches agent
 | nginx + Let's Encrypt | TLS termination + reverse proxy | 443 |
 | Docker | Agent sandbox runtime | — |
 
-LLM access: [LLM Gateway](https://llmgateway.io) (DevPass subscription) with three
-cost tiers — cheap, standard, expensive — routed through LiteLLM with a hard
-monthly budget cap.
+## Docs
 
-## Architecture decisions
-
-Every significant choice is recorded as an ADR in [docs/adr/](./docs/adr/). See also
-[CONTEXT.md](./CONTEXT.md) for the glossary of domain terms.
+- [CONTEXT.md](./CONTEXT.md) — domain glossary
+- [docs/adr/](./docs/adr/) — architecture decisions
+- [AGENTS.md](./AGENTS.md) — conventions for agents and contributors
 
 ## Deploy your own
 
-1. Fork this repo (rename it to `satat`).
+1. Fork this repo.
 2. Create a private `satat-automations` repo for Git Sync.
-3. Set up required secrets as GitHub Actions repository secrets (see [.env.example](./.env.example)).
-4. Push — CI provisions the VM via Terraform and injects secrets.
-5. Point your domain at the VM, configure DNS.
+3. Set up required secrets as TFC workspace variables and GitHub repository secrets (see [.env.example](./.env.example)).
+4. Connect TFC to the fork — auto-plans on PR, auto-applies on merge to main.
+5. Acquire a domain and point it at the VM once provisioned.
 6. Install the Satat GitHub App on your target repo.
-7. Label an issue with the trigger label — Satat picks it up within seconds.
-
-Detailed onboarding: [docs/runbook.md](./docs/runbook.md) (coming soon).
-
-## Cost model
-
-Infrastructure cost depends on the hosting provider (see ADRs for the current
-choice). LLM spend varies by issue complexity and model tier; LiteLLM enforces a
-hard monthly cap so it cannot exceed budget.
+7. Label an issue with `ready-for-dev` — Satat picks it up within seconds.
 
 ## Repo structure
 
 ```
 satat/
-├── README.md
-├── CONTEXT.md
-├── .env.example
-├── terraform/          # VM, firewall, DNS, cloud-init
-├── gateway/            # LiteLLM model routing config
-├── ntfy/               # Notification server config
-├── github-app/         # Satat GitHub App manifest
-├── scripts/            # CI helpers (secret injection)
+├── .env.example            # Required secrets (TFC workspace variables + GH Secrets)
+├── AGENTS.md               # Conventions for agents working in this repo
+├── CONTEXT.md              # Domain glossary
+├── terraform/              # TFC-provisioned infra (VM, firewall, DNS, cloud-init)
+├── gateway/                # LiteLLM config + oauth2-proxy template
+├── ntfy/                   # Notification server config
 ├── docs/
-│   ├── adr/            # Architecture Decision Records
-│   └── runbook.md
-└── .github/
-    └── workflows/      # CI pipeline
+│   ├── adr/                # Architecture Decision Records
+│   ├── research/           # Wayfinder research findings
+│   └── agents/             # Skill scaffolding (issue tracker, labels, domain)
+└── .github/workflows/      # Config deployment pipeline
 ```
