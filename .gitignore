@@ -28,3 +28,6 @@ __pycache__/
 
 # Node
 node_modules/
+
+# Scratch (temporary working files)
+docs/scratch/
