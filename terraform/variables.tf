@@ -32,6 +32,34 @@ variable "satat_domain" {
   type        = string
 }
 
+# Let's Encrypt configuration
+variable "satat_email" {
+  description = "Email for Let's Encrypt certificate expiry notices"
+  type        = string
+}
+
+# LLM Gateway configuration
+variable "llmgateway_api_key" {
+  description = "LLM Gateway API key (format: llmgtwy_XXXX)"
+  type        = string
+  sensitive   = true
+}
+
+variable "satat_model_cheap" {
+  description = "Cheap model ID for LLM Gateway"
+  type        = string
+}
+
+variable "satat_model_standard" {
+  description = "Standard model ID for LLM Gateway"
+  type        = string
+}
+
+variable "satat_model_expensive" {
+  description = "Expensive model ID for LLM Gateway"
+  type        = string
+}
+
 # Cloudflare DNS configuration (example - uncomment and configure as needed)
 # variable "cloudflare_zone_id" {
 #   description = "Cloudflare zone ID"

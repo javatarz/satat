@@ -1,6 +1,7 @@
 #cloud-config
 # Satat cloud-init bootstrap
 # T2: VM + firewall + DNS + cloud-init bootstrap
+# T4: LiteLLM proxy on VM
 
 # Create satat user
 users:
@@ -17,6 +18,7 @@ packages:
   - wireguard
   - curl
   - git
+  - python3-pip
 
 # Run commands on first boot
 runcmd:
@@ -31,6 +33,9 @@ runcmd:
   # Set up WireGuard (configuration will be added later)
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
+  
+  # Install LiteLLM
+  - pip3 install litellm
   
   # Print completion message
   - echo "Satat cloud-init bootstrap completed"

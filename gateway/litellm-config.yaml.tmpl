@@ -1,0 +1,42 @@
+# Satat LiteLLM proxy configuration
+# T4: LiteLLM proxy on VM
+
+model_list:
+  - model_name: cheap
+    litellm_params:
+      model: ${SATAT_MODEL_CHEAP}
+      api_base: https://api.llmgateway.io/v1
+      api_key: ${LLMGATEWAY_API_KEY}
+  
+  - model_name: standard
+    litellm_params:
+      model: ${SATAT_MODEL_STANDARD}
+      api_base: https://api.llmgateway.io/v1
+      api_key: ${LLMGATEWAY_API_KEY}
+  
+  - model_name: expensive
+    litellm_params:
+      model: ${SATAT_MODEL_EXPENSIVE}
+      api_base: https://api.llmgateway.io/v1
+      api_key: ${LLMGATEWAY_API_KEY}
+
+litellm_settings:
+  drop_params: True
+  cache: False
+
+# Monthly budget cap (in USD)
+budget:
+  monthly: 50  # $50 monthly cap
+
+# OTLP metrics export for Grafana Alloy (T7)
+telemetry:
+  otlp:
+    endpoint: http://localhost:4317
+    insecure: true
+
+# Server configuration
+port: 4000
+host: 0.0.0.0
+
+# Logging
+log_level: INFO
