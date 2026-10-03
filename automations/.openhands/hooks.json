@@ -1,0 +1,22 @@
+{
+  "PreToolUse": {
+    "enabled": true,
+    "scripts": [
+      {
+        "name": "block-dangerous-operations",
+        "path": "/opt/satat/automations/.openhands/pretooluse-block-dangerous.sh",
+        "description": "Block dangerous operations and enforce CI-round cap"
+      }
+    ]
+  },
+  "Stop": {
+    "enabled": true,
+    "scripts": [
+      {
+        "name": "ci-round-cap",
+        "path": "/opt/satat/automations/.openhands/stop-ci-round-cap.sh",
+        "description": "Enforce CI-round cap of 3"
+      }
+    ]
+  }
+}
