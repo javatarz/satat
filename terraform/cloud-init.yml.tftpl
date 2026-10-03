@@ -2,6 +2,7 @@
 # Satat cloud-init bootstrap
 # T2: VM + firewall + DNS + cloud-init bootstrap
 # T3: nginx reverse proxy + Let's Encrypt
+# T5: OpenHands Canvas + Git Sync
 
 # Create satat user
 users:
@@ -18,9 +19,7 @@ packages:
   - wireguard
   - curl
   - git
-  - nginx
-  - certbot
-  - python3-certbot-nginx
+  - python3-pip
 
 # Run commands on first boot
 runcmd:
@@ -36,12 +35,14 @@ runcmd:
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
   
-  # Set up nginx configuration
-  - mkdir -p /var/www/certbot
-  - echo "Satat is running" > /var/www/html/index.html
+  # Install LiteLLM
+  - pip3 install litellm
   
-  # Set up certbot auto-renewal cron job
-  - echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
+  # Install OpenHands Canvas
+  - pip3 install openhands
+  
+  # Set up Git Sync repository
+  - git clone https://github.com/javatarz/satat-automations.git /opt/satat-automations || mkdir -p /opt/satat-automations/automations
   
   # Print completion message
   - echo "Satat cloud-init bootstrap completed"

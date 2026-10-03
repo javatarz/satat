@@ -1,0 +1,20 @@
+# Satat OpenHands Canvas configuration
+# T5: OpenHands Canvas + Git Sync
+
+# Server configuration
+host: 0.0.0.0
+port: 8000
+
+# Authentication
+api_key: ${CANVAS_API_KEY}
+
+# Git Sync configuration
+git_sync:
+  enabled: true
+  repository: https://github.com/javatarz/satat-automations.git
+  branch: main
+  directory: /opt/satat-automations/automations
+  sync_interval: 60  # seconds
+
+# Logging
+log_level: INFO

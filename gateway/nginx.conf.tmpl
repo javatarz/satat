@@ -1,5 +1,6 @@
 # Satat nginx reverse proxy configuration
 # T3: nginx reverse proxy + Let's Encrypt
+# T5: OpenHands Canvas + Git Sync
 
 # HTTP server - redirect to HTTPS
 server {
@@ -42,6 +43,9 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
+        
+        # Canvas API key authentication
+        proxy_set_header Authorization "Bearer ${CANVAS_API_KEY}";
     }
     
     # ntfy reverse proxy
