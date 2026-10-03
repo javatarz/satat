@@ -10,6 +10,8 @@ terraform/.terraform/
 terraform/*.tfstate
 terraform/*.tfstate.*
 terraform/.terraform.lock.hcl
+.terraformrc
+!.terraformrc.example
 
 # IDE
 .idea/

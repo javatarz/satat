@@ -1,0 +1,7 @@
+# Terraform CLI configuration
+# Copy to ~/.terraformrc and fill in your TFC token
+# This file is gitignored
+
+credentials "app.terraform.io" {
+  token = "your-tfc-token"
+}
