@@ -29,13 +29,19 @@ The repository uses pre-commit hooks to automatically check for EditorConfig com
 Agents can run the following command to check EditorConfig compliance:
 
 ```bash
-./scripts/check-editorconfig.sh
+pre-commit run editorconfig-checker --files path/to/your/files
 ```
 
-This script will:
-1. Run the editorconfig-checker on all files
+This command will:
+1. Run the editorconfig-checker on specified files
 2. Provide clear feedback on any issues found
 3. Suggest ways to fix the issues
+
+For checking all files:
+
+```bash
+pre-commit run editorconfig-checker --all-files
+```
 
 ## Integration with Agent Workflow
 
@@ -96,7 +102,7 @@ Before submitting a PR, always run:
 pre-commit run editorconfig-checker --files path/to/your/files
 
 # Or check all files
-./scripts/check-editorconfig.sh
+pre-commit run editorconfig-checker --all-files
 ```
 
 This will ensure your changes meet the repository's formatting standards.

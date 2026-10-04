@@ -8,17 +8,14 @@ We've implemented a comprehensive EditorConfig compliance system that provides i
 
 1. **Fixed existing issues** in key files (Terraform, Gateway, Automation files)
 2. **Enhanced pre-commit configuration** to include editorconfig-checker
-3. **Created feedback scripts** for agents to self-check their work
-4. **Documented the workflow** for future reference
+3. **Documented the workflow** for future reference
 
 ## How to Ensure EditorConfig Compliance
 
 ### For Agents (Automated Feedback)
 
 1. **Pre-commit hooks automatically check** every commit for EditorConfig compliance
-2. **Scripts provide detailed feedback** when issues are found:
-   - `./scripts/check-editorconfig.sh` - Check all files
-   - `./scripts/test-editorconfig.sh` - Quick test of critical files
+2. **Standard editorconfig-checker provides detailed feedback** when issues are found
 
 ### Common Issues Fixed
 
@@ -47,11 +44,8 @@ To ensure all future PRs maintain EditorConfig compliance:
 # Check compliance before committing
 pre-commit run editorconfig-checker --files path/to/your/files
 
-# Run detailed check
-./scripts/check-editorconfig.sh
-
-# Quick test of critical files
-./scripts/test-editorconfig.sh
+# Run detailed check on all files
+pre-commit run editorconfig-checker --all-files
 ```
 
 This system ensures that all files created by agents will be EditorConfig compliant and provides immediate feedback when they're not.
