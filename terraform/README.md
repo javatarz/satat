@@ -8,10 +8,10 @@ This directory contains the Terraform configuration for Satat infrastructure.
 2. Create a workspace linked to this repository
 3. Configure the workspace for VCS-driven runs
 4. Add the following sensitive variables to the workspace:
-   - `contabo_client_id`
-   - `contabo_client_secret`
-   - `contabo_api_user`
-   - `contabo_api_password`
+  - `contabo_client_id`
+  - `contabo_client_secret`
+  - `contabo_api_user`
+  - `contabo_api_password`
 
 ## Usage
 

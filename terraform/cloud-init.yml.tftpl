@@ -27,22 +27,22 @@ runcmd:
   # Start and enable Docker
   - systemctl start docker
   - systemctl enable docker
-  
+
   # Create base directories
   - mkdir -p /opt/satat/{gateway,ntfy,automations}
   - chown -R satat:satat /opt/satat
-  
+
   # Set up WireGuard (configuration will be added later)
   - mkdir -p /etc/wireguard
   - chmod 700 /etc/wireguard
-  
+
   # Set up nginx configuration
   - mkdir -p /var/www/certbot
   - echo "Satat is running" > /var/www/html/index.html
-  
+
   # Set up certbot auto-renewal cron job
   - echo "0 12 * * * /usr/bin/certbot renew --quiet" | crontab -
-  
+
   # Print completion message
   - echo "Satat cloud-init bootstrap completed"
 
