@@ -5,12 +5,6 @@ terraform.tfvars
 secrets.*
 *.pem
 
-# Terraform
-terraform/.terraform/
-terraform/*.tfstate
-terraform/*.tfstate.*
-terraform/.terraform.lock.hcl
-
 # IDE
 .idea/
 .vscode/
