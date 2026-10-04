@@ -7,11 +7,12 @@ This directory contains the Terraform configuration for Satat infrastructure.
 1. Create a Terraform Cloud account at https://app.terraform.io
 2. Create a workspace linked to this repository
 3. Configure the workspace for VCS-driven runs
-4. Add the following sensitive variables to the workspace:
-  - `contabo_client_id`
-  - `contabo_client_secret`
-  - `contabo_api_user`
-  - `contabo_api_password`
+4. Add the Contabo credentials as sensitive **environment variables** to
+   the workspace (the Contabo provider reads them from the environment):
+   - `CONTABO_CLIENT_ID`
+   - `CONTABO_CLIENT_SECRET`
+   - `CONTABO_API_USER`
+   - `CONTABO_API_PASSWORD`
 
 ## Usage
 
