@@ -30,4 +30,12 @@ repos:
     rev: v1.35.1
     hooks:
       - id: yamllint
-        args: [-d, '{rules: {line-length: {max: 120}, document-start: disable}}]
+        args:
+          - -d
+          - >-
+            {rules: {line-length: {max: 120}, document-start: disable}}
+
+  - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
+    rev: 2.7.3
+    hooks:
+      - id: editorconfig-checker
