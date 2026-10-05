@@ -4,8 +4,8 @@
 Accepted
 
 ## Context
-Satat runs on a single Contabo Core VPS 4 (4 vCPU / 8 GB). Running Prometheus
-and Grafana on the VM itself would consume RAM/CPU needed for the agent sandbox.
+Satat runs on a single AWS EC2 instance (Spot `t4g.xlarge`, 4 vCPU / 16 GB). Running
+Prometheus and Grafana on the VM itself would consume RAM/CPU needed for the agent sandbox.
 We need visibility into LLM spend, API performance, and VM health without adding
 significant local overhead. We also want minimal tool sprawl.
 
@@ -32,7 +32,7 @@ significant local overhead. We also want minimal tool sprawl.
 
 | Alternative | Rejected because |
 |---|---|
-| Prometheus + Grafana on VM | Consumes ~500 MB+ RAM on an already-tight 8 GB VM |
+| Prometheus + Grafana on VM | Consumes ~500 MB+ RAM we would rather give to agent sandboxes |
 | Langfuse | Canvas already shows conversation history for debugging; Langfuse's per-API-call traces add little value for a single-agent setup |
 | Datadog | No meaningful free tier |
 | Honeycomb | No native LiteLLM integration; requires OTLP bridge |
@@ -41,7 +41,7 @@ significant local overhead. We also want minimal tool sprawl.
 ## Consequences
 
 - Two external accounts to create: Grafana Cloud (free) and healthchecks.io (free)
-- Grafana Alloy adds ~50 MB RAM overhead on the VM (acceptable on 8 GB)
+- Grafana Alloy adds ~50 MB RAM overhead on the VM (acceptable on 16 GB)
 - LiteLLM alerting covers budget/performance; ntfy covers agent-level notifications (existing)
 - No historical conversation-level analytics beyond Canvas — acceptable for single-agent
 - VM load visibility (CPU/RAM/disk) is available via Grafana Cloud without local Prometheus

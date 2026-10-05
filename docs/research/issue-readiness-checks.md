@@ -27,7 +27,7 @@ Structure checks are all deterministic. Only semantic judgments need an LLM.
 ## Satat's two-layer design
 
 **Layer 1 — Deterministic (zero tokens, GH Actions)**
-Catches the structural checks: body length, sections, file paths, vague verbs, tribal knowledge phrases. If failed: comment + `needs-refinement` + remove `ready-for-dev`. Agent never fires.
+Catches the structural checks: body length, sections, file paths, vague verbs, tribal knowledge phrases. If failed: comment + `needs-refinement` + remove `ready-for-agent`. Agent never fires.
 
 **Layer 2 — Semantic (agent's first turn, one LLM call)**
 Catches what scripts can't: testability of acceptance criteria, oracle existence, scope feasibility. Agent posts clarifying questions using `[NEEDS CLARIFICATION]` markers (Spec Kit pattern). Calls `finish` if issue isn't ready. Same model as implementation (DeepSeek V4.1 Flash) — one-turn cost is negligible.

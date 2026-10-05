@@ -32,10 +32,11 @@ GitHub Issue labeled ──webhook──► Automation Server dispatches agent
 
 | Component | Purpose | Port |
 |-----------|---------|------|
+| Caddy | TLS termination + reverse proxy (automatic HTTPS) | 443 |
 | OpenHands Agent Canvas | Control plane UI + agent execution + automations | 8000 |
 | LiteLLM proxy | Model routing + spend tracking + budget cap | 4000 |
+| Postgres | LiteLLM datastore (keys, budgets) | 5432 |
 | ntfy server | Self-hosted push notifications | 8080 |
-| nginx + Let's Encrypt | TLS termination + reverse proxy | 443 |
 | Docker | Agent sandbox runtime | — |
 
 ## Docs
@@ -48,20 +49,19 @@ GitHub Issue labeled ──webhook──► Automation Server dispatches agent
 
 1. Fork this repo.
 2. Create a private `satat-automations` repo for Git Sync.
-3. Set up required secrets as TFC workspace variables and GitHub repository secrets (see [.env.example](./.env.example)).
-4. Connect TFC to the fork — auto-plans on PR, auto-applies on merge to main.
-5. Acquire a domain and point it at the VM once provisioned.
+3. Run the one-time bootstrap in [`bootstrap/`](./bootstrap/) (locally, with admin credentials) to create the S3 state bucket and the GitHub OIDC role, then set the GitHub repository variables it prints — plus the other variables/secrets from [`terraform/README.md`](./terraform/README.md).
+4. GitHub Actions provisions the VM (plan on PR, apply on merge to `main`) and deploys the service config.
+5. Point `SATAT_DOMAIN` at the instance's Elastic IP once provisioned.
 6. Install the Satat GitHub App on your target repo.
-7. Label an issue with `ready-for-dev` — Satat picks it up within seconds.
+7. Label an issue with `ready-for-agent` — Satat picks it up within seconds.
 
 ## Repo structure
 
 ```
 satat/
-├── .env.example            # Required secrets (TFC workspace variables + GH Secrets)
 ├── AGENTS.md               # Conventions for agents working in this repo
 ├── CONTEXT.md              # Domain glossary
-├── terraform/              # TFC-provisioned infra (VM, firewall, DNS, cloud-init)
+├── terraform/              # GitHub Actions-provisioned infra (EC2, security group, Elastic IP, cloud-init)
 ├── gateway/                # LiteLLM config + oauth2-proxy template
 ├── ntfy/                   # Notification server config
 ├── docs/
