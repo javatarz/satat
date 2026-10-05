@@ -30,9 +30,67 @@ Forks must also change the trusted repository in `bootstrap/variables.tf`.
 
 ## Variables
 
-This ticket declares only `region` (default `ap-south-1`); later tickets add more. AWS
-credentials are **not** passed to the provider — GitHub Actions assumes an IAM role via
+AWS credentials are **not** passed to the provider — GitHub Actions assumes an IAM role via
 OIDC, so the provider block sets only `region`.
+
+- `region` — default `ap-south-1`
+- `instance_type` — default `t4g.xlarge` (4 vCPU / 16 GB, ARM)
+- `root_volume_size` — default `100` GiB (gp3)
+- `deploy_wg_public_key`, `laptop_wg_public_key` — WireGuard peer public keys
+- `deploy_ssh_public_key`, `owner_ssh_public_key` — SSH public keys authorized for `deploy`
+
+## Instance
+
+- **Spot** (`t4g.xlarge`, persistent, stop-on-interrupt). AWS may reclaim capacity and stop
+  the instance; it keeps its EBS volume and Elastic IP, and can be started again.
+- **Elastic IP** so the public address is stable across stop/start (use it for DNS).
+- Security group allows only `443/tcp` (Caddy) and `51820/udp` (WireGuard).
+- Root volume: 100 GiB gp3, encrypted.
+
+The AMI is discovered automatically (latest Ubuntu 24.04 arm64 from Canonical); no image
+ID is configured. The default VPC and a default subnet are used.
+
+## Keys
+
+Generate the WireGuard keypairs (run on the client, keep the private keys off this repo):
+
+```bash
+wg genkey | tee ci.key | wg pubkey > ci.pub            # ci peer (10.10.0.3)
+wg genkey | tee laptop.key | wg pubkey > laptop.pub    # laptop peer (10.10.0.2)
+ssh-keygen -t ed25519 -C ci@satat -f ci_ssh            # deploy SSH key (pipeline)
+ssh-keygen -t ed25519 -C owner@laptop -f owner_ssh     # owner SSH key
+```
+
+Store the **public** keys as GitHub repository **variables** named
+`TF_VAR_deploy_wg_public_key`, `TF_VAR_laptop_wg_public_key`,
+`TF_VAR_deploy_ssh_public_key`, and `TF_VAR_owner_ssh_public_key` — the workflow passes
+them to Terraform as `TF_VAR_*` environment variables. The private keys are stored only
+where used: `ci.key` and `ci_ssh` become GitHub secrets (`DEPLOY_WG_PRIVATE_KEY`,
+`DEPLOY_SSH_PRIVATE_KEY`); `laptop.key` and `owner_ssh` stay with the owner.
+
+## Network
+
+`sshd` binds `wg0` only and allows just the `deploy` user, so SSH is reachable solely over
+the tunnel. The VM is the WireGuard server (`10.10.0.1/24`); peers are `laptop`
+(`10.10.0.2`, owner) and `ci` (`10.10.0.3`, pipeline).
+
+Build the laptop's WireGuard config with the VM's public key. It is only readable by root
+and SSH is tunnel-only, so fetch it once via the EC2 serial console or by reading it as
+root on the instance:
+
+```sh
+cat /etc/wireguard/server.pub
+```
+
+## DNS
+
+DNS is **manual**. After a successful apply:
+
+```
+terraform output -raw instance_ip
+```
+
+Point an A record for `SATAT_DOMAIN` at that Elastic IP.
 
 ## Local use
 

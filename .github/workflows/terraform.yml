@@ -19,6 +19,10 @@ permissions:
 env:
   AWS_REGION: ap-south-1
   TF_IN_AUTOMATION: "true"
+  TF_VAR_deploy_wg_public_key: ${{ vars.TF_VAR_deploy_wg_public_key }}
+  TF_VAR_laptop_wg_public_key: ${{ vars.TF_VAR_laptop_wg_public_key }}
+  TF_VAR_deploy_ssh_public_key: ${{ vars.TF_VAR_deploy_ssh_public_key }}
+  TF_VAR_owner_ssh_public_key: ${{ vars.TF_VAR_owner_ssh_public_key }}
 
 jobs:
   plan:
