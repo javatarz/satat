@@ -1,0 +1,64 @@
+# ADR 0017: Ingress, runtime, and remote access
+
+## Status
+
+Accepted (2026-10-05). Supersedes [ADR 0008](0008-full-canvas-reverse-proxy.md),
+and the nginx and Headscale portions of [ADR 0014](0014-auth-network.md).
+
+## Context
+
+The earlier design used nginx + certbot for TLS termination, a Headscale (Tailscale)
+control plane for remote access, and an "inject secrets, restart services" deploy. That
+is three moving parts where one will do, and Headscale adds a stateful control-plane
+service to operate. We want the fewest components that still give automatic TLS and a
+private administrative path.
+
+## Decision
+
+### Ingress: Caddy
+
+Caddy is the single public entry point on ports 80/443. It obtains and renews
+Let's Encrypt certificates automatically (ACME, TLS-ALPN-01 on 443) — no separate
+certbot cron. Routing:
+
+| Path | Target |
+|------|--------|
+| `/` | static 200 |
+| `/canvas/*` | Canvas (forward_auth via oauth2-proxy) |
+| `/ntfy/*` | ntfy (forward_auth via oauth2-proxy) |
+| `/v1/*` | LiteLLM |
+| `/webhook` | Canvas |
+
+nginx and certbot are removed.
+
+### Runtime: Docker Compose
+
+All services run under one `docker compose` stack on the single host: `caddy`, `litellm`
+(+ Postgres), `canvas`, `oauth2-proxy`, `ntfy`, `alloy`. Deploy ships
+`deploy/docker-compose.yml` plus rendered configs and runs `docker compose up -d`.
+
+### Remote access: plain WireGuard
+
+No public SSH. The VM is a WireGuard server (`wg0` = `10.10.0.1/24`, UDP 51820) with two
+static peers:
+
+| Peer | Address | Used by |
+|------|---------|---------|
+| `laptop` | `10.10.0.2/32` | owner |
+| `ci` | `10.10.0.3/32` | deploy pipeline |
+
+`sshd` binds `wg0` only. The firewall allows only `443/tcp` and `51820/udp`. Peers
+initiate (works behind NAT); the server learns endpoints by roaming. The server keypair
+is generated at boot; client public keys are Terraform variables. Headscale/Tailscale is
+removed.
+
+## Consequences
+
+- **Fewer services**: no nginx, no certbot, no Headscale — Caddy handles TLS and routing;
+  plain WireGuard handles access.
+- **Automatic certificates**: Caddy issues/renews without operator action.
+- **Static peer management**: adding a peer means adding a `[Peer]` block and reloading
+  `wg0` (no control plane, no ephemeral keys).
+- **Tunnel-only SSH**: recovery when `wg0` is down requires out-of-band console access
+  (cloud provider console).
+- **CI auth is a WireGuard key + an SSH key**, both stored as GitHub secrets.

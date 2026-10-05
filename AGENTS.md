@@ -26,11 +26,11 @@ When a wayfinder research ticket is open: commit findings to `docs/research/<top
 
 ### Provision-deploy split
 
-Terraform Cloud provisions infrastructure (changes under `terraform/`). GitHub Actions deploys configuration (gateway templates, ntfy config). When both change in one push, deploy gates on TFC run status. Config-only pushes deploy instantly.
+Terraform provisions infrastructure (changes under `terraform/`) and GitHub Actions deploys configuration (gateway templates, ntfy config). Both run in GitHub Actions: provisioning plans on PR and applies on merge to `main`; config-only pushes deploy independently. AWS access uses GitHub OIDC.
 
 ### Secrets
 
-Never in Terraform state, cloud-init, or git-tracked files. Secrets live in TFC workspace variables and GitHub repository secrets.
+Never in Terraform state, cloud-init, or git-tracked files. AWS access uses GitHub OIDC (no long-lived keys); other secrets live in GitHub repository secrets.
 
 ### External repos
 
