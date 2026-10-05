@@ -1,0 +1,70 @@
+#cloud-config
+
+package_update: true
+package_upgrade: false
+ssh_pwauth: false
+
+packages:
+  - wireguard-tools
+  - docker.io
+  - docker-compose-v2
+  - git
+  - rsync
+
+users:
+  - name: deploy
+    gecos: Satat deploy
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - ${deploy_ssh_public_key}
+      - ${owner_ssh_public_key}
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/10-satat-wg0.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      ListenAddress 10.10.0.1
+      PermitRootLogin no
+      AllowUsers deploy
+      PasswordAuthentication no
+      PubkeyAuthentication yes
+  - path: /etc/systemd/system/ssh.service.d/wg0.conf
+    owner: root:root
+    permissions: "0644"
+    content: |
+      [Unit]
+      After=wg-quick@wg0.service
+      Wants=wg-quick@wg0.service
+
+runcmd:
+  - [install, -d, -m, "0755", /opt/satat]
+  - [install, -d, -m, "0755", /etc/wireguard]
+  - |
+    set -e
+    umask 077
+    wg genkey > /etc/wireguard/server.key
+    wg pubkey < /etc/wireguard/server.key > /etc/wireguard/server.pub
+    cat > /etc/wireguard/wg0.conf <<EOF
+    [Interface]
+    Address = 10.10.0.1/24
+    ListenPort = 51820
+    PrivateKey = $(cat /etc/wireguard/server.key)
+
+    [Peer]
+    # laptop
+    PublicKey = ${laptop_wg_public_key}
+    AllowedIPs = 10.10.0.2/32
+
+    [Peer]
+    # ci
+    PublicKey = ${deploy_wg_public_key}
+    AllowedIPs = 10.10.0.3/32
+    EOF
+    chmod 600 /etc/wireguard/wg0.conf
+    chown deploy:deploy /opt/satat
+    usermod -aG docker deploy
+    systemctl daemon-reload
+    systemctl enable --now wg-quick@wg0
+    systemctl restart ssh
