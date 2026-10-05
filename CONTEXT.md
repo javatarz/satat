@@ -18,7 +18,7 @@ _Avoid_: "bot", "worker"
 
 **Canvas**:
 The OpenHands Agent Canvas web UI — the control plane for conversations and automations.
-Served behind nginx at the domain. Protected by an API key.
+Served behind Caddy at the domain, protected by oauth2-proxy (GitHub OAuth) and an API key.
 _Avoid_: "dashboard", "control panel"
 
 **Automation**:

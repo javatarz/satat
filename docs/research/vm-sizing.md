@@ -1,5 +1,11 @@
 # VM sizing for Satat
 
+> **Historical note (2026-10-05):** this research sized a **Contabo** host. The host decision
+> has since changed to **AWS EC2 Spot `t4g.xlarge` (4 vCPU / 16 GB) in `ap-south-1`** — see
+> [ADR 0018](../adr/0018-aws-hosting.md). The sizing analysis (sandbox-driven requirements)
+> remains valid input; the provider conclusion and the Contabo/nginx references below are
+> superseded.
+
 Research for Satat ticket #2 ("Right-size the VM"). Investigated against primary sources: the
 OpenHands docs site (`docs.openhands.dev`), LiteLLM docs (`docs.litellm.ai`), ntfy docs
 (`docs.ntfy.sh`), Hetzner docs/site (`docs.hetzner.com`, `hetzner.com`), Contabo site, and the

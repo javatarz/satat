@@ -1,59 +1,53 @@
-# ADR 0013: Provision-deploy pipeline split
+# ADR 0013: Provision-deploy pipeline
 
 ## Status
 
-Accepted (2025-10-03)
+Accepted (2025-10-03). Revised 2026-10-05: provisioning moved off Terraform Cloud to
+GitHub Actions.
 
 ## Context
 
 Satat has two distinct classes of change in the repo:
-1. **Provision**: Changes to `terraform/` — VM creation, resize, firewall, DNS. Infrequent
-   (monthly or less).
-2. **Deploy**: Changes to service configs (`gateway/`, `ntfy/`, `automations/`, etc.) —
-   update LiteLLM model tiers, ntfy notification rules, agent runtime configs. Frequent
-   (multiple times per week).
-Both need to reach the Contabo VM, but with very different execution contexts.
 
-Provisionings need Contabo API access and a locked state; config deploys need SSH
-access and a running VM.
+1. **Provision**: changes under `terraform/` — EC2 instance, security group, Elastic IP.
+   Infrequent (monthly or less).
+2. **Deploy**: changes to service configs (`gateway/`, `ntfy/`, `automations/`, …) —
+   update model tiers, notification rules, agent runtime configs. Frequent (multiple times
+   per week).
+
+Both need to reach the AWS VM. The earlier design split them across two systems (Terraform
+Cloud for provisioning, GitHub Actions for deploy), which required a Terraform Cloud API
+token and a workflow that polled TFC run status before deploying.
 
 ## Decision
 
-Split the pipeline into two systems that share one repo:
+Run **both** provisioning and deploy in **GitHub Actions**, sharing one repo:
 
-| Concern | Owner | Trigger | Mechanism |
-|---------|-------|---------|-----------|
-| Provision | Terraform Cloud (VCS integration) | Push to files under `terraform/` | TFC runs `plan` on PR, `apply` on merge |
-| Deploy | GitHub Actions | Push to config files (`gateway/`, `ntfy/`, etc.) | SSH + rsync + restart |
+| Concern | Trigger | Mechanism |
+|---------|---------|-----------|
+| Provision | Push to files under `terraform/` | `terraform plan` on PR (posted as a PR comment); `apply` on merge to `main`, gated by a GitHub Environment |
+| Deploy | Push to config files (`gateway/`, `ntfy/`, …) | SSH over WireGuard + `docker compose up -d` |
 
-The deploy workflow gates on provision when both change in the same push:
+Supporting choices:
 
-```yaml
-wait-for-provision:
-  if: steps.filter.outputs.terraform == 'true'
-  steps:
-    - run: |
-        until curl -sf "..." | jq -e '.status | test("applied|errored")'; do
-          sleep 10
-        done
+- **Auth to AWS via GitHub OIDC**: workflow runs assume a scoped IAM role
+  (`sts:AssumeRoleWithWebIdentity`); no long-lived AWS keys are stored.
+- **State in S3** with the native S3 lockfile (`use_lockfile`, Terraform ≥ 1.10) — no
+  DynamoDB.
+- **One-time local bootstrap** (`bootstrap/`) creates the state bucket, the GitHub OIDC
+  identity provider, and the Terraform IAM role.
 
-deploy:
-  needs: [wait-for-provision]
-```
-
-On config-only changes the gate is skipped (zero delay). On mixed changes deploy
-polls TFC run status until the provision completes, then proceeds.
+Because provisioning and deploy now share one system, ordering is a plain `needs:` — no
+external run polling.
 
 ## Consequences
 
-- **Provision is rare, simple**: no CI code to write for terraform; TFC handles it
-  natively via VCS integration.
-- **Deploy is fast**: config-only pushes skip the provision gate, deploy runs within
-  seconds.
-- **Mixed commits are safe**: if someone changes a terraform file and a config file
-  in one push, deploy cannot race against provision.
-- **Two secrets remain**: `HCLOUD_TOKEN` (TFC workspace variable) and an SSH key
-  (GitHub secret). TFC API token is read-only and used only for the polling gate.
-- **Single source of truth**: the repo is the canonical state — TFC reads the infra
-  branch, GH Actions reads the config branch, both from the same repo at the same
-  commit.
+- **One CI system, one auth mechanism** (GitHub OIDC), and one place to reason about
+  provision-then-deploy ordering.
+- **No Terraform Cloud** account, API token, or polling gate.
+- **We forgo TFC's plan UI, cost estimation, and Sentinel/OPA policy**; plans are posted as
+  PR comments and applies are gated by a GitHub Environment with required reviewers.
+- **A one-time bootstrap is required** (chicken-and-egg: Terraform cannot create the
+  credentials it needs to run). Run it locally with admin credentials.
+- **Single source of truth**: the repo is canonical; GitHub Actions reads both the infra and
+  the config from the same commit.
