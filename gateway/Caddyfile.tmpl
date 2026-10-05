@@ -1,0 +1,27 @@
+{
+	email ${SATAT_EMAIL}
+}
+
+${SATAT_DOMAIN} {
+	encode gzip
+
+	handle /v1/* {
+		reverse_proxy litellm:4000
+	}
+
+	handle_path /canvas/* {
+		reverse_proxy canvas:8000
+	}
+
+	handle /ntfy/* {
+		reverse_proxy ntfy:8080
+	}
+
+	handle /webhook {
+		reverse_proxy canvas:8000
+	}
+
+	handle {
+		respond "Satat" 200
+	}
+}
