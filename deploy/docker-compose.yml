@@ -28,10 +28,6 @@ services:
       LLMGATEWAY_API_KEY: ${LLMGATEWAY_API_KEY}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       DATABASE_URL: ${DATABASE_URL}
-      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
-      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
-      OTEL_SERVICE_NAME: litellm
-      LITELLM_OTEL_INTEGRATION_ENABLE_METRICS: "true"
     volumes:
       - /opt/satat/gateway/litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml"]
