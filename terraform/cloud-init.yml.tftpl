@@ -10,6 +10,7 @@ packages:
   - docker-compose-v2
   - git
   - rsync
+  - awscli
 
 users:
   - name: deploy
@@ -68,3 +69,10 @@ runcmd:
     systemctl daemon-reload
     systemctl enable --now wg-quick@wg0
     systemctl restart ssh
+
+    aws ssm put-parameter \
+      --region ${region} \
+      --name /satat/wireguard/server_public_key \
+      --type String \
+      --overwrite \
+      --value "$(cat /etc/wireguard/server.pub)"
