@@ -17,49 +17,6 @@ data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_caller_identity" "current" {}
-
-data "aws_iam_policy_document" "instance_assume_role" {
-  statement {
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-
-    principals {
-      type        = "Service"
-      identifiers = ["ec2.amazonaws.com"]
-    }
-  }
-}
-
-resource "aws_iam_role" "instance" {
-  name               = "satat-instance"
-  assume_role_policy = data.aws_iam_policy_document.instance_assume_role.json
-}
-
-data "aws_iam_policy_document" "instance" {
-  statement {
-    sid    = "PublishWireGuardPublicKey"
-    effect = "Allow"
-
-    actions = ["ssm:PutParameter"]
-
-    resources = [
-      "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/satat/wireguard/*",
-    ]
-  }
-}
-
-resource "aws_iam_role_policy" "instance" {
-  name   = "satat-instance"
-  role   = aws_iam_role.instance.id
-  policy = data.aws_iam_policy_document.instance.json
-}
-
-resource "aws_iam_instance_profile" "instance" {
-  name = "satat-instance"
-  role = aws_iam_role.instance.name
-}
-
 resource "aws_security_group" "satat" {
   name        = "satat"
   description = "Satat ingress: HTTPS and WireGuard only"
@@ -98,7 +55,7 @@ resource "aws_instance" "satat" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
   vpc_security_group_ids = [aws_security_group.satat.id]
-  iam_instance_profile   = aws_iam_instance_profile.instance.name
+  iam_instance_profile   = "satat-instance"
 
   root_block_device {
     volume_type = "gp3"

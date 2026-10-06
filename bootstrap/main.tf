@@ -125,3 +125,47 @@ resource "aws_iam_role_policy" "terraform" {
   role   = aws_iam_role.terraform.id
   policy = data.aws_iam_policy_document.terraform.json
 }
+
+# Instance role: lets the VM publish its WireGuard server public key to SSM.
+# Lives here (admin creds) so the CI role never needs iam:* permissions.
+
+data "aws_iam_policy_document" "instance_assume_role" {
+  statement {
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ec2.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "instance" {
+  name               = "satat-instance"
+  assume_role_policy = data.aws_iam_policy_document.instance_assume_role.json
+}
+
+data "aws_iam_policy_document" "instance" {
+  statement {
+    sid    = "PublishWireGuardPublicKey"
+    effect = "Allow"
+
+    actions = ["ssm:PutParameter"]
+
+    resources = [
+      "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/satat/wireguard/*",
+    ]
+  }
+}
+
+resource "aws_iam_role_policy" "instance" {
+  name   = "satat-instance"
+  role   = aws_iam_role.instance.id
+  policy = data.aws_iam_policy_document.instance.json
+}
+
+resource "aws_iam_instance_profile" "instance" {
+  name = "satat-instance"
+  role = aws_iam_role.instance.name
+}

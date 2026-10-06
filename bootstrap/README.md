@@ -4,8 +4,9 @@ One-time setup, run **locally** with AWS admin credentials. It creates the piece
 Terraform cannot create for itself:
 
 - the **S3 state bucket** (versioned, encrypted, private),
-- the **GitHub OIDC identity provider**, and
-- the **Terraform IAM role** that GitHub Actions assumes.
+- the **GitHub OIDC identity provider**,
+- the **Terraform IAM role** that GitHub Actions assumes, and
+- the **instance IAM role/profile** (`satat-instance`) the VM uses to publish its WireGuard key to SSM.
 
 Run it once; afterwards all provisioning runs in GitHub Actions via OIDC.
 
@@ -35,5 +36,8 @@ Then provisioning runs in `.github/workflows/terraform.yml`.
 
 - The state bucket name is `satat-tfstate-<account-id>`.
 - The Terraform role trusts `repo:javatarz/satat:*` (see `github_repository` variable) and
-  has the state-bucket permissions plus `ec2:*`.
+  has the state-bucket permissions, `ec2:*`, and read access to `/satat/wireguard/*`. It
+  deliberately has **no** `iam:*` — the `satat-instance` role/profile is created here with
+  admin credentials and referenced by name from `../terraform`.
+- The instance role may `ssm:PutParameter` only under `/satat/wireguard/*`.
 - A separate, more tightly scoped role for the start/stop power workflow is future work.
