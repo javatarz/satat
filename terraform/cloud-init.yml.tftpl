@@ -10,7 +10,8 @@ packages:
   - docker-compose-v2
   - git
   - rsync
-  - awscli
+  - curl
+  - unzip
 
 users:
   - name: deploy
@@ -69,6 +70,10 @@ runcmd:
     systemctl daemon-reload
     systemctl enable --now wg-quick@wg0
     systemctl restart ssh
+
+    curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-aarch64.zip" -o /tmp/awscliv2.zip
+    unzip -q -o /tmp/awscliv2.zip -d /tmp
+    /tmp/aws/install --update
 
     aws ssm put-parameter \
       --region ${region} \
