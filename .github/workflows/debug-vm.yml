@@ -62,15 +62,15 @@ jobs:
           cd /opt/satat
           echo "--- compose ps ---"
           docker compose ps -a
+          echo "--- .env keys ---"
+          cut -d= -f1 .env
           KEY=$(grep '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)
-          echo "--- /v1/models ids (via Caddy) ---"
-          curl -sk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
+          echo "master key length: ${#KEY}"
+          echo "--- /v1/models raw (first 400 bytes) ---"
+          curl -sSk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
+            https://localhost/v1/models | head -c 400
+          echo
+          echo "--- /v1/models ids ---"
+          curl -sSk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
             https://localhost/v1/models | jq -c '[.data[].id]'
-          echo "--- /model/info costs ---"
-          curl -sk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
-            https://localhost/model/info \
-            | jq -c '[.data[] | {model_name, in: .model_info.input_cost_per_token, out: .model_info.output_cost_per_token}]'
-          echo "--- /global/spend ---"
-          curl -sk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
-            https://localhost/global/spend | jq -c . || true
           REMOTE
