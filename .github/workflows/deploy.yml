@@ -7,6 +7,8 @@ on:
       - "deploy/**"
       - "gateway/**"
       - ".github/workflows/deploy.yml"
+  schedule:
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -47,6 +49,32 @@ jobs:
               --query 'Parameter.Value' --output text)"
           } >> "$GITHUB_ENV"
 
+      - name: Fetch model pricing
+        env:
+          SATAT_MODEL_CHEAP: ${{ vars.SATAT_MODEL_CHEAP }}
+          SATAT_MODEL_STANDARD: ${{ vars.SATAT_MODEL_STANDARD }}
+          SATAT_MODEL_EXPENSIVE: ${{ vars.SATAT_MODEL_EXPENSIVE }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://api.llmgateway.io/v1/models -o "$RUNNER_TEMP/models.json"
+          lookup() {
+            jq -er --arg m "$1" --arg k "$2" \
+              '.data[] | select(.id==$m) | .pricing[$k] | select(. != "" and . != null and . != "0")' \
+              "$RUNNER_TEMP/models.json"
+          }
+          : > "$RUNNER_TEMP/prices.env"
+          for tier in CHEAP STANDARD EXPENSIVE; do
+            id_var="SATAT_MODEL_$tier"
+            id="${!id_var:?}"
+            in=$(lookup "$id" prompt)
+            out=$(lookup "$id" completion)
+            {
+              printf 'SATAT_MODEL_%s_IN=%s\n' "$tier" "$in"
+              printf 'SATAT_MODEL_%s_OUT=%s\n' "$tier" "$out"
+            } >> "$RUNNER_TEMP/prices.env"
+          done
+          cat "$RUNNER_TEMP/prices.env" >> "$GITHUB_ENV"
+
       - name: Render configs
         env:
           SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
@@ -55,11 +83,19 @@ jobs:
           SATAT_MODEL_STANDARD: ${{ vars.SATAT_MODEL_STANDARD }}
           SATAT_MODEL_EXPENSIVE: ${{ vars.SATAT_MODEL_EXPENSIVE }}
           SATAT_MONTHLY_BUDGET: ${{ vars.SATAT_MONTHLY_BUDGET }}
+          CADDY_SUBST: "$SATAT_DOMAIN $SATAT_EMAIL"
+          LITELLM_SUBST: >-
+            $SATAT_MODEL_CHEAP $SATAT_MODEL_STANDARD $SATAT_MODEL_EXPENSIVE
+            $SATAT_MONTHLY_BUDGET $SATAT_MODEL_CHEAP_IN $SATAT_MODEL_CHEAP_OUT
+            $SATAT_MODEL_STANDARD_IN $SATAT_MODEL_STANDARD_OUT
+            $SATAT_MODEL_EXPENSIVE_IN $SATAT_MODEL_EXPENSIVE_OUT
         run: |
           set -euo pipefail
-          envsubst "\$SATAT_DOMAIN \$SATAT_EMAIL" \
-            < gateway/Caddyfile.tmpl > gateway/Caddyfile
-          envsubst "\$SATAT_MODEL_CHEAP \$SATAT_MODEL_STANDARD \$SATAT_MODEL_EXPENSIVE \$SATAT_MONTHLY_BUDGET" \
+          : "${SATAT_DOMAIN:?}" "${SATAT_EMAIL:?}"
+          : "${SATAT_MODEL_CHEAP:?}" "${SATAT_MODEL_STANDARD:?}"
+          : "${SATAT_MODEL_EXPENSIVE:?}" "${SATAT_MONTHLY_BUDGET:?}"
+          envsubst "$CADDY_SUBST" < gateway/Caddyfile.tmpl > gateway/Caddyfile
+          envsubst "$LITELLM_SUBST" \
             < gateway/litellm-config.yaml.tmpl > gateway/litellm-config.yaml
 
       - name: Connect to WireGuard
@@ -91,7 +127,12 @@ jobs:
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
           SSH="ssh -i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-          rsync -az -e "$SSH" deploy/  deploy@10.10.0.1:/opt/satat/
+          remote_md5() { $SSH deploy@10.10.0.1 "md5sum /opt/satat/gateway/$1 2>/dev/null" | cut -d' ' -f1; }
+          OLD_CADDY=$(remote_md5 Caddyfile || true)
+          OLD_LITELLM=$(remote_md5 litellm-config.yaml || true)
+          NEW_CADDY=$(md5sum gateway/Caddyfile | cut -d' ' -f1)
+          NEW_LITELLM=$(md5sum gateway/litellm-config.yaml | cut -d' ' -f1)
+          rsync -az --exclude='.env' --exclude='.env.*' -e "$SSH" deploy/  deploy@10.10.0.1:/opt/satat/
           rsync -az -e "$SSH" gateway/ deploy@10.10.0.1:/opt/satat/gateway/
           {
             printf 'LLMGATEWAY_API_KEY=%s\n' "$LLMGATEWAY_API_KEY"
@@ -100,3 +141,9 @@ jobs:
             printf 'DATABASE_URL=postgresql://litellm:%s@postgres:5432/litellm\n' "$POSTGRES_PASSWORD"
           } | $SSH deploy@10.10.0.1 'umask 077 && cat > /opt/satat/.env'
           $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'
+          if [ "$OLD_CADDY" != "$NEW_CADDY" ]; then
+            $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose restart caddy'
+          fi
+          if [ "$OLD_LITELLM" != "$NEW_LITELLM" ]; then
+            $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose restart litellm'
+          fi

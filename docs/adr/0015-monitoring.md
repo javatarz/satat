@@ -30,7 +30,7 @@ significant local overhead. We also want minimal tool sprawl.
    ["webhook"]` + `WEBHOOK_URL`); it is *not* natively ntfy-shaped, so a small
    relay is needed to turn those events into ntfy notifications. Events include
    `soft_budget_crossed`, `budget_crossed`, and `threshold_crossed` (85%/95% of
-   budget). The non-blocking US$10/day spend warning from ADR 0002 is realised here.
+   budget). The non-blocking US$10/day spend warning from ADR 0002 will be implemented here (T7).
 
 ### What we rejected
 
