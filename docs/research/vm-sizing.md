@@ -102,6 +102,10 @@ number rather than an observed one. (LiteLLM's `deploy` docs also note PostgreSQ
 proxy's auth and tracking features" — Satat's config-only mode skips it
 ([Production Deployment](https://docs.litellm.ai/docs/proxy/deploy)).)
 
+> **Update (T4):** this assumption is superseded. Budget/spend enforcement requires a
+> database (LiteLLM fails open without one), so Satat now runs LiteLLM **with** Postgres —
+> see ADR 0002 / ADR 0017. Budget the 1 vCPU / 4 GiB figure, not the config-only floor.
+
 Budget: **0.5 vCPU / 0.5 GiB min** (config-only), **1 vCPU / 4 GiB recommended** (official floor).
 
 ## 4. ntfy server resource usage

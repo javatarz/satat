@@ -4,16 +4,22 @@ model_list:
       model: openai/${SATAT_MODEL_CHEAP}
       api_base: https://api.llmgateway.io/v1
       api_key: os.environ/LLMGATEWAY_API_KEY
+      input_cost_per_token: ${SATAT_MODEL_CHEAP_IN}
+      output_cost_per_token: ${SATAT_MODEL_CHEAP_OUT}
   - model_name: standard
     litellm_params:
       model: openai/${SATAT_MODEL_STANDARD}
       api_base: https://api.llmgateway.io/v1
       api_key: os.environ/LLMGATEWAY_API_KEY
+      input_cost_per_token: ${SATAT_MODEL_STANDARD_IN}
+      output_cost_per_token: ${SATAT_MODEL_STANDARD_OUT}
   - model_name: expensive
     litellm_params:
       model: openai/${SATAT_MODEL_EXPENSIVE}
       api_base: https://api.llmgateway.io/v1
       api_key: os.environ/LLMGATEWAY_API_KEY
+      input_cost_per_token: ${SATAT_MODEL_EXPENSIVE_IN}
+      output_cost_per_token: ${SATAT_MODEL_EXPENSIVE_OUT}
 
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY

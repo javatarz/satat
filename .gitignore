@@ -25,3 +25,7 @@ node_modules/
 
 # Scratch (temporary working files)
 docs/scratch/
+
+# Rendered from templates by the deploy workflow
+gateway/Caddyfile
+gateway/litellm-config.yaml
