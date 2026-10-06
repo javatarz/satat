@@ -17,13 +17,6 @@ data "aws_vpc" "default" {
   default = true
 }
 
-data "aws_subnets" "default" {
-  filter {
-    name   = "vpc-id"
-    values = [data.aws_vpc.default.id]
-  }
-}
-
 resource "aws_security_group" "satat" {
   name        = "satat"
   description = "Satat ingress: HTTPS and WireGuard only"
@@ -61,7 +54,6 @@ resource "aws_security_group" "satat" {
 resource "aws_instance" "satat" {
   ami                    = data.aws_ami.ubuntu.id
   instance_type          = var.instance_type
-  subnet_id              = sort(data.aws_subnets.default.ids)[0]
   vpc_security_group_ids = [aws_security_group.satat.id]
 
   root_block_device {
@@ -70,12 +62,12 @@ resource "aws_instance" "satat" {
     encrypted   = true
   }
 
-  user_data = base64encode(templatefile("${path.module}/cloud-init.yml.tftpl", {
+  user_data = templatefile("${path.module}/cloud-init.yml.tftpl", {
     deploy_wg_public_key  = var.deploy_wg_public_key
     laptop_wg_public_key  = var.laptop_wg_public_key
     deploy_ssh_public_key = var.deploy_ssh_public_key
     owner_ssh_public_key  = var.owner_ssh_public_key
-  }))
+  })
 
   user_data_replace_on_change = true
 
