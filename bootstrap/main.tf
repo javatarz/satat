@@ -118,6 +118,19 @@ data "aws_iam_policy_document" "terraform" {
     actions   = ["ssm:GetParameter"]
     resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/satat/wireguard/*"]
   }
+
+  statement {
+    sid       = "PassInstanceRole"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = [aws_iam_role.instance.arn]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["ec2.amazonaws.com"]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "terraform" {
