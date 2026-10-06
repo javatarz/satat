@@ -62,15 +62,18 @@ jobs:
           cd /opt/satat
           echo "--- compose ps ---"
           docker compose ps -a
-          echo "--- .env keys ---"
-          cut -d= -f1 .env
           KEY=$(grep '^LITELLM_MASTER_KEY=' .env | cut -d= -f2-)
-          echo "master key length: ${#KEY}"
-          echo "--- /v1/models raw (first 400 bytes) ---"
-          curl -sSk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
-            https://localhost/v1/models | head -c 400
-          echo
           echo "--- /v1/models ids ---"
-          curl -sSk -H "Host: satat.karun.me" -H "Authorization: Bearer $KEY" \
-            https://localhost/v1/models | jq -c '[.data[].id]'
+          curl -sSk --resolve satat.karun.me:443:127.0.0.1 \
+            -H "Authorization: Bearer $KEY" \
+            https://satat.karun.me/v1/models | jq -c '[.data[].id]'
+          echo "--- /model/info costs ---"
+          curl -sSk --resolve satat.karun.me:443:127.0.0.1 \
+            -H "Authorization: Bearer $KEY" \
+            https://satat.karun.me/model/info \
+            | jq -c '[.data[] | {model_name, in: .model_info.input_cost_per_token, out: .model_info.output_cost_per_token}]'
+          echo "--- /global/spend ---"
+          curl -sSk --resolve satat.karun.me:443:127.0.0.1 \
+            -H "Authorization: Bearer $KEY" \
+            https://satat.karun.me/global/spend | jq -c . || true
           REMOTE
