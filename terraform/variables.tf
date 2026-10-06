@@ -7,7 +7,7 @@ variable "region" {
 variable "instance_type" {
   description = "EC2 instance type (ARM/Graviton)"
   type        = string
-  default     = "t4g.xlarge"
+  default     = "t4g.large"
 }
 
 variable "root_volume_size" {
