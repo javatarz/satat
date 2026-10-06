@@ -1,0 +1,83 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "deploy/**"
+      - "gateway/**"
+      - ".github/workflows/deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: ap-south-1
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Install tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y wireguard-tools gettext-base rsync
+
+      - name: Discover VM address and WireGuard server key
+        run: |
+          {
+            echo "VM_IP=$(aws ec2 describe-addresses \
+              --filters 'Name=tag:Name,Values=satat' \
+              --query 'Addresses[0].PublicIp' --output text)"
+            echo "SERVER_PUBKEY=$(aws ssm get-parameter \
+              --name /satat/wireguard/server_public_key \
+              --query 'Parameter.Value' --output text)"
+          } >> "$GITHUB_ENV"
+
+      - name: Render Caddyfile
+        env:
+          SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
+          SATAT_EMAIL: ${{ vars.SATAT_EMAIL }}
+        run: envsubst < gateway/Caddyfile.tmpl > gateway/Caddyfile
+
+      - name: Connect to WireGuard
+        env:
+          CI_WG_PRIVATE_KEY: ${{ secrets.DEPLOY_WG_PRIVATE_KEY }}
+        run: |
+          sudo install -d -m 0700 /etc/wireguard
+          sudo tee /etc/wireguard/wg0.conf >/dev/null <<EOF
+          [Interface]
+          PrivateKey = ${CI_WG_PRIVATE_KEY}
+          Address = 10.10.0.3/32
+          [Peer]
+          PublicKey = ${SERVER_PUBKEY}
+          Endpoint = ${VM_IP}:51820
+          AllowedIPs = 10.10.0.1/32
+          PersistentKeepalive = 25
+          EOF
+          sudo chmod 600 /etc/wireguard/wg0.conf
+          sudo wg-quick up wg0
+
+      - name: Deploy configuration
+        env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+        run: |
+          install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
+          printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
+          SSH="ssh -i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+          rsync -az -e "$SSH" deploy/  deploy@10.10.0.1:/opt/satat/
+          rsync -az -e "$SSH" gateway/ deploy@10.10.0.1:/opt/satat/gateway/
+          $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'
