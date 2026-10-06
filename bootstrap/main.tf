@@ -111,6 +111,13 @@ data "aws_iam_policy_document" "terraform" {
     actions   = ["ec2:*"]
     resources = ["*"]
   }
+
+  statement {
+    sid       = "ReadWireGuardPublicKey"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter/satat/wireguard/*"]
+  }
 }
 
 resource "aws_iam_role_policy" "terraform" {
