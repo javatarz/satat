@@ -6,6 +6,7 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  postgres_data:
 
 services:
   caddy:
@@ -17,5 +18,42 @@ services:
       - /opt/satat/gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
+    networks:
+      - satat
+
+  litellm:
+    image: ghcr.io/berriai/litellm:main-stable
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://alloy:4318
+      OTEL_EXPORTER_OTLP_PROTOCOL: http/protobuf
+      OTEL_SERVICE_NAME: litellm
+      LITELLM_OTEL_INTEGRATION_ENABLE_METRICS: "true"
+    volumes:
+      - /opt/satat/gateway/litellm-config.yaml:/app/config.yaml:ro
+    command: ["--config", "/app/config.yaml"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - satat
+
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      POSTGRES_USER: litellm
+      POSTGRES_DB: litellm
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U litellm"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
     networks:
       - satat

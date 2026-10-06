@@ -17,9 +17,9 @@ private administrative path.
 
 ### Ingress: Caddy
 
-Caddy is the single public entry point on ports 80/443. It obtains and renews
+Caddy is the single public entry point on port 443 only. It obtains and renews
 Let's Encrypt certificates automatically (ACME, TLS-ALPN-01 on 443) — no separate
-certbot cron. Routing:
+certbot cron, and no HTTP-01 listener on port 80 (port 80 is closed). Routing:
 
 | Path | Target |
 |------|--------|
@@ -36,6 +36,8 @@ nginx and certbot are removed.
 All services run under one `docker compose` stack on the single host: `caddy`, `litellm`
 (+ Postgres), `canvas`, `oauth2-proxy`, `ntfy`, `alloy`. Deploy ships
 `deploy/docker-compose.yml` plus rendered configs and runs `docker compose up -d`.
+LiteLLM's spend tracking and budget enforcement require a database — without one it fails
+open (no cap) — so Postgres is a hard dependency of the `litellm` service, not optional.
 
 ### Remote access: plain WireGuard
 

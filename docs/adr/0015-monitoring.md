@@ -4,7 +4,7 @@
 Accepted
 
 ## Context
-Satat runs on a single AWS EC2 instance (Spot `t4g.xlarge`, 4 vCPU / 16 GB). Running
+Satat runs on a single AWS EC2 instance (on-demand `t4g.large`, 2 vCPU / 8 GB). Running
 Prometheus and Grafana on the VM itself would consume RAM/CPU needed for the agent sandbox.
 We need visibility into LLM spend, API performance, and VM health without adding
 significant local overhead. We also want minimal tool sprawl.
@@ -25,8 +25,12 @@ significant local overhead. We also want minimal tool sprawl.
 
 3. **LiteLLM built-in alerting → ntfy** — Critical alerts (budget crossed,
    spend reports, LLM exceptions, hanging/slow requests, model outages) are
-   routed to the existing ntfy instance. LiteLLM's webhook alert format is
-   Slack-compatible and can be directed at ntfy.
+   routed to the existing ntfy instance. LiteLLM posts a **fixed JSON
+   budget-alert schema** to a generic webhook (`general_settings.alerting:
+   ["webhook"]` + `WEBHOOK_URL`); it is *not* natively ntfy-shaped, so a small
+   relay is needed to turn those events into ntfy notifications. Events include
+   `soft_budget_crossed`, `budget_crossed`, and `threshold_crossed` (85%/95% of
+   budget). The non-blocking US$10/day spend warning from ADR 0002 is realised here.
 
 ### What we rejected
 
@@ -41,7 +45,7 @@ significant local overhead. We also want minimal tool sprawl.
 ## Consequences
 
 - Two external accounts to create: Grafana Cloud (free) and healthchecks.io (free)
-- Grafana Alloy adds ~50 MB RAM overhead on the VM (acceptable on 16 GB)
+- Grafana Alloy adds ~50 MB RAM overhead on the VM (acceptable on 8 GB)
 - LiteLLM alerting covers budget/performance; ntfy covers agent-level notifications (existing)
 - No historical conversation-level analytics beyond Canvas — acceptable for single-agent
 - VM load visibility (CPU/RAM/disk) is available via Grafana Cloud without local Prometheus
