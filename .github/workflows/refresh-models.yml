@@ -1,0 +1,17 @@
+name: Refresh model pricing
+
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    uses: ./.github/workflows/deploy-config.yml
+    with:
+      scope: litellm
+    secrets: inherit
