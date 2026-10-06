@@ -1,6 +1,6 @@
 # LiteLLM as model router
 
-Satat routes all LLM traffic through a self-hosted LiteLLM proxy on the VM rather than calling the LLM Gateway directly. LiteLLM provides three tiered model profiles (cheap/standard/expensive) with cost-based automatic selection, a hard monthly budget cap that cannot be exceeded, and spend tracking. Without LiteLLM, budget enforcement would require manual monitoring; with it, Satat can be left unattended without risk of a surprise bill. The proxy also eliminates the need to change OpenHands configuration when models are added or removed from the gateway.
+Satat routes all LLM traffic through a self-hosted LiteLLM proxy on the VM rather than calling the LLM Gateway directly. LiteLLM provides three tiered model profiles (cheap/standard/expensive) that the agent selects by tier, a hard monthly budget cap that cannot be exceeded, and spend tracking. Without LiteLLM, budget enforcement would require manual monitoring; with it, Satat can be left unattended without risk of a surprise bill. The proxy also eliminates the need to change OpenHands configuration when models are added or removed from the gateway.
 
 ## Concrete configuration
 
@@ -11,6 +11,11 @@ Satat routes all LLM traffic through a self-hosted LiteLLM proxy on the VM rathe
 - **Budget cap**: a single global hard cap — `litellm_settings.max_budget`
   (`SATAT_MONTHLY_BUDGET`, US$100) with `budget_duration: 30d`. `30d` resets on the 1st of
   the month at midnight UTC, matching the LLM Gateway billing month.
+- **Per-token costs are fetched, not hardcoded**: LiteLLM prices unknown model IDs at $0,
+  which would leave the cap unenforced. The deploy workflow pulls `prompt`/`completion`
+  pricing for each configured model from `https://api.llmgateway.io/v1/models` and renders
+  them into `input_cost_per_token` / `output_cost_per_token`. A nightly cron re-runs the
+  same workflow so prices stay current without manual editing.
 - **Postgres is required**: LiteLLM enforces budgets from stored spend and **fails open
   without a database**, so the stack runs Postgres (ADR 0017). SQLite is not used.
 - **No global soft budget**: LiteLLM exposes `soft_budget` only on keys/teams, not for the
