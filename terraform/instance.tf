@@ -73,15 +73,6 @@ resource "aws_instance" "satat" {
 
   user_data_replace_on_change = true
 
-  instance_market_options {
-    market_type = "spot"
-
-    spot_options {
-      spot_instance_type             = "persistent"
-      instance_interruption_behavior = "stop"
-    }
-  }
-
   tags = {
     Name = "satat"
   }

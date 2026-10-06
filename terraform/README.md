@@ -34,15 +34,16 @@ AWS credentials are **not** passed to the provider — GitHub Actions assumes an
 OIDC, so the provider block sets only `region`.
 
 - `region` — default `ap-south-1`
-- `instance_type` — default `t4g.xlarge` (4 vCPU / 16 GB, ARM)
+- `instance_type` — default `t4g.large` (2 vCPU / 8 GB, ARM)
 - `root_volume_size` — default `100` GiB (gp3)
 - `deploy_wg_public_key`, `laptop_wg_public_key` — WireGuard peer public keys
 - `deploy_ssh_public_key`, `owner_ssh_public_key` — SSH public keys authorized for `deploy`
 
 ## Instance
 
-- **Spot** (`t4g.xlarge`, persistent, stop-on-interrupt). AWS may reclaim capacity and stop
-  the instance; it keeps its EBS volume and Elastic IP, and can be started again.
+- **On-demand** (`t4g.large`). Previously Spot, but `t4g.xlarge` Spot capacity was too scarce
+  in `ap-south-1` and repeatedly blocked provisioning. On-demand trades cost for reliability.
+  Resize later by changing `instance_type` (in-place stop/start).
 - **Elastic IP** so the public address is stable across stop/start (use it for DNS).
 - Security group allows only `443/tcp` (Caddy) and `51820/udp` (WireGuard).
 - Root volume: 100 GiB gp3, encrypted.
