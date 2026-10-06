@@ -18,10 +18,11 @@ DNS across stop/start.
 
 Host on **AWS EC2**:
 
-- **Instance**: Spot `t4g.xlarge` — 4 vCPU / 16 GB, ARM (Graviton) — in `ap-south-1`
-  (Mumbai). Spot is ~60% cheaper than on-demand; the request is **persistent** with
-  stop-on-interrupt, so a capacity reclaim stops (not terminates) the instance and it
-  keeps its EBS volume.
+- **Instance**: on-demand `t4g.large` — 2 vCPU / 8 GB, ARM (Graviton) — in `ap-south-1`
+  (Mumbai). Spot was the original plan, but `t4g.xlarge` Spot capacity was chronically
+  unavailable in `ap-south-1` (persistent requests sat unfulfilled with
+  `InsufficientInstanceCapacity`), so the saving was not realisable and we run on-demand,
+  stopping the instance when idle to keep cost proportional to use.
 - **AMI**: latest Ubuntu 24.04 arm64 from Canonical, discovered at plan time (no manual
   image ID).
 - **Disk**: 100 GiB gp3, encrypted.
@@ -35,13 +36,13 @@ Host on **AWS EC2**:
 
 - **Per-second billing** while running; the instance can be stopped when idle.
 - **Idle cost is not zero**: a stopped instance still bills for its EBS volume and its
-  public IPv4 (roughly US$11/month at these sizes). Snapshot-and-terminate is the only way
-  to reach ~zero, at the cost of the live data volume.
-- **Spot can be reclaimed**: AWS may stop the instance with two minutes' notice; because
-  the request is persistent and interruption behavior is `stop`, it resumes with its
-  volume and IP intact.
+  public IPv4 (roughly US$13/month at these sizes: gp3 ≈ US$9 + public IPv4 ≈ US$3.65).
+  Snapshot-and-terminate is the only way to reach ~zero, at the cost of the live data volume.
+- **On-demand, no reclaim**: unlike Spot there is no interruption risk. If capacity needs
+  change, the instance is resized in place (stop/start) by changing the `instance_type`
+  variable.
 - **Provider-specific Terraform**: `terraform/` targets AWS; the Compose stack, Caddy,
   gateway templates, automations, and deploy pipeline are unaffected.
 - **Region**: `ap-south-1` for proximity; can be changed with the `region` variable.
-- **Rejected**: Contabo (no hourly billing; monthly in advance), and always-on on-demand
-  EC2 (far more expensive than the alternatives for a continuously running VM).
+- **Rejected**: Contabo (no hourly billing; monthly in advance), and Spot `t4g.xlarge`
+  (capacity unavailable in `ap-south-1`, so no saving was achievable).

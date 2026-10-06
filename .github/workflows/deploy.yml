@@ -47,11 +47,20 @@ jobs:
               --query 'Parameter.Value' --output text)"
           } >> "$GITHUB_ENV"
 
-      - name: Render Caddyfile
+      - name: Render configs
         env:
           SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
           SATAT_EMAIL: ${{ vars.SATAT_EMAIL }}
-        run: envsubst < gateway/Caddyfile.tmpl > gateway/Caddyfile
+          SATAT_MODEL_CHEAP: ${{ vars.SATAT_MODEL_CHEAP }}
+          SATAT_MODEL_STANDARD: ${{ vars.SATAT_MODEL_STANDARD }}
+          SATAT_MODEL_EXPENSIVE: ${{ vars.SATAT_MODEL_EXPENSIVE }}
+          SATAT_MONTHLY_BUDGET: ${{ vars.SATAT_MONTHLY_BUDGET }}
+        run: |
+          set -euo pipefail
+          envsubst "\$SATAT_DOMAIN \$SATAT_EMAIL" \
+            < gateway/Caddyfile.tmpl > gateway/Caddyfile
+          envsubst "\$SATAT_MODEL_CHEAP \$SATAT_MODEL_STANDARD \$SATAT_MODEL_EXPENSIVE \$SATAT_MONTHLY_BUDGET" \
+            < gateway/litellm-config.yaml.tmpl > gateway/litellm-config.yaml
 
       - name: Connect to WireGuard
         env:
@@ -74,10 +83,20 @@ jobs:
       - name: Deploy configuration
         env:
           DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          LLMGATEWAY_API_KEY: ${{ secrets.LLMGATEWAY_API_KEY }}
+          LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
+          set -euo pipefail
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
           SSH="ssh -i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
           rsync -az -e "$SSH" deploy/  deploy@10.10.0.1:/opt/satat/
           rsync -az -e "$SSH" gateway/ deploy@10.10.0.1:/opt/satat/gateway/
+          {
+            printf 'LLMGATEWAY_API_KEY=%s\n' "$LLMGATEWAY_API_KEY"
+            printf 'LITELLM_MASTER_KEY=%s\n' "$LITELLM_MASTER_KEY"
+            printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
+            printf 'DATABASE_URL=postgresql://litellm:%s@postgres:5432/litellm\n' "$POSTGRES_PASSWORD"
+          } | $SSH deploy@10.10.0.1 'umask 077 && cat > /opt/satat/.env'
           $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'
