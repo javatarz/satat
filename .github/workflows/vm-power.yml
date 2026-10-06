@@ -1,0 +1,45 @@
+name: VM power
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "Power action"
+        required: true
+        type: choice
+        options:
+          - stop
+          - start
+        default: stop
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  power:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Power instance
+        env:
+          ACTION: ${{ inputs.action }}
+        run: |
+          set -euo pipefail
+          ID=$(aws ec2 describe-instances \
+            --filters 'Name=tag:Name,Values=satat' \
+              'Name=instance-state-name,Values=pending,running,stopping,stopped' \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          echo "instance: $ID"
+          aws ec2 "${ACTION}-instances" --instance-ids "$ID" >/dev/null
+          case "$ACTION" in
+            stop) waiter=instance-stopped ;;
+            start) waiter=instance-running ;;
+          esac
+          aws ec2 wait "$waiter" --instance-ids "$ID"
+          aws ec2 describe-instances --instance-ids "$ID" \
+            --query 'Reservations[0].Instances[0].State.Name' --output text

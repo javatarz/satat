@@ -35,6 +35,20 @@ repos:
           - >-
             {rules: {line-length: {max: 120}, document-start: disable}}
 
+  - repo: https://github.com/python-jsonschema/check-jsonschema
+    rev: 0.38.2
+    hooks:
+      - id: check-github-workflows
+
+  - repo: local
+    hooks:
+      - id: actionlint
+        name: actionlint
+        description: Static analysis for GitHub Actions workflow files
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 2.7.3
     hooks:
