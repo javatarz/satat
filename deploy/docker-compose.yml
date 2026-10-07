@@ -7,6 +7,7 @@ volumes:
   caddy_data:
   caddy_config:
   postgres_data:
+  canvas_data:
 
 services:
   caddy:
@@ -34,6 +35,24 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+    networks:
+      - satat
+
+  canvas:
+    image: ghcr.io/openhands/agent-canvas:1.25.0
+    restart: unless-stopped
+    environment:
+      LOCAL_BACKEND_API_KEY: ${CANVAS_API_KEY}
+      OH_SECRET_KEY: ${OH_SECRET_KEY}
+      AGENT_CANVAS_DISABLE_TELEMETRY: "1"
+      AUTOMATION_GIT_SYNC_REPO_URL: ${AUTOMATION_GIT_SYNC_REPO_URL}
+      AUTOMATION_GIT_SYNC_BRANCH: ${AUTOMATION_GIT_SYNC_BRANCH:-main}
+      AUTOMATION_GIT_SYNC_PATH: ${AUTOMATION_GIT_SYNC_PATH:-automations}
+      AUTOMATION_GIT_SYNC_TOKEN: ${GIT_SYNC_TOKEN}
+      AUTOMATION_GIT_SYNC_AUTHOR_NAME: Satat
+      AUTOMATION_GIT_SYNC_AUTHOR_EMAIL: satat@karun.me
+    volumes:
+      - canvas_data:/home/openhands/.openhands
     networks:
       - satat
 

@@ -117,6 +117,12 @@ jobs:
           LLMGATEWAY_API_KEY: ${{ secrets.LLMGATEWAY_API_KEY }}
           LITELLM_MASTER_KEY: ${{ secrets.LITELLM_MASTER_KEY }}
           POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          CANVAS_API_KEY: ${{ secrets.CANVAS_API_KEY }}
+          OH_SECRET_KEY: ${{ secrets.OH_SECRET_KEY }}
+          GIT_SYNC_TOKEN: ${{ secrets.GIT_SYNC_TOKEN }}
+          AUTOMATION_GIT_SYNC_REPO_URL: ${{ vars.SATAT_AUTOMATIONS_REPO_URL }}
+          AUTOMATION_GIT_SYNC_BRANCH: ${{ vars.SATAT_AUTOMATIONS_BRANCH || 'main' }}
+          AUTOMATION_GIT_SYNC_PATH: ${{ vars.SATAT_AUTOMATIONS_PATH || 'automations' }}
         run: |
           set -euo pipefail
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
@@ -137,6 +143,12 @@ jobs:
               printf 'LITELLM_MASTER_KEY=%s\n' "$LITELLM_MASTER_KEY"
               printf 'POSTGRES_PASSWORD=%s\n' "$POSTGRES_PASSWORD"
               printf 'DATABASE_URL=postgresql://litellm:%s@postgres:5432/litellm\n' "$POSTGRES_PASSWORD"
+              printf 'CANVAS_API_KEY=%s\n' "$CANVAS_API_KEY"
+              printf 'OH_SECRET_KEY=%s\n' "$OH_SECRET_KEY"
+              printf 'GIT_SYNC_TOKEN=%s\n' "$GIT_SYNC_TOKEN"
+              printf 'AUTOMATION_GIT_SYNC_REPO_URL=%s\n' "$AUTOMATION_GIT_SYNC_REPO_URL"
+              printf 'AUTOMATION_GIT_SYNC_BRANCH=%s\n' "$AUTOMATION_GIT_SYNC_BRANCH"
+              printf 'AUTOMATION_GIT_SYNC_PATH=%s\n' "$AUTOMATION_GIT_SYNC_PATH"
             } | $SSH deploy@10.10.0.1 'umask 077 && cat > /opt/satat/.env'
           fi
           $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'

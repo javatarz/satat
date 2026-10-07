@@ -9,16 +9,20 @@ ${SATAT_DOMAIN} {
 		reverse_proxy litellm:4000
 	}
 
-	handle_path /canvas/* {
+	handle /canvas/* {
+		reverse_proxy canvas:8000
+	}
+
+	handle /api/* {
+		reverse_proxy canvas:8000
+	}
+
+	handle /sockets/* {
 		reverse_proxy canvas:8000
 	}
 
 	handle /ntfy/* {
 		reverse_proxy ntfy:8080
-	}
-
-	handle /webhook {
-		reverse_proxy canvas:8000
 	}
 
 	handle {
