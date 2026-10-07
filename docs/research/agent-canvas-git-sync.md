@@ -32,9 +32,10 @@ The entrypoint runs a proxy on `$PORT`:
   `http://127.0.0.1:18000`.
 - Reserved paths rejected as base-path collisions: `/api`, `/sockets`, `/server_info`,
   `/alive`, `/health`, `/ready`, `/docs`, `/redoc`, `/openapi.json`, and the canvas mount.
-- **Consequence for Caddy:** proxy `/canvas/*` and `/api/*` to `canvas:8000`
-  *without* stripping the prefix (`handle`, not `handle_path`). The old
-  `handle_path /canvas/*` would strip `/canvas` and 404.
+- **Consequence for Caddy:** proxy `/canvas/*`, `/api/*`, and `/sockets/*`
+  (websockets) to `canvas:8000` *without* stripping the prefix (`handle`, not
+  `handle_path`). The old `handle_path /canvas/*` would strip `/canvas` and 404. A bare
+  `/canvas` is redirected to `/canvas/` because `handle /canvas/*` does not match it.
 
 ### Container environment variables
 

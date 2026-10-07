@@ -9,6 +9,8 @@ ${SATAT_DOMAIN} {
 		reverse_proxy litellm:4000
 	}
 
+	redir /canvas /canvas/ 308
+
 	handle /canvas/* {
 		reverse_proxy canvas:8000
 	}

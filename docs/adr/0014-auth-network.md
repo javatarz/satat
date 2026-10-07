@@ -38,10 +38,11 @@ automatically (ACME).
 Internet
    │
    ├─ HTTPS (443) ─────────────────► Caddy
-   │                                   ├─ /canvas   → oauth2-proxy → Canvas (8000)
-   │                                   ├─ /ntfy      → oauth2-proxy → ntfy (8080)
-   │                                   ├─ /v1        → LiteLLM (4000)
-   │                                   └─ /webhook   → Canvas (8000)
+   │                                   ├─ /canvas/*  → oauth2-proxy → Canvas (8000)
+   │                                   ├─ /api/*     → Canvas (8000)
+   │                                   ├─ /sockets/* → Canvas (8000)
+   │                                   ├─ /ntfy/*    → oauth2-proxy → ntfy (8080)
+   │                                   └─ /v1/*      → LiteLLM (4000)
    │
    └─ WireGuard (UDP 51820) ───────► SSH (wg0 interface only)
                                        CI deploy (peer ci)

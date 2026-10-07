@@ -16,7 +16,7 @@ running laptop to manage automations and view conversations, defeating the alway
 The all-in-one `ghcr.io/openhands/agent-canvas` image serves its ingress on port 8000 and
 maps `/api/automation/*` to the Automation Server, `/api/*` to the Agent Server, and
 `/canvas` to the static frontend. Paths must be forwarded **unchanged** — the proxy must
-not strip a prefix (`handle`, not `handle_path`). Caddy therefore proxies both
-`/canvas/*` and `/api/*` to `canvas:8000`; the inbound GitHub event webhook lives at
-`/api/automation/v1/events/github` and is covered by the `/api/*` route, so no separate
-`/webhook` route is needed.
+not strip a prefix (`handle`, not `handle_path`). Caddy therefore proxies `/canvas/*`,
+`/api/*`, and `/sockets/*` (websockets) to `canvas:8000`; the inbound GitHub event
+webhook lives at `/api/automation/v1/events/github` and is covered by the `/api/*`
+route, so no separate `/webhook` route is needed.
