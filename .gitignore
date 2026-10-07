@@ -29,3 +29,4 @@ docs/scratch/
 # Rendered from templates by the deploy workflow
 gateway/Caddyfile
 gateway/litellm-config.yaml
+ntfy/server.yml

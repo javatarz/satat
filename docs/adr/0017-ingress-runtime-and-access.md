@@ -29,11 +29,14 @@ certbot cron, and no HTTP-01 listener on port 80 (port 80 is closed). Routing:
 | `/canvas/*` | Canvas (forward_auth via oauth2-proxy) |
 | `/api/*` | Canvas — Automation Server + Agent Server, incl. the GitHub event receiver `/api/automation/v1/events/github` |
 | `/sockets/*` | Canvas (websockets) |
-| `/ntfy/*` | ntfy (forward_auth via oauth2-proxy) |
 | `/v1/*` | LiteLLM |
 
 Canvas paths are forwarded **unchanged** (no prefix stripping); the proxy must not remove
 a prefix. There is no separate `/webhook` route — the GitHub receiver is under `/api/*`.
+
+ntfy is **not** on the main host: it cannot be served from a subpath
+([ADR 0019](0019-ntfy-hosting-and-observability.md)), so it lives at the root of a second
+site, `notify.${SATAT_DOMAIN}`, reverse-proxied to `ntfy:8080` with its own auth.
 
 nginx and certbot are removed.
 

@@ -29,7 +29,7 @@ automatically (ACME).
 | 2 — Canvas | Canvas (8000) | OpenHands API key. Inner layer — oauth2-proxy blocks unauthenticated visitors before they reach Canvas. |
 | 3 — SSH | VM (WireGuard interface only) | Plain WireGuard. SSH daemon binds to the WireGuard interface only. No SSH port on the public IP. |
 | 4 — CI deployment | VM (WireGuard interface only) | Static WireGuard peer (`ci`) with a keypair; the deploy runner brings the tunnel up for the workflow, deploys via SSH, then tears it down. Key stored as a GitHub secret. |
-| 5 — ntfy notifications | ntfy (8080) | Self-hosted ntfy server behind Caddy. E2E encryption between server and iOS app — the ntfy.sh relay sees only encrypted blobs. Topic-as-password for topic access control. |
+| 5 — ntfy notifications | ntfy (8080) | Self-hosted ntfy on **`notify.${SATAT_DOMAIN}`** (its own hostname — ntfy cannot run under a subpath, [ADR 0019](0019-ntfy-hosting-and-observability.md)). Uses **ntfy's own auth** (topic-as-password), *not* oauth2-proxy, because the iOS app cannot complete a browser OAuth redirect. E2E encryption between server and iOS app — the ntfy.sh relay sees only encrypted blobs. |
 | 6 — LiteLLM | LiteLLM (4000) | Reachable at `/v1/*` through Caddy for the agent, and internally on the Compose network. |
 
 ### Network diagram
@@ -38,12 +38,13 @@ automatically (ACME).
 Internet
    │
    ├─ HTTPS (443) ─────────────────► Caddy
-   │                                   ├─ /oauth2/*  → oauth2-proxy (4180)
-   │                                   ├─ /canvas/*  → oauth2-proxy → Canvas (8000)
-   │                                   ├─ /api/*     → Canvas (8000)
-   │                                   ├─ /sockets/* → Canvas (8000)
-   │                                   ├─ /ntfy/*    → oauth2-proxy → ntfy (8080)
-   │                                   └─ /v1/*      → LiteLLM (4000)
+   │                                   ├─ satat.karun.me
+   │                                   │    ├─ /oauth2/*  → oauth2-proxy (4180)
+   │                                   │    ├─ /canvas/*  → oauth2-proxy → Canvas (8000)
+   │                                   │    ├─ /api/*     → Canvas (8000)
+   │                                   │    ├─ /sockets/* → Canvas (8000)
+   │                                   │    └─ /v1/*      → LiteLLM (4000)
+   │                                   └─ notify.satat.karun.me → ntfy (8080)  (native ntfy auth)
    │
    └─ WireGuard (UDP 51820) ───────► SSH (wg0 interface only)
                                        CI deploy (peer ci)

@@ -76,19 +76,21 @@ jobs:
           SATAT_MODEL_CHEAP: ${{ vars.SATAT_MODEL_CHEAP }}
           SATAT_MODEL_STANDARD: ${{ vars.SATAT_MODEL_STANDARD }}
           SATAT_MODEL_EXPENSIVE: ${{ vars.SATAT_MODEL_EXPENSIVE }}
-          SATAT_MONTHLY_BUDGET: ${{ vars.SATAT_MONTHLY_BUDGET }}
+          SATAT_DAILY_BUDGET: ${{ vars.SATAT_DAILY_BUDGET }}
           CADDY_SUBST: "$SATAT_DOMAIN $SATAT_EMAIL"
+          NTFY_SUBST: "$SATAT_DOMAIN"
           LITELLM_SUBST: >-
             $SATAT_MODEL_CHEAP $SATAT_MODEL_STANDARD $SATAT_MODEL_EXPENSIVE
-            $SATAT_MONTHLY_BUDGET $SATAT_MODEL_CHEAP_IN $SATAT_MODEL_CHEAP_OUT
+            $SATAT_DAILY_BUDGET $SATAT_MODEL_CHEAP_IN $SATAT_MODEL_CHEAP_OUT
             $SATAT_MODEL_STANDARD_IN $SATAT_MODEL_STANDARD_OUT
             $SATAT_MODEL_EXPENSIVE_IN $SATAT_MODEL_EXPENSIVE_OUT
         run: |
           set -euo pipefail
           : "${SATAT_DOMAIN:?}" "${SATAT_EMAIL:?}"
           : "${SATAT_MODEL_CHEAP:?}" "${SATAT_MODEL_STANDARD:?}"
-          : "${SATAT_MODEL_EXPENSIVE:?}" "${SATAT_MONTHLY_BUDGET:?}"
+          : "${SATAT_MODEL_EXPENSIVE:?}" "${SATAT_DAILY_BUDGET:?}"
           envsubst "$CADDY_SUBST" < gateway/Caddyfile.tmpl > gateway/Caddyfile
+          envsubst "$NTFY_SUBST" < ntfy/server.yml.tmpl > ntfy/server.yml
           envsubst "$LITELLM_SUBST" \
             < gateway/litellm-config.yaml.tmpl > gateway/litellm-config.yaml
 
@@ -128,6 +130,13 @@ jobs:
           OAUTH2_PROXY_COOKIE_SECRET: ${{ secrets.OAUTH2_PROXY_COOKIE_SECRET }}
           OAUTH2_ALLOWLIST: ${{ vars.OAUTH2_ALLOWLIST }}
           SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
+          GRAFANA_CLOUD_OTLP_ENDPOINT: ${{ vars.GRAFANA_CLOUD_OTLP_ENDPOINT }}
+          GRAFANA_CLOUD_OTLP_USERNAME: ${{ vars.GRAFANA_CLOUD_OTLP_USERNAME }}
+          GRAFANA_CLOUD_PROM_URL: ${{ vars.GRAFANA_CLOUD_PROM_URL }}
+          GRAFANA_CLOUD_PROM_USERNAME: ${{ vars.GRAFANA_CLOUD_PROM_USERNAME }}
+          GRAFANA_CLOUD_API_KEY: ${{ secrets.GRAFANA_CLOUD_API_KEY }}
+          HEALTHCHECKS_PING_URL: ${{ secrets.HEALTHCHECKS_PING_URL }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
         run: |
           set -euo pipefail
           if [ "$SCOPE" = "all" ]; then
@@ -136,19 +145,29 @@ jobs:
             : "${OAUTH2_PROXY_CLIENT_ID:?}" "${OAUTH2_PROXY_CLIENT_SECRET:?}"
             : "${OAUTH2_PROXY_COOKIE_SECRET:?}" "${OAUTH2_ALLOWLIST:?}"
             : "${SATAT_DOMAIN:?}"
+            : "${GRAFANA_CLOUD_OTLP_ENDPOINT:?}" "${GRAFANA_CLOUD_OTLP_USERNAME:?}"
+            : "${GRAFANA_CLOUD_PROM_URL:?}" "${GRAFANA_CLOUD_PROM_USERNAME:?}"
+            : "${GRAFANA_CLOUD_API_KEY:?}" "${HEALTHCHECKS_PING_URL:?}"
+            : "${NTFY_TOPIC:?}"
           fi
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
           SSH="ssh -i $RUNNER_TEMP/deploy_key -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-          remote_md5() { $SSH deploy@10.10.0.1 "md5sum /opt/satat/gateway/$1 2>/dev/null" | cut -d' ' -f1; }
-          OLD_CADDY=$(remote_md5 Caddyfile || true)
-          OLD_LITELLM=$(remote_md5 litellm-config.yaml || true)
-          NEW_CADDY=$(md5sum gateway/Caddyfile | cut -d' ' -f1)
-          NEW_LITELLM=$(md5sum gateway/litellm-config.yaml | cut -d' ' -f1)
+          remote_md5() { $SSH deploy@10.10.0.1 "md5sum /opt/satat/$1 2>/dev/null" | cut -d' ' -f1; }
+          md5_of() { md5sum "$1" | cut -d' ' -f1; }
+          OLD_CADDY=$(remote_md5 gateway/Caddyfile || true)
+          OLD_LITELLM=$(remote_md5 gateway/litellm-config.yaml || true)
+          OLD_NTFY=$(remote_md5 ntfy/server.yml || true)
+          OLD_ALLOY=$(remote_md5 gateway/alloy-config.alloy || true)
+          NEW_CADDY=$(md5_of gateway/Caddyfile)
+          NEW_LITELLM=$(md5_of gateway/litellm-config.yaml)
+          NEW_NTFY=$(md5_of ntfy/server.yml)
+          NEW_ALLOY=$(md5_of gateway/alloy-config.alloy)
           if [ "$SCOPE" = "all" ]; then
             rsync -az --exclude='.env' --exclude='.env.*' -e "$SSH" deploy/ deploy@10.10.0.1:/opt/satat/
           fi
           rsync -az -e "$SSH" gateway/ deploy@10.10.0.1:/opt/satat/gateway/
+          rsync -az -e "$SSH" ntfy/ deploy@10.10.0.1:/opt/satat/ntfy/
           if [ "$SCOPE" = "all" ]; then
             {
               printf 'LLMGATEWAY_API_KEY=%s\n' "$LLMGATEWAY_API_KEY"
@@ -166,6 +185,13 @@ jobs:
               printf 'OAUTH2_PROXY_COOKIE_SECRET=%s\n' "$OAUTH2_PROXY_COOKIE_SECRET"
               printf 'OAUTH2_ALLOWLIST=%s\n' "$OAUTH2_ALLOWLIST"
               printf 'SATAT_DOMAIN=%s\n' "$SATAT_DOMAIN"
+              printf 'GRAFANA_CLOUD_OTLP_ENDPOINT=%s\n' "$GRAFANA_CLOUD_OTLP_ENDPOINT"
+              printf 'GRAFANA_CLOUD_OTLP_USERNAME=%s\n' "$GRAFANA_CLOUD_OTLP_USERNAME"
+              printf 'GRAFANA_CLOUD_PROM_URL=%s\n' "$GRAFANA_CLOUD_PROM_URL"
+              printf 'GRAFANA_CLOUD_PROM_USERNAME=%s\n' "$GRAFANA_CLOUD_PROM_USERNAME"
+              printf 'GRAFANA_CLOUD_API_KEY=%s\n' "$GRAFANA_CLOUD_API_KEY"
+              printf 'HEALTHCHECKS_PING_URL=%s\n' "$HEALTHCHECKS_PING_URL"
+              printf 'NTFY_TOPIC=%s\n' "$NTFY_TOPIC"
             } | $SSH deploy@10.10.0.1 'umask 077 && cat > /opt/satat/.env && chmod 600 /opt/satat/.env'
           fi
           $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'
@@ -175,3 +201,26 @@ jobs:
           if [ "$OLD_LITELLM" != "$NEW_LITELLM" ]; then
             $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose restart litellm'
           fi
+          if [ "$OLD_NTFY" != "$NEW_NTFY" ]; then
+            $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose restart ntfy'
+          fi
+          if [ "$OLD_ALLOY" != "$NEW_ALLOY" ]; then
+            $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose restart alloy'
+          fi
+
+      - name: Notify deploy failure
+        if: failure()
+        env:
+          SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+        run: |
+          set -euo pipefail
+          url="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          curl -fsS \
+            -H "Title: Satat deploy failed" \
+            -H "Priority: high" \
+            -H "Tags: rotating_light" \
+            -H "Click: ${url}" \
+            -H "Actions: view, View run, ${url}, clear=true" \
+            -d "Deploy of ${GITHUB_REF_NAME} failed" \
+            "https://notify.${SATAT_DOMAIN}/${NTFY_TOPIC}" || true

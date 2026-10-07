@@ -24,7 +24,12 @@ model_list:
 general_settings:
   master_key: os.environ/LITELLM_MASTER_KEY
   database_url: os.environ/DATABASE_URL
+  # Budget events POST to WEBHOOK_URL (an ntfy topic, see deploy/docker-compose.yml).
+  alerting: ["webhook"]
 
 litellm_settings:
-  max_budget: ${SATAT_MONTHLY_BUDGET}
-  budget_duration: 30d
+  # otel -> OTLP traces + GenAI metrics to Alloy; prometheus -> /metrics for Alloy to scrape.
+  callbacks: ["otel", "prometheus"]
+  # $10/day cap: budget alerts fire on the way to it (threshold_crossed at 85%/95%).
+  max_budget: ${SATAT_DAILY_BUDGET}
+  budget_duration: 1d

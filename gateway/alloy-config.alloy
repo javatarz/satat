@@ -1,0 +1,75 @@
+// Grafana Alloy: receive OTLP from LiteLLM and ship host + LiteLLM metrics to Grafana Cloud.
+// Credentials and endpoints come from the container env (see deploy/docker-compose.yml).
+
+// ---- OTLP from LiteLLM -> Grafana Cloud -----------------------------------
+otelcol.receiver.otlp "litellm" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+  http {
+    endpoint = "0.0.0.0:4318"
+  }
+
+  output {
+    metrics = [otelcol.processor.batch.default.input]
+    traces  = [otelcol.processor.batch.default.input]
+    logs    = [otelcol.processor.batch.default.input]
+  }
+}
+
+otelcol.processor.batch "default" {
+  timeout             = "5s"
+  send_batch_size     = 1000
+  send_batch_max_size = 2000
+
+  output {
+    metrics = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    traces  = [otelcol.exporter.otlphttp.grafana_cloud.input]
+    logs    = [otelcol.exporter.otlphttp.grafana_cloud.input]
+  }
+}
+
+otelcol.exporter.otlphttp "grafana_cloud" {
+  client {
+    endpoint    = sys.env("GRAFANA_CLOUD_OTLP_ENDPOINT")
+    auth        = otelcol.auth.basic.grafana_cloud.handler
+    compression = "gzip"
+  }
+}
+
+otelcol.auth.basic "grafana_cloud" {
+  client_auth {
+    username = sys.env("GRAFANA_CLOUD_OTLP_USERNAME")
+    password = sys.env("GRAFANA_CLOUD_API_KEY")
+  }
+}
+
+// ---- Host metrics (CPU / RAM / disk) -> Grafana Cloud ---------------------
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+}
+
+prometheus.scrape "host" {
+  targets    = prometheus.exporter.unix.host.targets
+  forward_to = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+// ---- LiteLLM operational metrics (/metrics) -> Grafana Cloud --------------
+prometheus.scrape "litellm" {
+  targets      = [{ __address__ = "litellm:4000" }]
+  bearer_token = sys.env("LITELLM_MASTER_KEY")
+  forward_to   = [prometheus.remote_write.grafana_cloud.receiver]
+}
+
+prometheus.remote_write "grafana_cloud" {
+  endpoint {
+    url = sys.env("GRAFANA_CLOUD_PROM_URL")
+
+    basic_auth {
+      username = sys.env("GRAFANA_CLOUD_PROM_USERNAME")
+      password = sys.env("GRAFANA_CLOUD_API_KEY")
+    }
+  }
+}
