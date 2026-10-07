@@ -78,7 +78,7 @@ Internet
 | PR updated | 4 | `{repo}#{issue} — PR #{num} updated` | View PR, View Canvas |
 | Agent timeout | 5 | `{repo}#{issue} — Running >{min}min` | View Canvas |
 | Agent failed | 5 | `{repo}#{issue} — Agent failed` | View Canvas |
-| Budget warning | 5 | `Satat — Monthly budget >80%` | View Canvas |
+| Budget warning | 5 | `Satat budget warning` (spend vs `$SATAT_DAILY_BUDGET`) | View Canvas |
 
 Agent started will be dropped once Satat is stable. Click action on all notifications opens Canvas. Tags: `satat` for filtering.
 
@@ -87,7 +87,8 @@ Agent started will be dropped once Satat is stable. Click action on all notifica
 - **Zero open ports** except 443 (Caddy) and 51820/udp (WireGuard). SSH is unreachable
   from the internet.
 - **Defense in depth**: oauth2-proxy (GitHub OAuth + allowlist) guards the browser
-  surfaces (`/canvas/*`, `/ntfy/*`); the Canvas API key guards the programmatic
+  surface (`/canvas/*`); ntfy (`notify.${SATAT_DOMAIN}`) uses its own topic auth
+  (ADR 0019); the Canvas API key guards the programmatic
   surfaces (`/api/*`, `/sockets/*`), which bypass oauth2-proxy so the T8 GitHub
   webhook can reach the Automation Server. A leaked API key is useless without also
   reaching a gated path; a valid OAuth session alone does not unlock `/api/*`.

@@ -9,8 +9,9 @@ Satat routes all LLM traffic through a self-hosted LiteLLM proxy on the VM rathe
   with the DevPass key. Model IDs are GitHub variables (`SATAT_MODEL_CHEAP` etc.); see
   ADR 0016.
 - **Budget cap**: a single global hard cap — `litellm_settings.max_budget`
-  (`SATAT_MONTHLY_BUDGET`, US$100) with `budget_duration: 30d`. `30d` resets on the 1st of
-  the month at midnight UTC, matching the LLM Gateway billing month.
+  (`SATAT_DAILY_BUDGET`, US$10) with `budget_duration: 1d`, resetting at midnight UTC.
+  (Originally a US$100/`30d` monthly cap; [T7 / ADR 0019](0019-ntfy-hosting-and-observability.md)
+  tightened it to a daily bound and added budget-alert notifications.)
 - **Per-token costs are fetched, not hardcoded**: LiteLLM prices unknown model IDs at $0,
   which would leave the cap unenforced. The deploy workflow pulls `prompt`/`completion`
   pricing for each configured model from `https://api.llmgateway.io/v1/models` and renders
@@ -19,7 +20,8 @@ Satat routes all LLM traffic through a self-hosted LiteLLM proxy on the VM rathe
 - **Postgres is required**: LiteLLM enforces budgets from stored spend and **fails open
   without a database**, so the stack runs Postgres (ADR 0017). SQLite is not used.
 - **No global soft budget**: LiteLLM exposes `soft_budget` only on keys/teams, not for the
-  whole proxy. The desired US$10/day non-blocking *warning* is therefore deferred to the
-  alerting work (ADR 0015 / T7), not enforced by this cap.
+  whole proxy. The daily budget is therefore a hard cap, but budget alerts fire on the way
+  to it — `threshold_crossed` at 85%/95% — and reach ntfy via the `budget-relay` sidecar
+  ([ADR 0015](0015-monitoring.md), [ADR 0019](0019-ntfy-hosting-and-observability.md)).
 - **Admin UI** (`/ui`) is not exposed yet; whether to serve it (behind oauth2-proxy) is
   decided in T6.

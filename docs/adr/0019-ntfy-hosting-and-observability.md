@@ -43,9 +43,11 @@ A single `alloy` container:
 
 LiteLLM enables OTLP metrics (`LITELLM_OTEL_INTEGRATION_ENABLE_METRICS=true`) plus the
 `otel` and `prometheus` callbacks. The `$10/day` budget is set globally
-(`max_budget`/`budget_duration: 1d`); budget alerts POST to `WEBHOOK_URL` (an ntfy topic).
-Alloy is configured by a static `gateway/alloy-config.alloy` that reads endpoints/credentials
-from the container environment (`sys.env`), so no templating is needed.
+(`max_budget`/`budget_duration: 1d`); budget alerts POST to `WEBHOOK_URL`, which points at
+the **`budget-relay` sidecar** (`deploy/budget-relay.py`). That relay re-publishes the
+events to the ntfy topic, because LiteLLM's JSON payload is not ntfy-shaped. Alloy is
+configured by a static `gateway/alloy-config.alloy` that reads endpoints/credentials from
+the container environment (`sys.env`), so no templating is needed.
 
 A `healthcheck-pinger` sidecar curls the healthchecks.io `HEALTHCHECKS_PING_URL` every 60s
 (dead-man switch for the VM). A final `if: failure()` deploy step publishes a deploy-failure
@@ -59,5 +61,6 @@ notification to the ntfy topic.
   possible later (add `auth-file` + tokens) without changing the topology.
 - **No browser SSO on ntfy** — by design, so the iOS app works.
 - **Observability is outbound-only**: the VM pushes to Grafana Cloud; nothing scrapes inbound.
-- **Budget webhook → ntfy** relies on LiteLLM's JSON payload being accepted by ntfy
-  (UNVERIFIED); a tiny relay can sit between `WEBHOOK_URL` and the topic if needed.
+- **Budget alerts reach ntfy through the `budget-relay` sidecar** (`WEBHOOK_URL` →
+  `budget-relay:8080` → ntfy topic). LiteLLM's payload schema is fixed and not ntfy-shaped,
+  so the relay is the translation layer ([ADR 0015](0015-monitoring.md)).
