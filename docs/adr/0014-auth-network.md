@@ -85,14 +85,17 @@ Agent started will be dropped once Satat is stable. Click action on all notifica
 
 - **Zero open ports** except 443 (Caddy) and 51820/udp (WireGuard). SSH is unreachable
   from the internet.
-- **Defense in depth**: oauth2-proxy (GitHub OAuth + allowlist) → Canvas API
-  key. Either alone would stop an attacker; both together means a leaked API key
-  is useless without GitHub auth.
+- **Defense in depth**: oauth2-proxy (GitHub OAuth + allowlist) guards the browser
+  surfaces (`/canvas/*`, `/ntfy/*`); the Canvas API key guards the programmatic
+  surfaces (`/api/*`, `/sockets/*`), which bypass oauth2-proxy so the T8 GitHub
+  webhook can reach the Automation Server. A leaked API key is useless without also
+  reaching a gated path; a valid OAuth session alone does not unlock `/api/*`.
 - **CI deployment requires WireGuard**: the deploy workflow brings the tunnel up
   before SSHing. A static peer key keeps this simple and stateless.
-- **Allowlist in GitHub Variables**: oauth2-proxy config template lives in the
-  repo with placeholders. Actual user/org/email values are stored as GitHub
-  Variables (not committed — avoids doxxing in the public repo). Adding a user
-  is done via the GitHub Actions Variables UI without a code change.
+- **Allowlist in GitHub Variables**: oauth2-proxy is configured by `OAUTH2_PROXY_*`
+  environment variables (no committed config template). The username allowlist
+  (`OAUTH2_ALLOWLIST`) is stored as a GitHub Variable, not committed — avoids doxxing
+  in the public repo. Adding a user is done via the GitHub Actions Variables UI without
+  a code change.
 - **ntfy.sh relay privacy**: E2E encryption means the relay never sees
   notification content. Only the iOS app can decrypt.

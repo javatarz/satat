@@ -60,6 +60,20 @@ So `OAUTH2_PROXY_EMAIL_DOMAINS=*` is mandatory with GitHub auth. No upstream is 
 (`validateUpstreams` over an empty list yields no errors); `static://202` is set to keep a
 defined "authenticated" response for non-auth paths.
 
+## Cookie secret must be URL-safe base64
+
+`OAUTH2_PROXY_COOKIE_SECRET` is decoded with Go's `base64.RawURLEncoding` and, if that
+fails, used as the raw bytes (`pkg/encryption/utils.go` `SecretBytes`), which are then fed
+to `aes.NewCipher` (`pkg/encryption/cipher.go`) and must be exactly 16/24/32 bytes.
+
+Plain `openssl rand -base64 32` emits standard base64 that contains `+` or `/` ~74% of the
+time; those are invalid in URL-safe base64, so the 44-char string falls through to
+`aes.NewCipher` and **oauth2-proxy fails to start**. Use upstream's recipe:
+
+```sh
+openssl rand -base64 32 | tr -- '+/' '-_'
+```
+
 ## forward_auth (Caddy)
 
 Caddy's native `forward_auth` (2.7+) sends the request to oauth2-proxy's `/oauth2/auth`
