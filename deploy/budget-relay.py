@@ -31,6 +31,7 @@ def notify(payload: dict) -> None:
     req.add_header("Priority", "high")
     req.add_header("Tags", "moneybag,warning")
     req.add_header("Click", CANVAS_URL)
+    req.add_header("Actions", f"view, View Canvas, {CANVAS_URL}, clear=true")
     urllib.request.urlopen(req, timeout=10).read()
 
 
@@ -43,7 +44,9 @@ class Handler(BaseHTTPRequestHandler):
             if isinstance(payload, dict):
                 notify(payload)
         except Exception as exc:  # noqa: BLE001 - never fail LiteLLM's alert path
-            print(f"relay error: {exc}", flush=True)
+            # Log the exception type only: some exception messages can embed the
+            # request URL, which contains the secret NTFY_TOPIC.
+            print(f"relay error: {type(exc).__name__}", flush=True)
         self.send_response(200)
         self.end_headers()
         self.wfile.write(b"ok")
