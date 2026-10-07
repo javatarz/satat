@@ -123,11 +123,19 @@ jobs:
           AUTOMATION_GIT_SYNC_REPO_URL: ${{ vars.SATAT_AUTOMATIONS_REPO_URL }}
           AUTOMATION_GIT_SYNC_BRANCH: ${{ vars.SATAT_AUTOMATIONS_BRANCH || 'main' }}
           AUTOMATION_GIT_SYNC_PATH: ${{ vars.SATAT_AUTOMATIONS_PATH || 'automations' }}
+          OAUTH2_PROXY_CLIENT_ID: ${{ vars.OAUTH2_PROXY_CLIENT_ID }}
+          OAUTH2_PROXY_CLIENT_SECRET: ${{ secrets.OAUTH2_PROXY_CLIENT_SECRET }}
+          OAUTH2_PROXY_COOKIE_SECRET: ${{ secrets.OAUTH2_PROXY_COOKIE_SECRET }}
+          OAUTH2_ALLOWLIST: ${{ vars.OAUTH2_ALLOWLIST }}
+          SATAT_DOMAIN: ${{ vars.SATAT_DOMAIN }}
         run: |
           set -euo pipefail
           if [ "$SCOPE" = "all" ]; then
             : "${CANVAS_API_KEY:?}" "${OH_SECRET_KEY:?}" "${GIT_SYNC_TOKEN:?}"
             : "${AUTOMATION_GIT_SYNC_REPO_URL:?}"
+            : "${OAUTH2_PROXY_CLIENT_ID:?}" "${OAUTH2_PROXY_CLIENT_SECRET:?}"
+            : "${OAUTH2_PROXY_COOKIE_SECRET:?}" "${OAUTH2_ALLOWLIST:?}"
+            : "${SATAT_DOMAIN:?}"
           fi
           install -m 600 /dev/null "$RUNNER_TEMP/deploy_key"
           printf '%s\n' "$DEPLOY_SSH_PRIVATE_KEY" > "$RUNNER_TEMP/deploy_key"
@@ -153,6 +161,11 @@ jobs:
               printf 'AUTOMATION_GIT_SYNC_REPO_URL=%s\n' "$AUTOMATION_GIT_SYNC_REPO_URL"
               printf 'AUTOMATION_GIT_SYNC_BRANCH=%s\n' "$AUTOMATION_GIT_SYNC_BRANCH"
               printf 'AUTOMATION_GIT_SYNC_PATH=%s\n' "$AUTOMATION_GIT_SYNC_PATH"
+              printf 'OAUTH2_PROXY_CLIENT_ID=%s\n' "$OAUTH2_PROXY_CLIENT_ID"
+              printf 'OAUTH2_PROXY_CLIENT_SECRET=%s\n' "$OAUTH2_PROXY_CLIENT_SECRET"
+              printf 'OAUTH2_PROXY_COOKIE_SECRET=%s\n' "$OAUTH2_PROXY_COOKIE_SECRET"
+              printf 'OAUTH2_ALLOWLIST=%s\n' "$OAUTH2_ALLOWLIST"
+              printf 'SATAT_DOMAIN=%s\n' "$SATAT_DOMAIN"
             } | $SSH deploy@10.10.0.1 'umask 077 && cat > /opt/satat/.env && chmod 600 /opt/satat/.env'
           fi
           $SSH deploy@10.10.0.1 'cd /opt/satat && docker compose up -d'
