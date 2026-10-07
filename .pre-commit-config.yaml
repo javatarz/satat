@@ -40,6 +40,11 @@ repos:
     hooks:
       - id: check-github-workflows
 
+  - repo: https://github.com/shellcheck-py/shellcheck-py
+    rev: v0.11.0.1
+    hooks:
+      - id: shellcheck
+
   - repo: local
     hooks:
       - id: actionlint
@@ -48,6 +53,14 @@ repos:
         entry: actionlint
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
+
+      - id: commit-msg-format
+        name: Commit message format
+        description: Enforce the mechanical commit message rules (see ~/.claude/CLAUDE.md)
+        entry: scripts/check-commit-msg.sh
+        language: system
+        stages: [commit-msg]
+        always_run: true
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 2.7.3

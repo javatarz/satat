@@ -20,6 +20,10 @@ Single-context: `CONTEXT.md` at root + `docs/adr/`. See `docs/agents/domain.md`.
 
 Use `docs/scratch/` for temporary working files, not `/tmp`. This directory is gitignored.
 
+### Container image digests
+
+Resolve image tags/digests with `scripts/image-digest.sh tags|digest <ghcr.io/owner/name> [tag]` (registry API, auth-free for GHCR). `docker manifest inspect` can block for minutes on a cold or rate-limited registry.
+
 ### Research flow
 
 When a wayfinder research ticket is open: commit findings to `docs/research/<topic>.md`, capture the settled outcome as an ADR in `docs/adr/`, then close the ticket. Never leave research in ticket bodies only.
