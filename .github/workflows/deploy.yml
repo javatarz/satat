@@ -6,6 +6,7 @@ on:
     paths:
       - "deploy/**"
       - "gateway/**"
+      - "ntfy/**"
       - ".github/workflows/deploy.yml"
       - ".github/workflows/deploy-config.yml"
   workflow_dispatch:

@@ -1,0 +1,9 @@
+# ntfy server config. Rendered by the deploy pipeline (envsubst of ${SATAT_DOMAIN}).
+# ntfy cannot be served under a subpath, so it lives on notify.${SATAT_DOMAIN} at /.
+base-url: "https://notify.${SATAT_DOMAIN}"
+listen-http: ":8080"
+behind-proxy: true
+cache-file: "/var/cache/ntfy/cache.db"
+cache-duration: "12h"
+# Relay only the message ID to ntfy.sh so the iOS app gets instant push (E2E-encrypted content).
+upstream-base-url: "https://ntfy.sh"

@@ -44,12 +44,14 @@ ${SATAT_DOMAIN} {
 		reverse_proxy canvas:8000
 	}
 
-	handle /ntfy/* {
-		import oauth2
-		reverse_proxy ntfy:8080
-	}
-
 	handle {
 		respond "Satat" 200
 	}
+}
+
+# ntfy cannot be served under a subpath, so it gets its own hostname at /.
+# Auth is ntfy's own (topic-as-password); the iOS app cannot do a browser OAuth dance.
+notify.${SATAT_DOMAIN} {
+	encode gzip
+	reverse_proxy ntfy:8080
 }

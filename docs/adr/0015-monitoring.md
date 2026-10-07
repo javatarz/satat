@@ -18,10 +18,10 @@ significant local overhead. We also want minimal tool sprawl.
    RAM) runs on the VM collecting node-level metrics (CPU, RAM, disk, network).
    Pre-built LiteLLM Grafana dashboards are imported directly.
 
-2. **healthchecks.io (free tier)** — VM liveness dead man switch. A cron job on
-   the VM pings healthchecks.io periodically. If the ping stops (VM crashed,
-   hung, network down), healthchecks.io alerts via its built-in notification
-   channels.
+2. **healthchecks.io (free tier)** — VM liveness dead man switch. A
+   `healthcheck-pinger` sidecar pings healthchecks.io every 60s. If the ping
+   stops (VM crashed, hung, network down), healthchecks.io alerts via its
+   built-in notification channels.
 
 3. **LiteLLM built-in alerting → ntfy** — Critical alerts (budget crossed,
    spend reports, LLM exceptions, hanging/slow requests, model outages) are
@@ -30,7 +30,10 @@ significant local overhead. We also want minimal tool sprawl.
    ["webhook"]` + `WEBHOOK_URL`); it is *not* natively ntfy-shaped, so a small
    relay is needed to turn those events into ntfy notifications. Events include
    `soft_budget_crossed`, `budget_crossed`, and `threshold_crossed` (85%/95% of
-   budget). The non-blocking US$10/day spend warning from ADR 0002 will be implemented here (T7).
+   budget). The non-blocking US$10/day spend warning from ADR 0002 is implemented
+   via LiteLLM `max_budget: $SATAT_DAILY_BUDGET` / `budget_duration: 1d` plus the
+   `deploy/budget-relay.py` sidecar (LiteLLM JSON → ntfy). See
+   [ADR 0019](0019-ntfy-hosting-and-observability.md).
 
 ### What we rejected
 

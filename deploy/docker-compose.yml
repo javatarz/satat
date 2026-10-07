@@ -8,6 +8,8 @@ volumes:
   caddy_config:
   postgres_data:
   canvas_data:
+  ntfy_cache:
+  alloy_data:
 
 services:
   caddy:
@@ -29,6 +31,10 @@ services:
       LLMGATEWAY_API_KEY: ${LLMGATEWAY_API_KEY}
       LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
       DATABASE_URL: ${DATABASE_URL}
+      OTEL_EXPORTER: otlp_http
+      OTEL_ENDPOINT: http://alloy:4318
+      LITELLM_OTEL_INTEGRATION_ENABLE_METRICS: "true"
+      WEBHOOK_URL: http://budget-relay:8080/
     volumes:
       - /opt/satat/gateway/litellm-config.yaml:/app/config.yaml:ro
     command: ["--config", "/app/config.yaml"]
@@ -73,6 +79,78 @@ services:
       AUTOMATION_GIT_SYNC_AUTHOR_EMAIL: satat@karun.me
     volumes:
       - canvas_data:/home/openhands/.openhands
+    networks:
+      - satat
+
+  ntfy:
+    image: binwiederhier/ntfy:v2.28.0
+    restart: unless-stopped
+    command: serve
+    init: true
+    volumes:
+      - /opt/satat/ntfy/server.yml:/etc/ntfy/server.yml:ro
+      - ntfy_cache:/var/cache/ntfy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://localhost:8080/v1/health || exit 1"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    networks:
+      - satat
+
+  alloy:
+    image: grafana/alloy:v1.20.1
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      GRAFANA_CLOUD_OTLP_ENDPOINT: ${GRAFANA_CLOUD_OTLP_ENDPOINT}
+      GRAFANA_CLOUD_OTLP_USERNAME: ${GRAFANA_CLOUD_OTLP_USERNAME}
+      GRAFANA_CLOUD_PROM_URL: ${GRAFANA_CLOUD_PROM_URL}
+      GRAFANA_CLOUD_PROM_USERNAME: ${GRAFANA_CLOUD_PROM_USERNAME}
+      GRAFANA_CLOUD_API_KEY: ${GRAFANA_CLOUD_API_KEY}
+      LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY}
+    volumes:
+      - /opt/satat/gateway/alloy-config.alloy:/etc/alloy/config.alloy:ro
+      - alloy_data:/var/lib/alloy/data
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    pid: host
+    cap_add:
+      - SYS_TIME
+    networks:
+      - satat
+
+  budget-relay:
+    image: python:3.13-alpine
+    restart: unless-stopped
+    command: ["python3", "/app/budget-relay.py"]
+    environment:
+      NTFY_PUBLISH_URL: https://notify.${SATAT_DOMAIN}/${NTFY_TOPIC}
+      SATAT_DOMAIN: ${SATAT_DOMAIN}
+    volumes:
+      - /opt/satat/budget-relay.py:/app/budget-relay.py:ro
+    networks:
+      - satat
+
+  healthcheck-pinger:
+    image: curlimages/curl:8.11.1
+    restart: unless-stopped
+    environment:
+      HEALTHCHECKS_PING_URL: ${HEALTHCHECKS_PING_URL}
+    entrypoint:
+      - sh
+      - -c
+      - >-
+        while true; do
+        curl -fsS --max-time 10 "$$HEALTHCHECKS_PING_URL" >/dev/null 2>&1 || true;
+        sleep 60;
+        done
     networks:
       - satat
 
