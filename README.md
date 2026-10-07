@@ -62,7 +62,7 @@ satat/
 ├── AGENTS.md               # Conventions for agents working in this repo
 ├── CONTEXT.md              # Domain glossary
 ├── terraform/              # GitHub Actions-provisioned infra (EC2, security group, Elastic IP, cloud-init)
-├── gateway/                # LiteLLM config + oauth2-proxy template
+├── gateway/                # Caddy + LiteLLM templates (oauth2-proxy is env-configured)
 ├── ntfy/                   # Notification server config
 ├── docs/
 │   ├── adr/                # Architecture Decision Records
