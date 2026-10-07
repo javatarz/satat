@@ -15,7 +15,9 @@ than a committed config file:
 - `AUTOMATION_GIT_SYNC_TOKEN` — an HTTPS PAT with read+write **contents** (there is no
   SSH or GitHub-App field; the GitHub App is reserved for event automations, see
   [ADR 0006](0006-github-app-identity.md))
-- `AUTOMATION_GIT_SYNC_AUTHOR_NAME` / `_EMAIL`
+- `AUTOMATION_GIT_SYNC_AUTHOR_NAME` / `_EMAIL` — fixed bot identity (`Satat` /
+  `satat@karun.me`), hardcoded in compose rather than a GitHub variable since it is a
+  constant, not a deployer-supplied value.
 
 Git Sync is enabled by configuring a repo. The sync **interval** has no env var
 (runtime-only, `PUT /api/automation/v1/git-sync/config`, `0` = manual); it is set once

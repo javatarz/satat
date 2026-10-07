@@ -24,10 +24,15 @@ certbot cron, and no HTTP-01 listener on port 80 (port 80 is closed). Routing:
 | Path | Target |
 |------|--------|
 | `/` | static 200 |
+| `/canvas` | redirect to `/canvas/` |
 | `/canvas/*` | Canvas (forward_auth via oauth2-proxy) |
+| `/api/*` | Canvas — Automation Server + Agent Server, incl. the GitHub event receiver `/api/automation/v1/events/github` |
+| `/sockets/*` | Canvas (websockets) |
 | `/ntfy/*` | ntfy (forward_auth via oauth2-proxy) |
 | `/v1/*` | LiteLLM |
-| `/webhook` | Canvas |
+
+Canvas paths are forwarded **unchanged** (no prefix stripping); the proxy must not remove
+a prefix. There is no separate `/webhook` route — the GitHub receiver is under `/api/*`.
 
 nginx and certbot are removed.
 
