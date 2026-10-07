@@ -2,8 +2,23 @@
 	email ${SATAT_EMAIL}
 }
 
+(oauth2) {
+	forward_auth oauth2-proxy:4180 {
+		uri /oauth2/auth
+		copy_headers X-Auth-Request-User X-Auth-Request-Email
+		@unauthorized status 401
+		handle_response @unauthorized {
+			redir * /oauth2/sign_in?rd={scheme}://{host}{uri}
+		}
+	}
+}
+
 ${SATAT_DOMAIN} {
 	encode gzip
+
+	handle /oauth2/* {
+		reverse_proxy oauth2-proxy:4180
+	}
 
 	handle /v1/* {
 		reverse_proxy litellm:4000
@@ -12,6 +27,7 @@ ${SATAT_DOMAIN} {
 	redir /canvas /canvas/ 308
 
 	handle /canvas/* {
+		import oauth2
 		reverse_proxy canvas:8000
 	}
 
@@ -24,6 +40,7 @@ ${SATAT_DOMAIN} {
 	}
 
 	handle /ntfy/* {
+		import oauth2
 		reverse_proxy ntfy:8080
 	}
 

@@ -24,6 +24,7 @@ certbot cron, and no HTTP-01 listener on port 80 (port 80 is closed). Routing:
 | Path | Target |
 |------|--------|
 | `/` | static 200 |
+| `/oauth2/*` | oauth2-proxy (sign-in / callback; not gated) |
 | `/canvas` | redirect to `/canvas/` |
 | `/canvas/*` | Canvas (forward_auth via oauth2-proxy) |
 | `/api/*` | Canvas — Automation Server + Agent Server, incl. the GitHub event receiver `/api/automation/v1/events/github` |

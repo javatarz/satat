@@ -25,7 +25,7 @@ automatically (ACME).
 
 | Layer | Service | Mechanism |
 |-------|---------|-----------|
-| 1 — Browser access | Caddy (443) | oauth2-proxy with GitHub OAuth via Caddy `forward_auth`. Allowlist stored as a GitHub Variable (not in the repo — prevents email doxxing in the public repo). Config template in `gateway/oauth2-proxy.yaml.tmpl` with placeholders; actual values injected at deploy time. |
+| 1 — Browser access | Caddy (443) | oauth2-proxy with GitHub OAuth via Caddy `forward_auth`. Allowlist stored as a GitHub Variable (not in the repo — prevents username/email doxxing in the public repo) and passed as `OAUTH2_PROXY_GITHUB_USERS`, a pure username allowlist (see [research](../research/oauth2-proxy-github.md)). Configured entirely by `OAUTH2_PROXY_*` environment variables written to `/opt/satat/.env` at deploy time — no committed config template. |
 | 2 — Canvas | Canvas (8000) | OpenHands API key. Inner layer — oauth2-proxy blocks unauthenticated visitors before they reach Canvas. |
 | 3 — SSH | VM (WireGuard interface only) | Plain WireGuard. SSH daemon binds to the WireGuard interface only. No SSH port on the public IP. |
 | 4 — CI deployment | VM (WireGuard interface only) | Static WireGuard peer (`ci`) with a keypair; the deploy runner brings the tunnel up for the workflow, deploys via SSH, then tears it down. Key stored as a GitHub secret. |
@@ -38,6 +38,7 @@ automatically (ACME).
 Internet
    │
    ├─ HTTPS (443) ─────────────────► Caddy
+   │                                   ├─ /oauth2/*  → oauth2-proxy (4180)
    │                                   ├─ /canvas/*  → oauth2-proxy → Canvas (8000)
    │                                   ├─ /api/*     → Canvas (8000)
    │                                   ├─ /sockets/* → Canvas (8000)
