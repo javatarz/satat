@@ -14,7 +14,7 @@ It never merges anything itself.
 ## How it works
 
 ```
-GitHub Issue labeled ──webhook──► Automation Server dispatches agent
+GitHub Issue labeled ──poll (15 min)──► Automation Server dispatches agent
                                          │
                               Agent Server (Docker sandbox)
                                 ├─ clones repo, reads AGENTS.md
@@ -52,8 +52,10 @@ GitHub Issue labeled ──webhook──► Automation Server dispatches agent
 3. Run the one-time bootstrap in [`bootstrap/`](./bootstrap/) (locally, with admin credentials) to create the S3 state bucket and the GitHub OIDC role, then set the GitHub repository variables it prints — plus the other variables/secrets from [`terraform/README.md`](./terraform/README.md).
 4. GitHub Actions provisions the VM (plan on PR, apply on merge to `main`) and deploys the service config.
 5. Point `SATAT_DOMAIN` at the instance's Elastic IP once provisioned.
-6. Install the Satat GitHub App on your target repo.
-7. Label an issue with `ready-for-agent` — Satat picks it up within seconds.
+6. Save a fine-grained GitHub PAT (Contents/Pull requests/Issues: RW, Metadata: RO) as
+   the `GITHUB_PERSONAL_ACCESS_TOKEN` secret in Agent Canvas (Settings → Secrets), and
+   merge the `satat-issue-to-pr` automation in your private `satat-automations` repo.
+7. Label an issue with `ready-for-agent` — Satat picks it up on its next poll.
 
 ## Repo structure
 

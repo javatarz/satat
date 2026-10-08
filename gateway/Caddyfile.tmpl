@@ -36,6 +36,11 @@ ${SATAT_DOMAIN} {
 		reverse_proxy canvas:8000
 	}
 
+	# GitHub webhooks arrive at /api/automation/v1/events/{source} (HMAC-verified
+	# against AUTOMATION_WEBHOOK_SECRET) and are covered by the ungated /api/*
+	# route below. There is deliberately no /webhook route: the Automation
+	# Server's ingress only knows /api/automation/*, and GitHub does not follow
+	# redirects, so an alias would 404.
 	handle /api/* {
 		reverse_proxy canvas:8000
 	}
