@@ -37,9 +37,13 @@ executable) `tarball_executables`.
 - Importing a **new** directory needs an owner. In local mode that is the
   deterministic local identity, but only once the org's Git Sync config has been
   saved (`AUTOMATION_GIT_SYNC_*`), otherwise the directory is skipped with a warning.
-- `agent_profile_id` is only validated when set; with it `null` and `model` `null`
-  the run uses the deployment's default agent settings. A profile id belongs to the
-  Agent Server, not the automation DB, so it cannot be hand-authored reliably.
+- `agent_profile_id` is only validated when set; with it `null` the API layer accepts
+  the record, but **a dispatcher-based bundle cannot run** — the bundle's entrypoint
+  reads `AUTOMATION_AGENT_PROFILE_ID` (`agent_conversation.py`), and the dispatcher
+  injects that env var **only when `automation.agent_profile_id` is truthy**
+  (`OpenHands/automation` `dispatcher.py`). A profile id belongs to the Agent Server,
+  not the automation DB, so it cannot be hand-authored reliably — it must be selected
+  in Canvas (which Git Sync then exports back).
 - A malformed `automation.yaml` (bad YAML, missing `name`/`entrypoint`, invalid
   trigger) skips **only that directory**; the cycle continues.
 
@@ -58,14 +62,26 @@ the raw webhook payload with custom functions `contains`, `glob`, `icontains`,
 
 ## Inbound GitHub events
 
-The receiver is `POST /api/automation/v1/events/{source}` — for GitHub,
-`/api/automation/v1/events/github`. Signature is HMAC-SHA256 in `X-Hub-Signature-256`,
-verified against **`AUTOMATION_WEBHOOK_SECRET`**; `X-GitHub-Delivery` de-duplicates
-(`providers.py`). Externally that is
-`https://<SATAT_DOMAIN>/api/automation/v1/events/github`, which the existing Caddy
-`/api/*` route already proxies to `canvas:8000` **without oauth2-proxy**. A separate
-`/webhook` route is unnecessary and would 404: the Canvas ingress only routes
-`/api/automation/*`, and GitHub does not follow redirects.
+The receiver is `POST /api/automation/v1/events/{org_id}/{source}`
+(`event_router.py`). Two paths reach it:
+
+- **Built-in `github`** (`{source}` = `github`) expects the body the OpenHands server
+  forwards, a normalized `{"payload": <github payload>}` wrapper, not a raw GitHub
+  delivery (`event_router.py`: "Missing payload in builtin source request"). Its
+  signature is HMAC-SHA256 in `X-Hub-Signature-256`, verified against the shared
+  **`AUTOMATION_WEBHOOK_SECRET`** (`providers.py`); `X-GitHub-Delivery` de-duplicates.
+  On self-hosted Canvas nothing forwards that wrapper, so this path is for OpenHands
+  Cloud/enterprise.
+- **A custom webhook** registered via `POST /api/automation/v1/webhooks` accepts the
+  **raw** payload with a per-webhook `webhook_secret` and configurable
+  `signature_header` (GitHub: `X-Hub-Signature-256`). This is the viable self-hosted
+  path for raw GitHub webhooks.
+
+Either way the route is under `/api/*`, which the existing Caddy config proxies to
+`canvas:8000` **without oauth2-proxy**; the `{org_id}` segment means an
+automation server's org UUID must be in the URL. A separate `/webhook` route is
+unnecessary and would 404 (the Canvas ingress only routes `/api/automation/*`, and
+GitHub does not follow redirects).
 
 ## GitHub identity
 
@@ -95,6 +111,13 @@ clones, branches, implements, tests, pushes, and opens the draft PR **itself** �
 scanner does not poll for completion, so it works under either trigger. The catalog
 form only offers a **cron** schedule (default `*/15 * * * *`).
 
+The dispatcher starts each conversation from the automation's **agent profile**: the
+profile supplies the model, tools, and secrets the conversation receives
+(`agent_conversation.py` calls `workspace.get_secrets(agent_profile_id=…)`). The
+`GITHUB_PERSONAL_ACCESS_TOKEN` secret must therefore be attached to that profile — the
+bundle's own `AGENT_SECRET_NAMES` allow-list belongs to the older `main.py` flow and is
+not what the shipped entrypoint uses.
+
 `config.json` keys read by the bundle (`main.py` `_CONFIG_TYPES`,
 `github_client.py::run_repositories`): `repos` (list of `owner/repo`),
 `trigger_label`, `branch_prefix`, `pull_request_mode` (`draft`/`ready`),
@@ -115,14 +138,25 @@ plus optional `repository`, `base_branch`, `review_label`.
    today no automation consumes the secret.
 4. The LiteLLM endpoint/model, Docker sandbox, and the standard-tier profile are
    **Agent Server settings** configured in Canvas (and the profile's allowed secrets),
-   not values in this repo or in `automation.yaml`.
-5. `WEBHOOK_SECRET` (GitHub secret) is passed to Canvas as
-   `AUTOMATION_WEBHOOK_SECRET`; the webhook itself is registered by hand at
-   `https://<SATAT_DOMAIN>/api/automation/v1/events/github`.
+   not values in this repo or in `automation.yaml`. The automation is committed
+   `state: INACTIVE, agent_profile_id: null`; the operator selects the profile and
+   enables it in Canvas, and Git Sync exports the UUID back.
+5. `WEBHOOK_SECRET` (GitHub secret) is passed to Canvas as `AUTOMATION_WEBHOOK_SECRET`.
+   It is the built-in-`github` shared secret; a self-hosted raw GitHub webhook needs a
+   **custom webhook** registered at
+   `https://<SATAT_DOMAIN>/api/automation/v1/events/{org_id}/{source}`. No event
+   automation exists yet, so the secret is currently inert (see ADR 0020).
+6. Two issue #27 acceptance bullets are **not** met by the vendored bundle and are
+   reassigned rather than silently dropped: the init-message additions
+   (story-refinement/oracle question, CI-round cap 3) belong with the story-refinement
+   and hooks work, and ntfy notifications on agent start/finish/PR/stuck are a
+   follow-up (the bundle emits none).
 
 ## Open items
 
-- Whether a future story-refinement / review automation should use an event trigger
-  (then the webhook secret becomes load-bearing).
-- The standard-tier model profile name in Canvas; the bundle reads the deployment's
-  default LLM settings, so pin the profile in Canvas rather than in `automation.yaml`.
+- Selecting the agent profile is a mandatory manual Canvas step; Git Sync then exports
+  `agent_profile_id` and `state: ACTIVE` back to `satat-automations`.
+- Whether a future story-refinement / review automation uses an event trigger (then the
+  webhook secret becomes load-bearing) or a custom webhook source.
+- ntfy notifications on automation lifecycle events are not emitted by the vendored
+  bundle.

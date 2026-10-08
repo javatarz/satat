@@ -44,19 +44,31 @@ that repo; Canvas imports it on the next sync cycle.
 
 The agent authenticates with a fine-grained personal access token scoped to the target
 repository (Contents: RW, Pull Requests: RW, Issues: RW, Metadata: RO), saved in Agent
-Canvas as the `GITHUB_PERSONAL_ACCESS_TOKEN` secret. It is never a value in this repo or
-in `satat-automations`. The bundle forwards only that named secret to the conversation
-(least privilege).
+Canvas as the `GITHUB_PERSONAL_ACCESS_TOKEN` secret and attached to the automation's
+**agent profile** (the dispatcher starts each conversation from that profile and
+resolves its secrets). It is never a value in this repo or in `satat-automations`.
+
+### The automation is staged disabled until a profile is selected
+
+The bundle's dispatcher requires the automation to carry an **agent profile id** (it
+reads `AUTOMATION_AGENT_PROFILE_ID`, which the service only injects when
+`automation.agent_profile_id` is set). That id belongs to the Agent Server and cannot
+be authored in git. The committed automation is therefore `state: INACTIVE` with
+`agent_profile_id: null`; the operator creates the profile in Canvas, selects it on the
+automation, and enables it, after which Git Sync exports the id and `state: ACTIVE`
+back to `satat-automations`. See the required setup steps in the README.
 
 ### The shipped automation is cron-polled
 
 `satat-issue-to-pr` triggers every 15 minutes (the catalog default). The GitHub webhook
-endpoint `POST /api/automation/v1/events/github` and its
-`AUTOMATION_WEBHOOK_SECRET` are still wired (Canvas env from the `WEBHOOK_SECRET`
-GitHub secret, reachable through the ungated Caddy `/api/*` route), so a later
-event-driven automation can use them without further infrastructure. No `/webhook`
-alias is added — the Canvas ingress only routes `/api/automation/*` and GitHub does not
-follow redirects.
+endpoint and `AUTOMATION_WEBHOOK_SECRET` are still wired (Canvas env from the
+`WEBHOOK_SECRET` GitHub secret, reachable through the ungated Caddy `/api/*` route), so
+a later event-driven automation can use them without further infrastructure. The
+receiver is `POST /api/automation/v1/events/{org_id}/{source}`; the built-in `github`
+source expects the OpenHands-normalized `{"payload": …}` wrapper, so a raw self-hosted
+GitHub webhook must register a **custom webhook** (`POST /api/automation/v1/webhooks`)
+rather than use the built-in source. No `/webhook` alias is added — the Canvas ingress
+only routes `/api/automation/*` and GitHub does not follow redirects.
 
 ### Model and sandbox are Agent Server settings
 
@@ -76,3 +88,10 @@ Agent Canvas / Agent Server, not in this repo or in `automation.yaml`.
   behaviour (model, secrets, profile) is Canvas state and is not.
 - **Re-pointing at another repository** is a `config.json` edit in `satat-automations`,
   not a GitHub variable change.
+- **Two issue #27 acceptance bullets are deliberately deferred**, not met by the
+  vendored bundle: the init-message additions (story-refinement/oracle question,
+  CI-round cap 3) and ntfy notifications on agent start/finish/PR/stuck. The former
+  belongs with the story-refinement/hooks work; the latter is a follow-up.
+- **The `GITHUB_APP_ID`, `GITHUB_APP_PRIVATE_KEY`, `TARGET_REPOSITORY`, and
+  `TARGET_USER` variables are retired** — nothing consumes them; the equivalent values
+  now live in `satat-automations/tarball/config.json` and in Canvas secrets.
