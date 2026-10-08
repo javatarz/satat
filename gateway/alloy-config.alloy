@@ -38,10 +38,11 @@ otelcol.exporter.otlphttp "grafana_cloud" {
 }
 
 otelcol.auth.basic "grafana_cloud" {
-  client_auth {
-    username = sys.env("GRAFANA_CLOUD_OTLP_USERNAME")
-    password = sys.env("GRAFANA_CLOUD_API_KEY")
-  }
+  // Top-level username/password are deprecated in newer Alloy but are the only
+  // form supported by the pinned v1.20.1 (client_auth was added later); without
+  // them the component fails with "no credential source provided".
+  username = sys.env("GRAFANA_CLOUD_OTLP_USERNAME")
+  password = sys.env("GRAFANA_CLOUD_API_KEY")
 }
 
 // ---- Host metrics (CPU / RAM / disk) -> Grafana Cloud ---------------------
