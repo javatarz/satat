@@ -122,6 +122,7 @@ jobs:
           CANVAS_API_KEY: ${{ secrets.CANVAS_API_KEY }}
           OH_SECRET_KEY: ${{ secrets.OH_SECRET_KEY }}
           GIT_SYNC_TOKEN: ${{ secrets.GIT_SYNC_TOKEN }}
+          WEBHOOK_SECRET: ${{ secrets.WEBHOOK_SECRET }}
           AUTOMATION_GIT_SYNC_REPO_URL: ${{ vars.SATAT_AUTOMATIONS_REPO_URL }}
           AUTOMATION_GIT_SYNC_BRANCH: ${{ vars.SATAT_AUTOMATIONS_BRANCH || 'main' }}
           AUTOMATION_GIT_SYNC_PATH: ${{ vars.SATAT_AUTOMATIONS_PATH || 'automations' }}
@@ -141,6 +142,7 @@ jobs:
           set -euo pipefail
           if [ "$SCOPE" = "all" ]; then
             : "${CANVAS_API_KEY:?}" "${OH_SECRET_KEY:?}" "${GIT_SYNC_TOKEN:?}"
+            : "${WEBHOOK_SECRET:?}"
             : "${AUTOMATION_GIT_SYNC_REPO_URL:?}"
             : "${OAUTH2_PROXY_CLIENT_ID:?}" "${OAUTH2_PROXY_CLIENT_SECRET:?}"
             : "${OAUTH2_PROXY_COOKIE_SECRET:?}" "${OAUTH2_ALLOWLIST:?}"
@@ -177,6 +179,7 @@ jobs:
               printf 'CANVAS_API_KEY=%s\n' "$CANVAS_API_KEY"
               printf 'OH_SECRET_KEY=%s\n' "$OH_SECRET_KEY"
               printf 'GIT_SYNC_TOKEN=%s\n' "$GIT_SYNC_TOKEN"
+              printf 'WEBHOOK_SECRET=%s\n' "$WEBHOOK_SECRET"
               printf 'AUTOMATION_GIT_SYNC_REPO_URL=%s\n' "$AUTOMATION_GIT_SYNC_REPO_URL"
               printf 'AUTOMATION_GIT_SYNC_BRANCH=%s\n' "$AUTOMATION_GIT_SYNC_BRANCH"
               printf 'AUTOMATION_GIT_SYNC_PATH=%s\n' "$AUTOMATION_GIT_SYNC_PATH"

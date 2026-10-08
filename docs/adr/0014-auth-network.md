@@ -89,8 +89,10 @@ Agent started will be dropped once Satat is stable. Click action on all notifica
 - **Defense in depth**: oauth2-proxy (GitHub OAuth + allowlist) guards the browser
   surface (`/canvas/*`); ntfy (`notify.${SATAT_DOMAIN}`) uses its own topic auth
   (ADR 0019); the Canvas API key guards the programmatic
-  surfaces (`/api/*`, `/sockets/*`), which bypass oauth2-proxy so the T8 GitHub
-  webhook can reach the Automation Server. A leaked API key is useless without also
+  surfaces (`/api/*`, `/sockets/*`), which bypass oauth2-proxy so GitHub webhooks
+  (event automations; the shipped issue-to-PR automation is cron-polled per
+  [ADR 0020](0020-automation-definition-auth-trigger.md)) can reach the Automation
+  Server. A leaked API key is useless without also
   reaching a gated path; a valid OAuth session alone does not unlock `/api/*`.
 - **CI deployment requires WireGuard**: the deploy workflow brings the tunnel up
   before SSHing. A static peer key keeps this simple and stateless.

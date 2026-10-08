@@ -77,6 +77,7 @@ services:
       AUTOMATION_GIT_SYNC_TOKEN: ${GIT_SYNC_TOKEN}
       AUTOMATION_GIT_SYNC_AUTHOR_NAME: Satat
       AUTOMATION_GIT_SYNC_AUTHOR_EMAIL: satat@karun.me
+      AUTOMATION_WEBHOOK_SECRET: ${WEBHOOK_SECRET}
     volumes:
       - canvas_data:/home/openhands/.openhands
     networks:
