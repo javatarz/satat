@@ -17,6 +17,9 @@ services:
     restart: unless-stopped
     ports:
       - "443:443"
+    environment:
+      # Injected as X-Session-API-Key for /api/automation/* (see Caddyfile.tmpl).
+      AUTOMATION_LOCAL_API_KEY: ${CANVAS_API_KEY}
     volumes:
       - /opt/satat/gateway/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data

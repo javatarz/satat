@@ -36,11 +36,20 @@ ${SATAT_DOMAIN} {
 		reverse_proxy canvas:8000
 	}
 
-	# GitHub webhooks arrive at /api/automation/v1/events/{source} (HMAC-verified
-	# against AUTOMATION_WEBHOOK_SECRET) and are covered by the ungated /api/*
-	# route below. There is deliberately no /webhook route: the Automation
-	# Server's ingress only knows /api/automation/*, and GitHub does not follow
-	# redirects, so an alias would 404.
+	# WORKAROUND (temporary): the Agent Canvas client does not send its
+	# X-Session-API-Key on Automation Server calls, so /api/automation/* 401s.
+	# Gate it behind oauth2-proxy and inject the local key upstream. This must be
+	# revisited before any event-driven automation: the GitHub webhook receiver
+	# lives at /api/automation/v1/events/{source} and GitHub cannot OAuth, so it
+	# will need its own ungated route. See ADR 0020.
+	handle /api/automation/* {
+		import oauth2
+		reverse_proxy canvas:8000 {
+			header_up -Authorization
+			header_up X-Session-API-Key {env.AUTOMATION_LOCAL_API_KEY}
+		}
+	}
+
 	handle /api/* {
 		reverse_proxy canvas:8000
 	}
