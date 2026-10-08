@@ -55,7 +55,12 @@ GitHub Issue labeled ──poll (15 min)──► Automation Server dispatches a
 6. Save a fine-grained GitHub PAT (Contents/Pull requests/Issues: RW, Metadata: RO) as
    the `GITHUB_PERSONAL_ACCESS_TOKEN` secret in Agent Canvas (Settings → Secrets), and
    merge the `satat-issue-to-pr` automation in your private `satat-automations` repo.
-7. Label an issue with `ready-for-agent` — Satat picks it up on its next poll.
+7. In Agent Canvas, create an agent profile using the standard-tier model
+   (`deepseek-v4.1-flash`) pointed at `http://litellm:4000` with that PAT attached,
+   then select it on the imported automation and enable it. The automation ships
+   disabled (`state: INACTIVE`, no profile id) because the profile UUID lives in the
+   Agent Server, not in git; Git Sync exports it back once selected.
+8. Label an issue with `ready-for-agent` — Satat picks it up on its next poll.
 
 ## Repo structure
 
