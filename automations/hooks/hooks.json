@@ -1,0 +1,26 @@
+{
+  "pre_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "satat-hooks.sh pre-tool-use",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": "satat-hooks.sh stop",
+          "timeout": 600
+        }
+      ]
+    }
+  ]
+}

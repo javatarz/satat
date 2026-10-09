@@ -54,6 +54,14 @@ repos:
         language: system
         files: ^\.github/workflows/.*\.ya?ml$
 
+      - id: satat-hooks-tests
+        name: Satat hook tests
+        description: Behavioural tests for the OpenHands PreToolUse/Stop hooks
+        entry: automations/hooks/test-hooks.sh
+        language: system
+        files: ^automations/hooks/
+        pass_filenames: false
+
       - id: commit-msg-format
         name: Commit message format
         description: Enforce the mechanical commit message rules (see ~/.claude/CLAUDE.md)
