@@ -1,0 +1,26 @@
+{
+  "pre_tool_use": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": ".openhands/pretooluse-block-dangerous.sh",
+          "timeout": 10
+        }
+      ]
+    }
+  ],
+  "stop": [
+    {
+      "matcher": "*",
+      "hooks": [
+        {
+          "type": "command",
+          "command": ".openhands/stop-ci-round-cap.sh",
+          "timeout": 600
+        }
+      ]
+    }
+  ]
+}
