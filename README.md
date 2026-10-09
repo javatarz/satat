@@ -60,7 +60,10 @@ GitHub Issue labeled ──poll (15 min)──► Automation Server dispatches a
    then select it on the imported automation and enable it. The automation ships
    disabled (`state: INACTIVE`, no profile id) because the profile UUID lives in the
    Agent Server, not in git; Git Sync exports it back once selected.
-8. Label an issue with `ready-for-agent` — Satat picks it up on its next poll.
+8. Label an issue with `ready-for-agent`. A story refinement gate
+   (`.github/workflows/story-refinement.yml`) runs deterministic checks first; if the
+   issue fails, it is commented, moved to `needs-refinement`, and the agent never sees
+   it. A passing issue is picked up on the next poll.
 
 ## Repo structure
 
