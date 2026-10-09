@@ -77,3 +77,5 @@ satat/
 │   └── agents/             # Skill scaffolding (issue tracker, labels, domain)
 └── .github/workflows/      # Config deployment pipeline
 ```
+
+<!-- Satat automation smoke test: trivial README comment (#54). -->
