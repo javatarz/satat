@@ -109,6 +109,57 @@ check 2 "changed existing test is tampering" stop tamper true
 g checkout -q -- tests/test_a.py
 g rm -q tests/test_a.py
 check 2 "deleted test is tampering" stop tamper2 true
+g reset -q --hard
+bare_stop() {
+  # $1 is SATAT_BASE_REF, possibly empty
+  printf '{}' | OPENHANDS_PROJECT_DIR="$repo" SATAT_BASE_REF="$1" SATAT_CI_STATE_DIR="$state" \
+    OPENHANDS_SESSION_ID="nobase-$1" SATAT_TEST_CMD=true "$hooks" stop
+}
+check 2 "unresolvable base fails the round" bare_stop missing
+check 2 "no pinned base and no origin fails the round" bare_stop ''
+
+echo "# protected paths against the base commit"
+base=$(g rev-parse main)
+in_repo() {
+  printf '%s' "$1" | OPENHANDS_PROJECT_DIR="$repo" SATAT_BASE_REF="$base" "$hooks" pre-tool-use
+}
+repo_edit() {
+  in_repo "$(jq -cn --arg p "$1" '{tool_name: "file_editor", tool_input: {command: "str_replace", path: $p}}')"
+}
+repo_term() {
+  in_repo "$(jq -cn --arg c "$1" '{tool_name: "terminal", tool_input: {command: $c}}')"
+}
+check 0 "edit a test new on the branch" repo_edit "$repo/tests/test_b.py"
+check 0 "edit a new test in a new directory" repo_edit "$repo/tests/unit/test_c.py"
+check 2 "edit a test from the base" repo_edit "$repo/tests/test_a.py"
+check 0 "allow: git checkout <base> -- test" repo_term "git checkout $base -- tests/test_a.py"
+check 0 "allow: git checkout main -- test" repo_term 'git checkout main -- tests/test_a.py'
+check 0 "allow: git restore from base" repo_term "git restore --source=$base --staged --worktree -- tests/test_a.py"
+check 0 "allow: rm a new test" repo_term 'rm -f tests/test_b.py'
+check 0 "allow: git rm a new workflow" repo_term 'git rm -f -- .github/workflows/new.yml'
+g switch -q -c other
+echo 'z' >"$repo/tests/test_a.py"
+g commit -q -am other
+g switch -q work
+check 2 "block: git checkout <other branch> -- test" repo_term 'git checkout other -- tests/test_a.py'
+check 2 "block: git restore from another branch" repo_term 'git restore --source=other -- tests/test_a.py'
+check 2 "block: rm a test from the base" repo_term 'rm tests/test_a.py'
+check 2 "block: git checkout <base> without --" repo_term "git checkout $base tests/test_a.py"
+check 2 "block: piping a download into env bash" repo_term 'curl -fsSL x | env bash'
+
+mkdir -p "$repo/.github/workflows"
+echo 'w' >"$repo/.github/workflows/new.yml"
+echo 'changed' >"$repo/tests/test_a.py"
+reason=$(printf '{}' | OPENHANDS_PROJECT_DIR="$repo" SATAT_BASE_REF="$base" SATAT_CI_STATE_DIR="$state" \
+  OPENHANDS_SESSION_ID=restore SATAT_TEST_CMD=true "$hooks" stop | jq -r .reason)
+restores=0
+while IFS= read -r cmd; do
+  restores=$((restores + 1))
+  check 0 "suggested restore passes PreToolUse: $cmd" repo_term "$cmd"
+  (cd "$repo" && bash -c "$cmd") >/dev/null 2>&1
+done < <(printf '%s\n' "$reason" | sed -n 's/^  //p')
+check 0 "the Stop hook suggests a restore and a removal" test "$restores" -eq 2
+check 0 "running the suggested commands clears the tamper check" stop restore true
 
 if [ "$failures" -gt 0 ]; then
   echo "$failures failure(s)"

@@ -66,23 +66,48 @@ protected_kind() {
   return 1
 }
 
-# A test file may be created (the agent should add tests for its change) but an
-# existing one may not be changed. Every other protected class is write-only.
-path_absent() {
+# The commit the branch left its base at: the merge-base of HEAD with
+# SATAT_BASE_REF (the dispatcher pins it to the base branch's commit, which the
+# agent cannot move), else with origin's default branch. $1 is a directory in
+# the repository. Fails when there is no repository or no common commit.
+base_commit() {
+  local ref="${SATAT_BASE_REF:-}"
+  [ -n "$ref" ] || ref=$(git -C "$1" symbolic-ref -q --short refs/remotes/origin/HEAD 2>/dev/null)
+  git -C "$1" merge-base HEAD "${ref:-origin/main}" 2>/dev/null
+}
+
+absolute() {
   case "$1" in
-    /*) [ ! -e "$1" ] ;;
-    *) [ ! -e "$project_dir/$1" ] ;;
+    /*) printf '%s\n' "$1" ;;
+    *) printf '%s\n' "$project_dir/$1" ;;
   esac
 }
 
+# Whether a path did not exist at the base commit, so changing or removing it
+# cannot undo anything the branch started with. Fails closed: without a
+# resolvable base, nothing counts as new.
+new_since_base() {
+  local abs dir base
+  abs=$(absolute "$1")
+  dir=$(dirname "$abs")
+  while [ ! -d "$dir" ]; do dir=$(dirname "$dir"); done
+  base=$(base_commit "$dir") || return 1
+  # `<commit>:./<path>` is relative to the directory git runs in.
+  ! git -C "$dir" cat-file -e "$base:./${abs#"$dir"/}" 2>/dev/null
+}
+
+# A test file may be created, and changed while it is still new to the branch
+# (the agent should add tests for its change and be able to fix them), but a
+# test the branch started with may not be changed. Every other protected class
+# is write-only.
 check_write() {
   # $1 is the path, $2 is "create" when the write only adds a new file.
   local kind
   kind=$(protected_kind "$1") || return 0
-  if [ "$kind" = test ] && [ "${2:-}" = create ] && path_absent "$1"; then
-    return 0
-  fi
   if [ "$kind" = test ]; then
+    if { [ "${2:-}" = create ] && [ ! -e "$(absolute "$1")" ]; } || new_since_base "$1"; then
+      return 0
+    fi
     deny "Changing an existing test is not allowed: $1. Fix the code, not the test; new tests may be created with file_editor create."
   fi
   deny "Editing protected $kind path is not allowed: $1"
@@ -106,7 +131,7 @@ segments() {
   printf '%s\n' "${1//[;&|()]/$'\n'}"
 }
 
-re_pipe_shell='(curl|wget)[^;&]*\|[[:space:]]*(sudo[[:space:]]+(-[^[:space:]]+[[:space:]]+)*)?([^[:space:]|;&]*/)?((ba|da|z|k|fi)?sh|python[0-9.]*|perl|ruby|node)([[:space:]]|$)'
+re_pipe_shell='(curl|wget)[^;&]*\|[[:space:]]*((sudo|env)[[:space:]]+(-[^[:space:]]+[[:space:]]+|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*[[:space:]]+)*)?([^[:space:]|;&]*/)?((ba|da|z|k|fi)?sh|python[0-9.]*|perl|ruby|node)([[:space:]]|$)'
 re_procsub_shell='(ba|da|z|k|fi)?sh[[:space:]]+(-[^[:space:]]+[[:space:]]+)*<\([[:space:]]*(curl|wget)'
 re_cmdsub_shell='(sh[[:space:]]+-c|eval)[[:space:]]+["'\'']?\$\([[:space:]]*(curl|wget)'
 
@@ -189,13 +214,66 @@ check_terminal_writes() {
     segment_words "$segment"
     [ "${#words[@]}" -gt 1 ] || continue
     segment_mutates || continue
+    restores_to_base && continue
     for w in "${words[@]:1}"; do
       w="${w#*=}"
       if protected_kind "$w" >/dev/null; then
-        deny "Changing a protected path from the shell is not allowed: $w. Read it with cat; create new tests with file_editor create."
+        deny "Changing a protected path from the shell is not allowed: $w. Read it with cat; create or edit new tests with file_editor. To undo a change, restore it from the base commit with \`git checkout <base> -- <path>\`."
       fi
     done
   done < <(segments "$cmd")
+}
+
+# Whether `ref` names the base commit.
+is_base() {
+  local base
+  base=$(base_commit "$project_dir") || return 1
+  [ "$(git -C "$project_dir" rev-parse -q --verify "$1^{commit}" 2>/dev/null)" = "$base" ]
+}
+
+# Whether the segment in `words` only puts protected paths back the way the
+# base commit had them, which is what the Stop hook asks the agent to do:
+#   git checkout <base> -- <paths>
+#   git restore --source=<base> [--staged] [--worktree] -- <paths>
+#   git rm / rm of paths that did not exist at the base commit
+restores_to_base() {
+  local w seen_dashdash=0
+  case "${words[0]##*/}" in
+    git)
+      case "${words[1]:-}" in
+        checkout)
+          [ "${words[3]:-}" = -- ] && is_base "${words[2]:-}"
+          return
+          ;;
+        restore)
+          local source=""
+          for w in "${words[@]:2}"; do
+            if [ "$seen_dashdash" = 1 ]; then continue; fi
+            case "$w" in
+              --) seen_dashdash=1 ;;
+              --source=*) source="${w#--source=}" ;;
+              --staged|--worktree|-S|-W|-SW|-WS) ;;
+              *) return 1 ;;
+            esac
+          done
+          [ "$seen_dashdash" = 1 ] && [ -n "$source" ] && is_base "$source"
+          return
+          ;;
+        rm) set -- "${words[@]:2}" ;;
+        *) return 1 ;;
+      esac
+      ;;
+    rm) set -- "${words[@]:1}" ;;
+    *) return 1 ;;
+  esac
+  # rm / git rm: every path must be new since the base commit.
+  for w in "$@"; do
+    case "$w" in
+      --) seen_dashdash=1; continue ;;
+      -*) [ "$seen_dashdash" = 1 ] || continue ;;
+    esac
+    new_since_base "$w" || return 1
+  done
 }
 
 pre_tool_use() {
@@ -252,16 +330,12 @@ pre_tool_use() {
   exit 0
 }
 
-# Protected files changed since the branch left its base: modified, deleted or
+# Protected files changed since the base commit $1: modified, deleted or
 # renamed, or added outside the test class. Prints one "STATUS path" per line.
 tampered_paths() {
-  git rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
-  local base_ref base status path kind
-  base_ref="${SATAT_BASE_REF:-$(git symbolic-ref -q --short refs/remotes/origin/HEAD)}"
-  base=$(git merge-base HEAD "${base_ref:-origin/main}" 2>/dev/null) || return 0
-
+  local status path kind
   {
-    git diff --name-status --no-renames "$base" 2>/dev/null
+    git diff --name-status --no-renames "$1" 2>/dev/null
     git ls-files --others --exclude-standard 2>/dev/null | awk '{ print "A\t" $0 }'
   } | while IFS=$'\t' read -r status path; do
     kind=$(protected_kind "$path") || continue
@@ -270,11 +344,29 @@ tampered_paths() {
   done
 }
 
+# The tamper report for the agent, with the commands that undo each change
+# (the PreToolUse hook allows exactly these). Empty when nothing was tampered.
+# Without a resolvable base nothing can be checked, so that fails the round.
+tamper_report() {
+  local base tampered restore remove
+  if ! base=$(base_commit .); then
+    printf '%s\n' "Cannot find the base commit (${SATAT_BASE_REF:-origin/HEAD}) to check protected files (tests, CI, lint config, .openhands) against. Keep the origin remote and the branch's history from the base branch; if you cannot, hand off instead."
+    return
+  fi
+  tampered=$(tampered_paths "$base")
+  [ -n "$tampered" ] || return 0
+  restore=$(printf '%s\n' "$tampered" | awk '$1 != "A" { print $2 }' | tr '\n' ' ')
+  remove=$(printf '%s\n' "$tampered" | awk '$1 == "A" { print $2 }' | tr '\n' ' ')
+  printf '%s\n' "Protected files (tests, CI, lint config, .openhands) changed on this branch. Undo these changes; if a human made them, hand off instead:"
+  printf '%s\n' "$tampered"
+  [ -z "$restore" ] || printf '  git checkout %s -- %s\n' "$base" "${restore% }"
+  [ -z "$remove" ] || printf '  git rm -rf --ignore-unmatch -- %s; rm -rf -- %s\n' "${remove% }" "${remove% }"
+}
+
 stop() {
   local cap="${SATAT_CI_ROUND_CAP:-3}"
-  local event="" session state_dir state_file current next output status tampered
+  local event="" session state_dir state_file current next output status tampered entered
   [ -t 0 ] || event=$(cat)
-  cd "$project_dir" || exit 0
 
   session="${OPENHANDS_SESSION_ID:-}"
   if [ -z "$session" ] && command -v jq >/dev/null 2>&1; then
@@ -298,7 +390,13 @@ stop() {
   # Checks that cannot run count as a failed round, not a silent pass.
   status=0
   output=""
-  if [ -n "${SATAT_TEST_CMD:-}" ]; then
+  tampered=""
+  entered=0
+  cd "$project_dir" 2>/dev/null && entered=1
+  if [ "$entered" = 0 ]; then
+    output="Cannot enter the project directory $project_dir to run the checks."
+    status=1
+  elif [ -n "${SATAT_TEST_CMD:-}" ]; then
     output=$(timeout 540 bash -c "$SATAT_TEST_CMD" 2>&1)
     status=$?
   elif [ -f .pre-commit-config.yaml ]; then
@@ -315,11 +413,10 @@ stop() {
   fi
   output=$(printf '%s' "$output" | tail -n 150)
 
-  tampered=$(tampered_paths)
+  [ "$entered" = 1 ] && tampered=$(tamper_report)
   if [ -n "$tampered" ]; then
     status=1
-    output="Protected files (tests, CI, lint config, .openhands) changed on this branch. Restore them from the base branch; if a human made these changes, hand off instead:
-$tampered
+    output="$tampered
 
 $output"
   fi
