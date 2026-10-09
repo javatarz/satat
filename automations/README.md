@@ -98,7 +98,11 @@ and opens the pull request itself before it stops, so a protected-path change
 that slipped past PreToolUse can reach GitHub (and a changed workflow runs on
 the pull request) before the tamper check fails the round. The hand-off message
 and failing round make it visible; what the workflow can reach is bounded by
-the repository's OIDC trust policy and secrets, not by these hooks.
+the repository's OIDC trust policy and secrets, not by these hooks. Two issues
+close this at the source: #60 drops the agent token's Workflows permission, so
+GitHub rejects a push that touches `.github/workflows/`, and #61 gives PR plans
+a read-only role and limits the full Terraform role to the `production`
+environment (the hooks do not protect `terraform/`, and a plan can run code).
 
 ## Verifying
 
