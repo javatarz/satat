@@ -68,7 +68,7 @@ services:
       - satat
 
   canvas:
-    image: ghcr.io/openhands/agent-canvas:1.25.0
+    image: ghcr.io/openhands/agent-canvas:1.26.0
     restart: unless-stopped
     environment:
       LOCAL_BACKEND_API_KEY: ${CANVAS_API_KEY}
