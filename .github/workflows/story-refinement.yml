@@ -1,0 +1,174 @@
+# STORY REFINEMENT GATE — deterministic pre-flight for agent-ready issues.
+#
+# Runs when an issue is labelled `ready-for-agent`, before the (cron-polled)
+# issue-to-PR automation reaches it. The checks are pure strings — no LLM, no
+# network beyond the GitHub API. A failing issue is commented with the specific
+# failures, loses `ready-for-agent`, and gains `needs-refinement`, so the agent
+# never picks up an under-specified story.
+#
+# Coordination with the agent automation (T8, #27): the shipped automation is
+# cron-polled (ADR 0020), so there is no webhook dispatch racing this workflow.
+# The label swap is still ordered after the comment so a reviewer always has the
+# reason before the label flips.
+name: Story refinement
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  issues: write
+
+concurrency:
+  group: story-refinement-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    name: Deterministic readiness checks
+    runs-on: ubuntu-latest
+    # Ignore pull-request labels and any label other than the agent trigger.
+    if: github.event.label.name == 'ready-for-agent' && github.event.issue.pull_request == null
+    steps:
+      - name: Check issue readiness
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const MARKER = '<!-- satat-story-refinement -->';
+            const MIN_BODY_CHARS = 200;
+
+            const issue = context.payload.issue;
+            const body = (issue.body || '').trim();
+            const title = issue.title || '';
+
+            // Scan prose only: a phrase quoted or shown in code is a mention,
+            // not a use (e.g. an issue that documents the forbidden phrases).
+            const prose = body
+              .replace(/```[\s\S]*?```/g, ' ')
+              .replace(/`[^`]*`/g, ' ')
+              .replace(/"[^"]*"/g, ' ')
+              .replace(/\u201c[^\u201d]*\u201d/g, ' ');
+            const haystack = `${title}\n${prose}`;
+
+            const fileRef = new RegExp(
+              '[\\w.-]+/[\\w.-]+\\.[a-z0-9]+' +
+                '|\\b[\\w-]+\\.(?:ya?ml|json|md|tf|sh|py|ts|tsx|js|jsx|go' +
+                '|rs|java|cs|rb|php|swift|kt|toml|ini|cfg|conf|txt|sql|proto' +
+                '|hcl)\\b',
+              'i'
+            );
+            const tribalRe = new RegExp(
+              '\\b(?:as discussed|the usual way|as we agreed' +
+                '|as mentioned (?:earlier|before)|you know what i mean' +
+                '|the obvious approach)\\b',
+              'i'
+            );
+            const vagueRe = new RegExp(
+              '\\b(?:improve|improving|improvement|optimize|optimizing' +
+                '|optimization|refactor|refactoring|cleanup|enhance|enhancing' +
+                '|rework)\\b',
+              'i'
+            );
+
+            const failures = [];
+
+            if (body.length < MIN_BODY_CHARS) {
+              failures.push(
+                `**Body is ${body.length} chars** (minimum ${MIN_BODY_CHARS}). ` +
+                  'State the outcome, the scope, and a check a reviewer can run.'
+              );
+            }
+
+            if (!/^#{1,6}\s+acceptance\b/im.test(body)) {
+              failures.push(
+                '**No `## Acceptance` section.** List the criteria that must ' +
+                  'hold when the work is done, one per checkbox.'
+              );
+            }
+
+            if (!fileRef.test(body)) {
+              failures.push(
+                '**No file or component references.** Name the files, ' +
+                  'directories, or components the change touches.'
+              );
+            }
+
+            const tribal = haystack.match(tribalRe);
+            if (tribal) {
+              failures.push(
+                `**Tribal-knowledge phrase: "${tribal[0]}".** Replace it with ` +
+                  'the context a reader without the conversation needs.'
+              );
+            }
+
+            const vague = haystack.match(vagueRe);
+            if (vague) {
+              failures.push(
+                `**Vague verb: "${vague[0]}".** Describe the concrete, ` +
+                  'observable change instead.'
+              );
+            }
+
+            core.setOutput('passed', String(failures.length === 0));
+
+            if (failures.length === 0) {
+              core.info('Story refinement checks passed; taking no action.');
+              return;
+            }
+
+            const comment =
+              `${MARKER}\n### Story refinement gate\n\n` +
+              'This issue does not meet the deterministic readiness checks, so ' +
+              '`ready-for-agent` was removed and `needs-refinement` was added. ' +
+              'The agent will not pick it up until it passes.\n\n' +
+              'Checks that failed:\n\n' +
+              failures.map((f) => `- ${f}`).join('\n') +
+              '\n\nAddress the points above, then re-add `ready-for-agent` to ' +
+              'run the gate again.';
+
+            const comments = await github.paginate(
+              github.rest.issues.listComments,
+              {
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                per_page: 100,
+              }
+            );
+            const existing = comments.find(
+              (c) => c.body && c.body.includes(MARKER)
+            );
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body: comment,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                body: comment,
+              });
+            }
+
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['needs-refinement'],
+            });
+
+            try {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: issue.number,
+                name: 'ready-for-agent',
+              });
+            } catch (error) {
+              if (error.status !== 404) throw error;
+            }
