@@ -1,6 +1,6 @@
 # Research: Satat platform requirements (draft for confirmation)
 
-Status: **draft, 2026-10-15.** This defines what we are looking for before evaluating
+Status: **confirmed 2026-10-15 by [ADR 0022](../../adr/0022-v2-platform-requirement-decisions.md).** NN1, NN9 and NN12 below were changed or added there, and open questions Q1 to Q7 are answered there. This defines what we are looking for before evaluating
 frameworks. Nothing here is decided until the owner confirms it; open questions are at
 the end.
 
@@ -30,10 +30,10 @@ configured plugins, not rewriting the system.
 
 ## Non-negotiables
 
-1. **Pluggable workload runtime.** Every task runs in its own isolated workload: a Docker
-   container on a single host, a pod on Kubernetes, or a cloud container service (ECS/
-   Fargate, Cloud Run jobs, Azure Container Apps jobs). No shared process or shared
-   filesystem between tasks. Capacity grows by adding hosts or nodes.
+1. **Pluggable workload runtime.** Every task runs in its own isolated workload: a pod on
+   Kubernetes (k3d on a laptop, k3s on a single VM, EKS, GKE or AKS). No shared process or
+   shared filesystem between tasks. Capacity grows by adding nodes. *(Reworded by ADR 0022;
+   it previously listed Docker, ECS/Fargate, Cloud Run jobs and Azure Container Apps jobs.)*
 2. **Pluggable harness.** Claude Code, opencode, and pi are supported at launch. Adding a
    harness is an adapter plus configuration, not a fork. The harness is chosen per
    workflow step, overridable per repo.
@@ -62,7 +62,7 @@ configured plugins, not rewriting the system.
    secret store, ingress and auth, notifications, observability backend, model router,
    and issue tracker each sit behind an interface with at least a local implementation
    and one cloud or Kubernetes implementation. A local single-node install must work with
-   nothing but Docker.
+   Docker plus the k3d CLI. *(Reworded by ADR 0022; it previously said "nothing but Docker".)*
 10. **Security posture carries over.** Secrets never in git, IaC state, or instance
     metadata (ADR 0011). Each task gets least-privilege, short-lived credentials where the
     provider supports them. Agent code is untrusted: no host access, no container
@@ -70,6 +70,10 @@ configured plugins, not rewriting the system.
 11. **Self-hosted, with a license that allows a public recipe.** Satat is published as a
     "deploy your own" recipe, so every component's license must allow that. No managed
     control plane we cannot run ourselves.
+12. **Credential accounts and usage visibility.** *(Added by ADR 0022.)* Repos can belong to
+    different organisations, so each repo maps to a credential account: an org's Claude token
+    or a LiteLLM key or team. Caps, back-off and token-expiry alerts apply per account. Usage
+    is visible per account, and conversations are captured so they can be analysed later.
 
 ## Shape of the solution
 
@@ -107,7 +111,7 @@ OpenHands SDK) belong to the harness layer, not the orchestration layers. They a
 candidates for a custom harness, not substitutes for the scheduler, workflow engine, or
 control plane.
 
-## Open questions
+## Open questions (answered in ADR 0022)
 
 1. **Merge authority.** Does Satat stop at draft PRs for human review, or may a workflow
    merge after gates pass (as OpenHands' "software factory" does)?
