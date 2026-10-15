@@ -10,7 +10,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # Skip the refresh when the VM is stopped (vm-power.yml) or destroyed
+  # (terraform-destroy.yml); the deploy would only fail on the tunnel.
+  check:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      running: ${{ steps.state.outputs.running }}
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_TERRAFORM_ROLE_ARN }}
+          aws-region: ap-south-1
+
+      - name: Check instance state
+        id: state
+        run: |
+          set -euo pipefail
+          ID=$(aws ec2 describe-instances \
+            --filters 'Name=tag:Name,Values=satat' \
+              'Name=instance-state-name,Values=running' \
+            --query 'Reservations[].Instances[].InstanceId' --output text)
+          if [ -n "$ID" ]; then
+            echo "running=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "running=false" >> "$GITHUB_OUTPUT"
+            echo "VM not running; skipping refresh" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
   refresh:
+    needs: check
+    if: needs.check.outputs.running == 'true'
     permissions:
       contents: read
       id-token: write
