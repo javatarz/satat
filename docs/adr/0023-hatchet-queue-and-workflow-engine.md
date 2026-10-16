@@ -55,6 +55,14 @@ How Satat uses it, as verified in the spike:
   without them.
 - A cron on a workflow whose concurrency key reads from input produces no runs and no error.
   Cron creation always passes input, with a test.
+- Hatchet re-delivers a task when the platform stalls (a 200 s stall lost the worker's
+  heartbeat and re-ran steps already running). The launcher must be idempotent: a
+  deterministic claim or pod name, `AlreadyExists` treated as "adopt it", and deletion on
+  every exit path (#104).
+- Platform pods (Postgres, Hatchet, LiteLLM, worker) get resource requests, and Postgres and
+  LiteLLM get limits. Without them, memory exhaustion from step pods restarted the platform
+  (#104). The global cap is sized from the node's allocatable memory minus the platform's
+  share (about 2.4 GiB) and the measured harness memory.
 - Hatchet's dashboard gives a first control plane. Whether a purpose-built work-item board is
   still needed stays open (#84, build step 8).
 - Satat still builds the YAML interpreter, the workload launcher, the drivers and the
@@ -64,8 +72,10 @@ How Satat uses it, as verified in the spike:
 
 - A queue held for hours (longest wait was about 6 minutes) and exact cancel timing under the
   5-minute default on an unpaused queue.
-- Behaviour under real load (tests ran 36 runs at a time), on k3s and on arm64.
-- RAM of Hatchet with k3s, Postgres and LiteLLM on the VM (#104).
+- Behaviour under sustained load. The caps tests ran 36 runs at a time, and the #104 spike
+  ran up to 10 concurrent step pods for about 30 s each on k3s and arm64 (clean runs).
+- RAM on the VM itself: #104 measured the stack on a laptop k3s (about 2.4 GiB with nothing
+  running, see `docs/research/v2/platform-ram-spike.md`), not on the t4g.xlarge.
 - Tenant-scoped concurrency across workflows and the retention variable.
 
-Revisit this ADR if a multi-hour queue loses work or the VM cannot hold the stack (#104).
+Revisit this ADR if a multi-hour queue loses work or the real harness memory leaves too few concurrent steps on the t4g.xlarge (the platform alone fits, #104).

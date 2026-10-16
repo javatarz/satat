@@ -25,8 +25,11 @@ unanswered.
   Docker alone.
 - **Laptop isolation:** plain container isolation on the laptop. gVisor is unproven on k3d and
   absent on macOS. The laptop runs only the owner's repos. gVisor stays on k3s and the clouds.
-- **k3s overhead:** accepted on the current t4g.xlarge. The RAM of k3s, Hatchet, Postgres and
-  LiteLLM together is measured in a spike. A larger instance is the fallback.
+- **k3s overhead:** accepted on the current t4g.xlarge. Measured in #104: k3s, Hatchet,
+  Postgres, LiteLLM and a worker use about 2.4 GiB with nothing running, leaving about 13 GiB
+  of the 16 for step pods (`docs/research/v2/platform-ram-spike.md`). Concurrency is then set
+  by the real harness's memory and CPU per step, which is not yet measured. A larger instance
+  is the fallback if that leaves too few steps.
 
 ### Open questions
 
