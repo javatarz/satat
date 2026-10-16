@@ -51,7 +51,8 @@ a **credential account**: an org's Claude token, or a LiteLLM key or team on the
   best available signal for each Claude token.
 - Conversations are captured for later analysis and cost optimisation. Gateway lanes already
   pass through LiteLLM. For the Claude lane, a spike tests whether `claude -p` can run through
-  a proxy on an OAuth token, and whether Anthropic's terms allow it. If not, the runner
+  a proxy on an OAuth token, and whether Anthropic's terms allow it. Spike #102 found the
+  technical path works (`claude-lane-spike.md`); the terms question is still open. If not allowed, the runner
   captures stream-json transcripts and usage events and ships them to storage.
 
 ## Consequences

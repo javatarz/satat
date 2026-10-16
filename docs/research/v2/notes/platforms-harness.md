@@ -121,7 +121,9 @@ Licenses:
   In `-p` mode, "the key is always used when present" [S3]. **So any stray
   `ANTHROPIC_API_KEY` silently defeats the subscription lane.** The workload must never
   receive one. OpenHands encodes the same rule: it strips `ANTHROPIC_API_KEY` and
-  `ANTHROPIC_BASE_URL` when `CLAUDE_CODE_OAUTH_TOKEN` is present [S9].
+  `ANTHROPIC_BASE_URL` when `CLAUDE_CODE_OAUTH_TOKEN` is present [S9]. That is an adapter
+  choice, not a Claude Code limit: spike #102 showed `claude -p` still sends to
+  `ANTHROPIC_BASE_URL` on an OAuth token (`claude-lane-spike.md`).
 - **`--bare` does not read `CLAUDE_CODE_OAUTH_TOKEN`** [S3][S5]. The Claude driver can't use
   bare mode. Isolate configuration another way: a fresh `CLAUDE_CONFIG_DIR` per workload,
   plus `--setting-sources`, `--strict-mcp-config`, and `--settings`.
@@ -229,7 +231,8 @@ parser.
   Default commands include `npx -y @agentclientprotocol/claude-agent-acp` and pi-acp [S9].
 - The provider presets record hard-won adapter facts that Satat should reuse:
   - Claude: `CLAUDE_CODE_OAUTH_TOKEN` is "dominant" and causes `ANTHROPIC_API_KEY` and
-    `ANTHROPIC_BASE_URL` to be stripped.
+    `ANTHROPIC_BASE_URL` to be stripped. (Spike #102: Claude Code itself still honours the
+    base URL on an OAuth token, so this is an OpenHands choice.)
   - opencode: "Zen's endpoint comes from the model catalogue… neither OPENCODE_BASE_URL nor
     OPENAI_BASE_URL diverts it. A per-provider `options.baseURL` in the config file is the
     only override." Its modes are `build` and `plan`.
