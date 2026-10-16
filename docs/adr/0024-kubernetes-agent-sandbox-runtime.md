@@ -59,17 +59,26 @@ Conditions the build must meet:
   claim name is deterministic from the run and step, `AlreadyExists` means adopt, and the
   claim is deleted on every exit path.
 - **Platform pods have resource requests, and Postgres and LiteLLM have limits.** Without
-  them, memory exhaustion from steps restarted Hatchet, LiteLLM and the worker (#104). The
-  global cap is sized from node allocatable memory minus the platform's share, about
-  2.4 GiB, and the measured harness memory per step.
+  them, memory exhaustion from steps restarted Hatchet, LiteLLM and the worker (#104).
+- **Per-step requests and limits, and a deploy-time global cap.** Each `SandboxTemplate` sets
+  memory and CPU requests and limits, so Kubernetes enforces them. The global cap is a
+  deploy-time value: cluster allocatable memory, minus the platform's share (about 2.4 GiB),
+  divided by the per-step memory request. Node size follows from the concurrency wanted, not
+  the reverse. The initial per-step values are provisional and conservative until measured
+  (#109).
+- **gVisor runs the real harness, where gVisor is used.** Whether it is required is the
+  isolation floor decision (#110). Where it is used, the lane image must run the harness
+  (Claude Code or OpenHands) under `runsc` on a real k3s node before the runtime work is
+  accepted, not only a busybox-class image. If it cannot, revisit this ADR.
 
 ## Consequences
 
 - No per-backend drivers. Cloud Run, ACA jobs and ECS are not targets (ADR 0022). A host
   that cannot run Kubernetes needs a new ADR.
-- The platform (k3s, Hatchet, Postgres, LiteLLM, worker) uses about 2.4 GiB idle. A 16 GiB
-  node leaves about 13 GiB for steps. Concurrency is set by the real harness's memory and
-  CPU per step, which is not measured yet (follow-up spike).
+- The platform (k3s, Hatchet, Postgres, LiteLLM, worker) uses about 2.4 GiB idle. That share
+  is fixed, so whatever the cluster has beyond it is available for steps. Concurrency follows
+  from the per-step memory request, which is provisional until measured on real v0.2 steps
+  (#109).
 - Footprint is small: the agent-sandbox controller used 17 MiB. A pod was Running in 1 to
   2 s up to 4 concurrent steps and 3 to 5 s at 8 on a healthy node.
 - A single node has no HA. The cluster holds no durable state apart from Postgres, so a
@@ -83,7 +92,8 @@ Conditions the build must meet:
 
 - gVisor on a real k3s node, and whether the lane image runs the harness under it. Only a
   busybox-class image ran.
-- The real harness's RAM and CPU per step, and the concurrency it allows (spike to follow).
+- The real harness's RAM and CPU per step. Per-step requests and limits are provisional
+  defaults; #109 calibrates them once v0.2 runs real steps.
 - Egress allowlists by hostname. The in-cluster egress-proxy pattern is untested, and k3s
   policy is IP and CIDR only.
 - Warm pools (`replicas > 0`), annotation size limits and annotation visibility to other
