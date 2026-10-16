@@ -4,6 +4,19 @@ Satat (सतत, "continuous / constant") is a self-hosted, always-on AI coding
 watches a GitHub backlog, picks up labeled issues, writes code, runs tests, and opens draft
 pull requests for human review.
 
+## Versions
+
+Satat is pre-1.0: no version is a finished release. 1.0 means the factory vision works.
+
+**v0.1**:
+The Canvas/OpenHands stack on an EC2 VM with Docker Compose. Kept on the `v0.1` branch,
+tagged `v0.1.0-final` (`8bba425`). Older docs describe this as "v1".
+
+**v0.2**:
+The Kubernetes platform on `main`: Hatchet, agent-sandbox, one-shot steps. Older docs,
+paths and issues call this "v2" (for example `docs/research/v2/`, #99). The terms mean the
+same thing.
+
 ## Language
 
 **Satat**:
