@@ -30,13 +30,16 @@ When a wayfinder research ticket is open: commit findings to `docs/research/<top
 
 ### Provision-deploy split
 
-Terraform provisions infrastructure (changes under `terraform/`) and GitHub Actions deploys configuration (gateway templates, ntfy config). Both run in GitHub Actions: provisioning plans on PR and applies on merge to `main`; config-only pushes deploy independently. AWS access uses GitHub OIDC.
+Satat v0.2 assumes a conformant Kubernetes cluster is available. Provisioning (a cluster) will be
+Terraform recipes per cloud provider; deploying Satat onto it is a separate step (Helm chart).
+Neither exists yet. The EC2 + Docker Compose pipeline lives on the `v0.1` branch.
 
 ### Secrets
 
-Never in Terraform state, cloud-init, or git-tracked files. AWS access uses GitHub OIDC (no long-lived keys); other secrets live in GitHub repository secrets.
+Never in git-tracked files, Terraform state or cloud-init. Where secrets live on Kubernetes is
+undecided (planned ADR); until then, GitHub repository secrets and cloud OIDC (no long-lived keys).
 
 ### External repos
 
-- `javatarz/satat` — this repo, public, contains Terraform, docs, CI, service configs
+- `javatarz/satat` — this repo, public, contains docs, service configs and CI
 - `javatarz/satat-automations` — private, Git Sync target for automation YAML files
