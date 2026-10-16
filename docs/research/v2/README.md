@@ -11,6 +11,7 @@ starting with [ADR 0021](../../adr/0021-adopt-platform-plumbing.md).
 | [why-hatchet.md](why-hatchet.md) | The case for Hatchet as the queue and workflow engine, its costs, and how it compares with the alternatives |
 | [platform-ram-spike.md](platform-ram-spike.md) | Measured RAM and CPU of k3s, Hatchet, Postgres and LiteLLM and how many step pods fit, across three VM sizes |
 | [intake-triggers.md](intake-triggers.md) | Intake for webhooks, cron and alerts: Hatchet built-ins versus gateways and integration platforms |
+| [octo-sts-fit.md](octo-sts-fit.md) | Whether octo-sts can mint per-step GitHub tokens on k3s, what self-hosting involves, and the alternatives. Recommends a Satat token broker |
 | [notes/](notes/) | Raw per-topic research with full citations, used as input to the files above. Notes may describe options that were later rejected |
 
 The current architecture is kept in the onboarding guide
