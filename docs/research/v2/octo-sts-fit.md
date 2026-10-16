@@ -75,13 +75,13 @@ Works only with a public issuer (see above) and uses the shared App with its bro
 
 ## Recommendation
 
-1. Build the token broker (alternative A) as build step 7. It reuses the k3s TokenReview path, gives true per-step scope, and avoids exposing or re-hosting an OIDC issuer.
+1. Build the token broker (alternative A) as build step 7. It gives true per-step scope and avoids exposing or re-hosting an OIDC issuer. The later secrets research changed how it delivers tokens: the pod never receives one. The egress proxy or a trusted pusher calls the broker and uses the token outside the pod (see [ADR 0025](../../adr/0025-github-token-broker.md)). Ignore the pod-presents-a-projected-token flow described above in alternative A.
 2. Keep octo-sts as the fallback if per-lane tokens are acceptable, for example a read-only clone token for a lane. It would then need its own Deployment, a CA or public-issuer solution, and a policy in every target repo.
 3. Register a **Satat-owned GitHub App** (this brings back the idea in superseded ADR 0006) with the minimum permissions: contents, pull requests, issues, metadata. Store its private key where the future secrets ADR says.
 
 ## Not verified
 
-- Whether `SandboxTemplate` accepts a projected `serviceAccountToken` volume, and whether the lane's `automountServiceAccountToken: false` leaves it intact. Needs a short spike on k3d.
+- Whether `SandboxTemplate` accepts a projected `serviceAccountToken` volume, and whether the lane's `automountServiceAccountToken: false` leaves it intact. No longer needed under ADR 0025, since the pod holds no token.
 - Whether `claim_pattern` can match the nested `kubernetes.io` claim (read from source, not run).
 - The pod-name-to-claim lookup: the pod carries an owner reference to the `Sandbox`, and the `Sandbox` to the claim (inferred from the #103 spike, not tested).
 - octo-sts memory and CPU, and running it on arm64 (images are multi-arch only if the registry says so; not checked).
