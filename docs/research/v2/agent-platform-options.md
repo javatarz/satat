@@ -1,6 +1,6 @@
 # Research: agent platform options for Satat
 
-Status: **research, 2026-10-15. Partly superseded.** Stack A here still has Satat-built drivers and an intake service; [ADR 0021](../../adr/0021-adopt-platform-plumbing.md) and [ADR 0022](../../adr/0022-v2-platform-requirement-decisions.md) replace them, and the current design is in the [How Satat works](https://claude.ai/code/artifact/ad820f93-494e-403a-a790-ed353561669e) doc. No decision on the stack itself. Input for the owner. The owner will capture
+Status: **research, 2026-10-15. Partly superseded.** Stack A here still has Satat-built drivers and an intake service; [ADR 0021](../../adr/0021-adopt-platform-plumbing.md) and [ADR 0022](../../adr/0022-v2-platform-requirement-decisions.md) replace them, [ADR 0024](../../adr/0024-kubernetes-agent-sandbox-runtime.md) settles the runtime (Stack A's runtime and driver text below is superseded), and the current design is in the [How Satat works](https://claude.ai/code/artifact/ad820f93-494e-403a-a790-ed353561669e) doc. No decision on the stack itself. Input for the owner. The owner will capture
 the outcome in an ADR after reading this.
 
 This document evaluates frameworks and combinations against the confirmed requirements in
