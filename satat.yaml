@@ -5,6 +5,24 @@
 # to start if a lane breaks the hardening floor (non-root, no capabilities, read-only root,
 # limits set, image pinned by digest).
 lanes:
+  # Claude Code on the subscription token (slice 4). The image is built locally:
+  #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
+  # Publishing it to GHCR comes later. Run it with: go run ./cmd/satat-step --repo ... --issue N
+  claude:
+    image: satat-claude@sha256:8762a99dc9097b4b5ce6140352ee60d2e66c93cb466540886055142be71ac6bd
+    # The image's entrypoint is the Satat runner; no command override.
+    memory: 3GiB
+    cpus: 2
+    pids: 512
+    # tmpfs at /workspace holds HOME and the clone, and counts against `memory`.
+    workspace: 1GiB
+    timeout: 20m
+    # SATAT_GITHUB_TOKEN is a read-only token for the test repo. Prototype shortcut: the agent
+    # can read it from the runner's process environment. ADR 0025 replaces it.
+    pass_env: [CLAUDE_CODE_OAUTH_TOKEN, SATAT_GITHUB_TOKEN]
+    # Needs to reach Anthropic and GitHub; open egress until the proxy exists (see smoke).
+    internal: false
+
   # Placeholder until the Claude Code image exists (slice 4 replaces it).
   smoke:
     image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
