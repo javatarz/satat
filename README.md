@@ -6,9 +6,9 @@ A self-hosted, always-on AI coding agent that watches your GitHub backlog, picks
 labeled issues, writes code, runs tests, and opens draft pull requests for human review.
 It never merges anything itself.
 
-> **Status: v0.2, pre-1.0, in design.** v0.2 is a Kubernetes platform (Hatchet queue,
-> agent-sandbox runtime, LiteLLM gateway) that assumes a conformant Kubernetes cluster is
-> available. Nothing is deployable from `main` yet.
+> **Status: v0.2, pre-1.0, in design.** v0.2 is a platform (Hatchet queue, one container
+> per step, LiteLLM gateway) that starts on Docker Compose on a laptop and targets Kubernetes
+> with agent-sandbox later. Nothing is deployable from `main` yet.
 >
 > The earlier EC2 + Docker Compose stack (OpenHands Agent Canvas, Caddy, Terraform) is **v0.1**.
 > It is kept working on the [`v0.1` branch](https://github.com/javatarz/satat/tree/v0.1)
