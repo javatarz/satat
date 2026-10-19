@@ -9,6 +9,9 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"path"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,6 +29,8 @@ const (
 	stopGrace      = 5
 	logTailLines   = "5000"
 	logMaxBytes    = 4 << 20
+	outputMaxBytes = 64 << 20
+	outputMaxFiles = 64
 )
 
 // Launcher runs steps as one-shot Docker containers. It talks to the Docker API only through the
@@ -178,7 +183,7 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 		return res, fmt.Errorf("inspect %s: %w", req.name, err)
 	}
 	if insp.Container.State.Status == container.StateCreated {
-		if err := l.putInput(ctx, id, step.Input); err != nil {
+		if err := l.putInput(ctx, id, step.Input, lane.User); err != nil {
 			return res, err
 		}
 		if _, err := l.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
@@ -197,6 +202,9 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 	res.ExitCode = fin.Container.State.ExitCode
 	res.OOMKilled = fin.Container.State.OOMKilled
 	if err := l.logs(ctx, id, &res); err != nil {
+		return res, err
+	}
+	if err := l.collect(ctx, id, &res); err != nil {
 		return res, err
 	}
 
@@ -237,9 +245,16 @@ func (l *Launcher) stop(ctx context.Context, id string) {
 	}
 }
 
-func (l *Launcher) putInput(ctx context.Context, id string, input []byte) error {
+func (l *Launcher) putInput(ctx context.Context, id string, input []byte, user string) error {
+	uid, _ := strconv.Atoi(uidOf(user))
+	gid, _ := strconv.Atoi(gidOf(user))
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
+	// The output directory is created owned by the step's user: a new volume is root-owned and
+	// the step is not root.
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: outputName + "/", Mode: 0o700, Uid: uid, Gid: gid, ModTime: time.Unix(0, 0)}); err != nil {
+		return err
+	}
 	if err := tw.WriteHeader(&tar.Header{Name: "input.json", Mode: 0o444, Size: int64(len(input)), ModTime: time.Unix(0, 0)}); err != nil {
 		return err
 	}
@@ -268,6 +283,48 @@ func (l *Launcher) logs(ctx context.Context, id string, res *launcher.Result) er
 	res.Stdout, res.Stderr = stdout.buf.Bytes(), stderr.buf.Bytes()
 	res.LogsTruncated = stdout.truncated || stderr.truncated
 	return nil
+}
+
+// collect reads the output directory out of the stopped container. Only regular files are kept,
+// at most outputMaxFiles and outputMaxBytes in all; anything else in the archive is ignored.
+func (l *Launcher) collect(ctx context.Context, id string, res *launcher.Result) error {
+	got, err := l.api.CopyFromContainer(ctx, id, client.CopyFromContainerOptions{SourcePath: outputDir})
+	if err != nil {
+		if cerrdefs.IsNotFound(err) {
+			return nil
+		}
+		return fmt.Errorf("read output: %w", err)
+	}
+	defer got.Content.Close()
+	res.Files = map[string][]byte{}
+	var total int64
+	tr := tar.NewReader(got.Content)
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("read output: %w", err)
+		}
+		if h.Typeflag != tar.TypeReg {
+			continue
+		}
+		rel := path.Clean(strings.TrimPrefix(h.Name, outputName+"/"))
+		if rel == "." || rel == ".." || strings.HasPrefix(rel, "../") || path.IsAbs(rel) {
+			continue
+		}
+		if len(res.Files) >= outputMaxFiles || total+h.Size > outputMaxBytes {
+			res.FilesTruncated = true
+			continue
+		}
+		b, err := io.ReadAll(io.LimitReader(tr, h.Size))
+		if err != nil {
+			return fmt.Errorf("read output %s: %w", rel, err)
+		}
+		total += int64(len(b))
+		res.Files[rel] = b
+	}
 }
 
 // capped keeps the first logMaxBytes written to it and drops the rest.

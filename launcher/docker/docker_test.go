@@ -138,7 +138,7 @@ func TestAdoptsContainerLeftByADeadWorker(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := l.putInput(ctx, created.ID, step.Input); err != nil {
+			if err := l.putInput(ctx, created.ID, step.Input, lane.User); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := api.ContainerStart(ctx, created.ID, client.ContainerStartOptions{}); err != nil {
