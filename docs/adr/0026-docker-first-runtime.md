@@ -53,13 +53,15 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
   `satat.lane` labels, and the worker reaps labelled containers older than a limit at start
   and on a timer.
 - **Inputs.** Non-secret inputs are copied into the created container as a file
-  (`PutArchive` to `/etc/satat/input.json`) before start. No host bind mounts. The one secret the Claude lane needs,
+  (`PutArchive` into a per-step volume mounted at `/etc/satat`, because a read-only root refuses the copy)
+  before start. No host bind mounts. The one secret the Claude lane needs,
   `CLAUDE_CODE_OAUTH_TOKEN`, is passed as an env var by name (the form the #102 spike verified).
   That is a prototype shortcut: this step container holds that token, unlike GitHub credentials
   (ADR 0025), and a later card replaces it with a proxy that injects it.
 - **Hardening floor** (replaces the Pod Security `restricted` floor of ADR 0024): non-root
   user, `cap-drop ALL`, `no-new-privileges`, read-only root filesystem with a tmpfs `/tmp` and
-  a per-step workspace volume, default seccomp, `--memory`, `--cpus` and `--pids-limit` from
+  a tmpfs `/workspace` (memory-backed, so it counts against the lane's memory limit; a disk volume
+  replaces it if real repos need more), default seccomp, `--memory`, `--cpus` and `--pids-limit` from
   the lane config, no Docker socket and no host path in any step container.
   `runtime: runsc` is allowed per lane where installed. It is not required (#110 is not on
   the critical path for a laptop that runs only the owner's repos, per ADR 0022).
