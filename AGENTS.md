@@ -35,9 +35,10 @@ When a wayfinder research ticket is open: commit findings to `docs/research/<top
 
 ### Provision-deploy split
 
-Satat v0.2 assumes a conformant Kubernetes cluster is available. Provisioning (a cluster) will be
-Terraform recipes per cloud provider; deploying Satat onto it is a separate step (Helm chart).
-Neither exists yet. The EC2 + Docker Compose pipeline lives on the `v0.1` branch.
+Satat v0.2 starts on Docker Compose on the owner's laptop (ADR 0026): no provisioning step yet.
+Kubernetes is the later target. A conformant cluster is then assumed, provisioning will be
+Terraform recipes per cloud provider, and deploying Satat onto it is a separate step (Helm chart).
+None of that exists yet. The EC2 + Docker Compose pipeline lives on the `v0.1` branch.
 
 ### Secrets
 
