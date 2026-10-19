@@ -17,3 +17,9 @@ indent_style = tab
 
 [Caddyfile*]
 indent_style = tab
+
+[*.go]
+indent_style = tab
+
+[go.{mod,sum}]
+indent_style = tab

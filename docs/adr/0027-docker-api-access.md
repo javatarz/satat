@@ -52,8 +52,9 @@ holder safe.
 
 ## Not verified
 
-- That the endpoint allowlist is enough for the launcher (volume create, network attach,
-  `PutArchive`, logs, wait). The allowlist is written against the prototype and corrected.
+- ~~That the endpoint allowlist is enough for the launcher.~~ Verified in slice 2 (2026-10-19): the
+  launcher conformance suite passes through the proxy with the `compose.yaml` flags, including
+  `PutArchive`, volume and network create, image pull, logs, wait and stop.
 - That the proxy works with the Hatchet Go worker's Docker client on Docker Desktop and colima.
 - Rootless Docker with per-lane networks and the egress proxy on a Linux host.
 
