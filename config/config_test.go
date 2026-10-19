@@ -133,7 +133,14 @@ func TestRepoLaneLaunches(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	l, err := docker.New(api, c.Lanes)
+	// Only the smoke lane: the other lanes' images are built locally and may not exist here.
+	var lanes []launcher.Lane
+	for _, ln := range c.Lanes {
+		if ln.Name == "smoke" {
+			lanes = append(lanes, ln)
+		}
+	}
+	l, err := docker.New(api, lanes)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,5 +157,59 @@ func TestRepoLaneLaunches(t *testing.T) {
 	}
 	if res.ExitCode != 0 || !strings.Contains(string(res.Stdout), "uid=10001") || !strings.Contains(string(res.Stdout), "ok") {
 		t.Fatalf("unexpected result: exit %d, stdout %q, stderr %q", res.ExitCode, res.Stdout, res.Stderr)
+	}
+}
+
+// The real Claude lane image, under the real floor, with dummy credentials and an input the
+// runner rejects: proves the image starts as a non-root user on a read-only root and that its
+// result file comes back. Skipped when the image has not been built (scripts/build-claude-image.sh).
+func TestClaudeImageStartsUnderTheFloor(t *testing.T) {
+	if testing.Short() {
+		t.Skip("integration test: needs Docker")
+	}
+	api, err := client.New(client.FromEnv)
+	if err != nil {
+		t.Skipf("no Docker client: %v", err)
+	}
+	defer api.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if _, err := api.Ping(ctx, client.PingOptions{}); err != nil {
+		t.Skipf("Docker is not reachable: %v", err)
+	}
+	c, err := Load("../satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var lanes []launcher.Lane
+	for _, ln := range c.Lanes {
+		if ln.Name == "claude" {
+			lanes = append(lanes, ln)
+		}
+	}
+	if _, err := api.ImageInspect(ctx, lanes[0].Image); err != nil {
+		t.Skipf("claude image not built locally: %v", err)
+	}
+	dummy := func(string) (string, bool) { return "dummy-not-a-real-credential", true }
+	l, err := docker.New(api, lanes, docker.WithEnv(dummy))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := l.Setup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		l.Reap(context.Background(), 0)
+		_, _ = api.NetworkRemove(context.Background(), "satat-lane-claude", client.NetworkRemoveOptions{})
+	})
+	res, err := l.Launch(ctx, launcher.Step{Run: "imgtest", Name: "claude", Lane: "claude", Input: []byte(`{"repo":"--bad","base":"main","issue":{"number":1,"title":"t"}}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.ExitCode != 1 || !strings.Contains(string(res.Stderr), "not owner/name") {
+		t.Fatalf("exit %d, stderr %q: want the runner's input refusal", res.ExitCode, res.Stderr)
+	}
+	if !strings.Contains(string(res.Files["result.json"]), `"status": "failed"`) {
+		t.Fatalf("result.json missing or wrong: %v", res.Files)
 	}
 }
