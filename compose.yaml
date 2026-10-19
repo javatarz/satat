@@ -1,0 +1,79 @@
+# Satat v0.2 platform on Docker (ADR 0026). Laptop only. Ports bind to 127.0.0.1.
+# Images are pinned by digest (scripts/image-digest.sh); the tag is kept for readers.
+name: satat
+
+services:
+  postgres:
+    image: postgres:15.6@sha256:1ebd963e5c598f944a4e9ba27de4c95289d663dcc73731025aa53c5254094d8f
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: hatchet
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set it in .env (see .env.example)}
+      POSTGRES_DB: hatchet
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hatchet -d hatchet"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  hatchet-lite:
+    image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.5@sha256:cc81f078a5285d7d2051ec4a4fa459d033e1face4ca5983d82612b00da6e3fa3
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8888:8888"   # dashboard and API
+      - "127.0.0.1:7077:7077"   # gRPC, for workers on the host
+    environment:
+      DATABASE_URL: postgresql://hatchet:${POSTGRES_PASSWORD}@postgres:5432/hatchet?sslmode=disable
+      SERVER_MSGQUEUE_KIND: postgres
+      SERVER_URL: http://localhost:8888
+      SERVER_AUTH_COOKIE_DOMAIN: localhost
+      SERVER_AUTH_COOKIE_INSECURE: "t"
+      SERVER_AUTH_SET_EMAIL_VERIFIED: "t"
+      SERVER_GRPC_BIND_ADDRESS: 0.0.0.0
+      SERVER_GRPC_PORT: "7077"
+      SERVER_GRPC_INSECURE: "t"
+      SERVER_GRPC_BROADCAST_ADDRESS: localhost:7077
+      SERVER_INTERNAL_CLIENT_INTERNAL_GRPC_BROADCAST_ADDRESS: localhost:7077
+      # Run history survives a month; the default would delete finished runs sooner (ADR 0023).
+      SERVER_LIMITS_DEFAULT_TENANT_RETENTION_PERIOD: 720h
+    volumes:
+      - hatchet-config:/config
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:8733/ready || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  # The Docker API for the worker only (ADR 0027). Nothing else mounts the socket.
+  # It narrows the surface by endpoint; it is not a boundary against a compromised worker.
+  docker-proxy:
+    image: ghcr.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459
+    restart: unless-stopped
+    environment:
+      LOG_LEVEL: info
+      PING: 1
+      VERSION: 1
+      CONTAINERS: 1
+      NETWORKS: 1
+      VOLUMES: 1
+      IMAGES: 1     # image inspect/pull; build and push are not covered by this flag
+      POST: 1
+      # Everything else (EXEC, BUILD, SWARM, SECRETS, SERVICES, ...) stays at the image default of 0.
+    volumes:
+      - ${DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+    networks:
+      - docker-api
+
+networks:
+  docker-api:
+    internal: true
+
+volumes:
+  postgres-data:
+  hatchet-config:
