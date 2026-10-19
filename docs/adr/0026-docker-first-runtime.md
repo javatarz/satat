@@ -26,8 +26,10 @@ isolation unit. The v0.1 stack ran on Docker Compose (ADR 0009).
 Satat starts on Docker, on the owner's laptop, and moves to Kubernetes later.
 
 - **Runtime.** Each step is one container, created, started, waited on and removed by the
-  Satat worker through the Docker Engine API. The platform (Hatchet, Postgres, LiteLLM, the
-  worker) runs in one Docker Compose project.
+  Satat worker through the Docker Engine API. The platform (Hatchet, Postgres, the worker
+  and a Docker socket proxy) runs in one Docker Compose project. LiteLLM joins when a lane that
+  uses it exists (build step 5). The Claude Code lane talks to Anthropic directly on the
+  subscription token and does not go through it.
 - **Launcher interface.** The worker calls a small Go interface (`Launch(step) -> exit code,
   logs`, plus `Cancel`). Docker is the first implementation. The `SandboxClaim` flow from ADR
   0024 is the second, written when Kubernetes is the next step. Workflows, the runner and the
@@ -51,7 +53,10 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
   `satat.lane` labels, and the worker reaps labelled containers older than a limit at start
   and on a timer.
 - **Inputs.** Non-secret inputs are copied into the created container as a file
-  (`PutArchive` to `/etc/satat/input.json`) before start. No env, no host bind mounts.
+  (`PutArchive` to `/etc/satat/input.json`) before start. No host bind mounts. The one secret the Claude lane needs,
+  `CLAUDE_CODE_OAUTH_TOKEN`, is passed as an env var by name (the form the #102 spike verified).
+  That is a prototype shortcut: this step container holds that token, unlike GitHub credentials
+  (ADR 0025), and a later card replaces it with a proxy that injects it.
 - **Hardening floor** (replaces the Pod Security `restricted` floor of ADR 0024): non-root
   user, `cap-drop ALL`, `no-new-privileges`, read-only root filesystem with a tmpfs `/tmp` and
   a per-step workspace volume, default seccomp, `--memory`, `--cpus` and `--pids-limit` from
@@ -61,7 +66,7 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
 - **Lane = config, not a CRD.** A lane is an image, limits, a network and an allowed-backends
   list in `satat.yaml`. It is the equivalent of a `SandboxTemplate`.
 - **Network.** One user-defined Docker network per lane, marked internal, so a step reaches
-  only the containers attached to it: LiteLLM and an egress proxy. The proxy (hostname
+  only the containers attached to it: an egress proxy, and LiteLLM once a lane uses it. The proxy (hostname
   allowlist, and the token injection in ADR 0025) comes after the prototype. Until it exists,
   steps get a plain bridge network with no hostname allowlist, and only the owner's repos
   may be pointed at it.
