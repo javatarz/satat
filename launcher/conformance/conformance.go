@@ -72,6 +72,29 @@ func Run(t *testing.T, c Config) {
 		}
 	})
 
+	t.Run("output files", func(t *testing.T) {
+		script := `mkdir -p "$SATAT_OUTPUT/sub" && echo -n one > "$SATAT_OUTPUT/a.txt" && echo -n two > "$SATAT_OUTPUT/sub/b.txt" && ln -s /etc/passwd "$SATAT_OUTPUT/link"`
+		l := c.New(t, []launcher.Lane{c.lane("output", script, nil)})
+		res := launch(t, l, launcher.Step{Run: "conf2b", Name: "output", Lane: "output"})
+		if res.ExitCode != 0 {
+			t.Fatalf("exit=%d stderr=%q", res.ExitCode, res.Stderr)
+		}
+		if len(res.Files) != 2 || string(res.Files["a.txt"]) != "one" || string(res.Files["sub/b.txt"]) != "two" {
+			t.Errorf("files = %v, want a.txt and sub/b.txt only (a symlink is not a file)", res.Files)
+		}
+		if res.FilesTruncated {
+			t.Error("FilesTruncated set for a small output")
+		}
+	})
+
+	t.Run("output survives a failing step", func(t *testing.T) {
+		l := c.New(t, []launcher.Lane{c.lane("outfail", `echo -n partial > "$SATAT_OUTPUT/r.txt"; exit 4`, nil)})
+		res := launch(t, l, launcher.Step{Run: "conf2c", Name: "outfail", Lane: "outfail"})
+		if res.ExitCode != 4 || string(res.Files["r.txt"]) != "partial" {
+			t.Errorf("exit=%d files=%v, want the partial output of a failed step", res.ExitCode, res.Files)
+		}
+	})
+
 	t.Run("timeout stops the step", func(t *testing.T) {
 		l := c.New(t, []launcher.Lane{c.lane("slow", "sleep 60", func(l *launcher.Lane) { l.Timeout = 2 * time.Second })})
 		start := time.Now()

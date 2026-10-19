@@ -44,7 +44,8 @@ type Step struct {
 	Run  string
 	Name string
 	Lane string
-	// Input is non-secret data placed at /etc/satat/input.json.
+	// Input is non-secret data placed at /etc/satat/input.json. A step writes its results under
+	// the directory named by $SATAT_OUTPUT.
 	Input []byte
 }
 
@@ -59,6 +60,12 @@ type Result struct {
 
 	Stdout, Stderr []byte
 	LogsTruncated  bool
+
+	// Files are the regular files the step left in $SATAT_OUTPUT, keyed by path relative to it.
+	// They are read after the step exits and before it is removed. Output past the backend's
+	// size limit is dropped and FilesTruncated is set.
+	Files          map[string][]byte
+	FilesTruncated bool
 }
 
 // Launcher starts, watches, cancels and cleans up steps.
