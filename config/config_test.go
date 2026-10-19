@@ -148,7 +148,6 @@ func TestRepoLaneLaunches(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		l.Reap(context.Background(), 0)
 		_, _ = api.NetworkRemove(context.Background(), "satat-lane-smoke", client.NetworkRemoveOptions{})
 	})
 	res, err := l.Launch(ctx, launcher.Step{Run: "cfgtest", Name: "smoke", Lane: "smoke"})
@@ -199,7 +198,6 @@ func TestClaudeImageStartsUnderTheFloor(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		l.Reap(context.Background(), 0)
 		_, _ = api.NetworkRemove(context.Background(), "satat-lane-claude", client.NetworkRemoveOptions{})
 	})
 	res, err := l.Launch(ctx, launcher.Step{Run: "imgtest", Name: "claude", Lane: "claude", Input: []byte(`{"repo":"--bad","base":"main","issue":{"number":1,"title":"t"}}`)})
