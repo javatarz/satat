@@ -29,6 +29,11 @@ Use `docs/scratch/` for temporary working files, not `/tmp`. This directory is g
 
 Resolve image tags/digests with `scripts/image-digest.sh tags|digest <ghcr.io/owner/name> [tag]` (registry API, auth-free for GHCR). `docker manifest inspect` can block for minutes on a cold or rate-limited registry.
 
+### Go tests
+
+Run `go test -p 1 ./...`. Tests that start containers share one Docker daemon and reap by label, so
+packages must not run in parallel. `-short` skips the Docker tests.
+
 ### Research flow
 
 When a wayfinder research ticket is open: commit findings to `docs/research/<topic>.md`, capture the settled outcome as an ADR in `docs/adr/`, then close the ticket. Never leave research in ticket bodies only.
