@@ -21,9 +21,11 @@ const (
 	resourcePrefix = "satat-"
 	networkPrefix  = resourcePrefix + "lane-"
 
-	inputDir  = "/etc/satat"
-	workspace = "/workspace"
-	tmpDir    = "/tmp"
+	inputDir   = "/etc/satat"
+	outputName = "out"
+	outputDir  = inputDir + "/" + outputName
+	workspace  = "/workspace"
+	tmpDir     = "/tmp"
 )
 
 var (

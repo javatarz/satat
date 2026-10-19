@@ -78,6 +78,7 @@ func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (stri
 		"SATAT_RUN=" + s.Run,
 		"SATAT_STEP=" + s.Name,
 		"SATAT_INPUT=" + inputDir + "/input.json",
+		"SATAT_OUTPUT=" + outputDir,
 	}
 	for _, n := range l.PassEnv {
 		v, ok := lookupEnv(n)
