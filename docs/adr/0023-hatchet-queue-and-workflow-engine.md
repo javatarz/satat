@@ -41,7 +41,8 @@ How Satat uses it, as verified in the spike:
   `queue_ttl`. The data-retention period is set long (`SERVER_LIMITS_DEFAULT_TENANT_RETENTION_PERIOD`)
   if run history matters.
 - **Language.** Go SDK, in line with Q7. The spike used the Python SDK; the options exist in Go.
-- **Deployment.** `hatchet-lite` and Postgres on the VM, pinned by image digest
+- **Deployment.** `hatchet-lite` and Postgres (on the laptop under Compose for now, per ADR 0026; the
+  full deployment is a later test under load), pinned by image digest
   (`scripts/image-digest.sh`). Postgres snapshot before every upgrade.
 
 ## Consequences

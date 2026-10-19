@@ -14,7 +14,8 @@ The Canvas/OpenHands stack on an EC2 VM with Docker Compose. Kept on the `v0.1` 
 tagged `v0.1.0-final` (`8bba425`). Older docs describe this as "v1".
 
 **v0.2**:
-The Kubernetes platform on `main`: Hatchet, agent-sandbox, one-shot steps. Older docs,
+The platform on `main`: Hatchet, one-shot steps behind a launcher interface. Docker on a laptop
+first (ADR 0026), Kubernetes with agent-sandbox later (ADR 0024). Older docs,
 paths and issues call this "v2" (for example `docs/research/v2/`, #99). The terms mean the
 same thing.
 
