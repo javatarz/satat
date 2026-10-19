@@ -1,0 +1,26 @@
+# Satat configuration. Only lanes exist so far; the rest of the spec is #108.
+#
+# A lane is the fixed shape a step runs in (ADR 0026). It comes from this file only: no issue
+# text, workflow input or agent output can change one (ADR 0027). The Docker launcher refuses
+# to start if a lane breaks the hardening floor (non-root, no capabilities, read-only root,
+# limits set, image pinned by digest).
+lanes:
+  # Placeholder until the Claude Code image exists (slice 4 replaces it).
+  smoke:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    # user: 10001:10001   # default; must be numeric and non-root
+    command: ["sh", "-c", "id && echo ok"]
+    memory: 512MiB
+    cpus: 1
+    pids: 256
+    # tmpfs at /workspace. Memory-backed, so it counts against `memory`.
+    workspace: 128MiB
+    timeout: 5m
+    # Names copied from the worker's environment into the step. A name that is unset fails
+    # the launch. Never put a value here.
+    pass_env: []
+    # internal: false puts the lane's network on a plain bridge, so the step has open egress.
+    # That is acceptable only because the prototype points at the owner's repos. Set it to true
+    # when the egress proxy exists and the lane's network should have no route out except to
+    # containers attached to it.
+    internal: false
