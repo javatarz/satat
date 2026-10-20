@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-10-16). Based on #105 ([findings](../research/v2/octo-sts-fit.md)) and the secrets
+Accepted (2026-10-16). The open items under "Not verified" remain to be checked. Based on #105 ([findings](../research/v2/octo-sts-fit.md)) and the secrets
 research ([taxonomy](../research/v2/notes/secrets-taxonomy.md),
 [agent isolation](../research/v2/notes/secrets-agent-isolation.md),
 [leak prevention](../research/v2/notes/secrets-leak-prevention.md)). Rewritten after the first

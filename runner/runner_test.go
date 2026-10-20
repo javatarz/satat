@@ -137,6 +137,11 @@ func TestCommittedChangesBecomeAPatch(t *testing.T) {
 	if p := e.read(t, filepath.Join(e.out, "changes.patch")); !strings.Contains(p, "fix.txt") || !strings.Contains(p, "Fix it") {
 		t.Errorf("patch missing the change:\n%s", p)
 	}
+	verify := exec.Command("git", "bundle", "verify", filepath.Join(e.out, "changes.bundle"))
+	verify.Dir = e.repo // the source repo has the bundle's prerequisite commit
+	if out, err := verify.CombinedOutput(); err != nil {
+		t.Errorf("bundle does not verify: %v\n%s", err, out)
+	}
 	if tr := e.read(t, filepath.Join(e.out, "transcript.jsonl")); strings.Count(tr, "\n") != 3 {
 		t.Errorf("transcript should have the 3 stream lines:\n%s", tr)
 	}
@@ -279,15 +284,16 @@ func TestParseInput(t *testing.T) {
 		t.Fatal(err)
 	}
 	bad := map[string]string{
-		"not json":       `{`,
-		"unknown field":  `{"repo":"a/b","base":"main","issue":{"number":1,"title":"t"},"cmd":"x"}`,
-		"repo with flag": `{"repo":"--upload-pack=x/b","base":"main","issue":{"number":1,"title":"t"}}`,
-		"repo dotdot":    `{"repo":"a/..","base":"main","issue":{"number":1,"title":"t"}}`,
-		"repo no slash":  `{"repo":"ab","base":"main","issue":{"number":1,"title":"t"}}`,
-		"base is a flag": `{"repo":"a/b","base":"--orphan","issue":{"number":1,"title":"t"}}`,
-		"base dotdot":    `{"repo":"a/b","base":"a..b","issue":{"number":1,"title":"t"}}`,
-		"no issue":       `{"repo":"a/b","base":"main","issue":{"title":"t"}}`,
-		"no title":       `{"repo":"a/b","base":"main","issue":{"number":1,"title":" "}}`,
+		"not json":        `{`,
+		"unknown field":   `{"repo":"a/b","base":"main","issue":{"number":1,"title":"t"},"cmd":"x"}`,
+		"repo with flag":  `{"repo":"--upload-pack=x/b","base":"main","issue":{"number":1,"title":"t"}}`,
+		"repo dash first": `{"repo":"--x/y","base":"main","issue":{"number":1,"title":"t"}}`,
+		"repo dotdot":     `{"repo":"a/..","base":"main","issue":{"number":1,"title":"t"}}`,
+		"repo no slash":   `{"repo":"ab","base":"main","issue":{"number":1,"title":"t"}}`,
+		"base is a flag":  `{"repo":"a/b","base":"--orphan","issue":{"number":1,"title":"t"}}`,
+		"base dotdot":     `{"repo":"a/b","base":"a..b","issue":{"number":1,"title":"t"}}`,
+		"no issue":        `{"repo":"a/b","base":"main","issue":{"title":"t"}}`,
+		"no title":        `{"repo":"a/b","base":"main","issue":{"number":1,"title":" "}}`,
 	}
 	for name, in := range bad {
 		t.Run(name, func(t *testing.T) {

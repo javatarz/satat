@@ -16,7 +16,12 @@ Principles: secrets are as short-lived and as narrowly scoped as possible, minte
 - Credential accounts (NN12) get a type: `subscription` or `api-federated` (Anthropic Workload Identity Federation: no stored secret, token at most 1 hour, API-billed). Only `subscription` is needed now.
 - To verify: the proxy forwards to the real API with a real token (the #102 probe only saw 500s); the CLI accepts the placeholder.
 
-## 3. LLM gateway (LiteLLM): open
+## 3. LLM gateway (LiteLLM): decided 2026-10-19
+
+- The upstream LLM Gateway key is a static root secret. It lives only in the LiteLLM pod, and is rotated every 90 days by the deploy pipeline (update the Secret, restart LiteLLM). It never enters a lane pod.
+- Gateway lanes get a per-step LiteLLM virtual key in the pod environment: short `duration` (about the step timeout), `models` per lane, small `max_budget`, deleted at step end. LiteLLM is reachable only from inside the cluster, so a leaked key is useless outside it and bounded by its budget. No proxy injection is needed for this lane.
+- Rejected: fully unauthenticated LiteLLM. It would lose per-step budget and rate caps, per-key attribution (#89, NN12 spend per account) and per-lane model limits, and it leans on NetworkPolicy alone.
+- Spike needed: the Claude proxy (below).
 
 ## 4. Platform static secrets: open
 
