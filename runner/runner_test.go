@@ -29,6 +29,11 @@ case "$FAKE_MODE" in
   commit) echo fixed > fix.txt; git add fix.txt; git -c user.name=a -c user.email=a@b commit -q -m "Fix it";;
   leave)  echo fixed > fix.txt;;
 esac
+if [ "$FAKE_MODE" = auth401 ]; then
+  echo '{"type":"system","subtype":"api_retry","attempt":1,"error_status":401,"error":"authentication_failed"}'
+  echo '{"type":"result","is_error":true,"terminal_reason":"api_error"}'
+  exit 1
+fi
 if [ "$FAKE_MODE" = error ]; then
   echo '{"type":"result","is_error":true,"result":"boom"}'
   exit 1
@@ -219,6 +224,17 @@ func TestAnErrorResultFailsTheStepButKeepsTheWork(t *testing.T) {
 	}
 	if !strings.Contains(string(r.ClaudeResult), "boom") {
 		t.Errorf("the error result was not recorded: %s", r.ClaudeResult)
+	}
+}
+
+func TestAnAuthFailureIsNamedInTheError(t *testing.T) {
+	e := setup(t, "auth401")
+	err := Run(context.Background(), e.cfg)
+	if err == nil || !strings.Contains(err.Error(), "authentication_failed (HTTP 401)") {
+		t.Fatalf("error = %v, want it to name the 401", err)
+	}
+	if r := e.result(t); !strings.Contains(r.Error, "HTTP 401") {
+		t.Errorf("result.json error = %q", r.Error)
 	}
 }
 
