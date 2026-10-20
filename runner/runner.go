@@ -279,6 +279,7 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 		return fmt.Errorf("start claude: %w", err)
 	}
 	var isError bool
+	var apiErr, terminal string
 	sc := bufio.NewScanner(pipe)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
 	for sc.Scan() {
@@ -286,16 +287,23 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 		tf.Write(line)
 		tf.Write([]byte{'\n'})
 		var ev struct {
-			Type    string `json:"type"`
-			IsError bool   `json:"is_error"`
+			Type           string `json:"type"`
+			Subtype        string `json:"subtype"`
+			IsError        bool   `json:"is_error"`
+			Error          string `json:"error"`
+			ErrorStatus    int    `json:"error_status"`
+			TerminalReason string `json:"terminal_reason"`
 		}
 		if json.Unmarshal(line, &ev) != nil {
 			continue
 		}
 		switch {
+		case ev.Type == "system" && ev.Subtype == "api_retry":
+			apiErr = fmt.Sprintf("%s (HTTP %d)", ev.Error, ev.ErrorStatus)
 		case ev.Type == "result":
 			res.ClaudeResult = append(json.RawMessage(nil), line...)
 			isError = ev.IsError
+			terminal = ev.TerminalReason
 		case strings.Contains(ev.Type, "rate_limit"):
 			res.RateLimitEvent = append(res.RateLimitEvent, append(json.RawMessage(nil), line...))
 		}
@@ -308,6 +316,8 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 	switch {
 	case scanErr != nil:
 		return fmt.Errorf("read claude output: %w", scanErr)
+	case waitErr != nil && apiErr != "":
+		return fmt.Errorf("claude: %w: %s, ended with %q", waitErr, apiErr, terminal)
 	case waitErr != nil:
 		return fmt.Errorf("claude: %w", waitErr)
 	case res.ClaudeResult == nil:
