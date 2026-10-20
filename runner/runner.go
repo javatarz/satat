@@ -72,7 +72,7 @@ const (
 )
 
 var (
-	repoRE   = regexp.MustCompile(`^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$`)
+	repoRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
 	branchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./-]{0,99}$`)
 	runRE    = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
 	// Variables that would route Claude Code off the subscription or to another endpoint. The
@@ -196,6 +196,11 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 			return errors.Join(claudeErr, err)
 		}
 		if err := os.WriteFile(filepath.Join(cfg.OutDir, "changes.patch"), []byte(patch+"\n"), 0o600); err != nil {
+			return errors.Join(claudeErr, err)
+		}
+		// The bundle carries the exact commits; the pusher fetches from it, so what is pushed is
+		// what the agent committed. The patch is for a human to read.
+		if err := git(ctx, cfg, cfg.Env, repoDir, "bundle", "create", "--quiet", filepath.Join(cfg.OutDir, "changes.bundle"), res.BaseSHA+".."+res.Branch); err != nil {
 			return errors.Join(claudeErr, err)
 		}
 	}
