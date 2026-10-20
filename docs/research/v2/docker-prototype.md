@@ -84,4 +84,27 @@ Findings that changed the design:
    step share one execution (`singleflight` on the container name). Across a crash, the deterministic
    name makes the next attempt adopt the leftover container, running or finished.
 
-Still to measure: the real harness's memory, CPU and start time (slice 4 and the first real run).
+
+## Slice 4: first real run (2026-10-20)
+
+Claude Code 2.1.301 on the subscription token, in the `claude` lane (3 GiB, 2 CPUs, 1 GiB workspace), against
+a throwaway private repo (`javatarz/satat-sandbox`, issue 1: add `greet(name)` with two tests). Run by hand with
+`cmd/satat-step`.
+
+- **It worked end to end in 15 s, exit 0.** Clone with a read-only PAT, 8 turns, one commit, a patch with the
+  function and both tests. Cost reported 0.05 USD (shadow price; the run is on the subscription). Nothing
+  was pushed, the container and volume were gone afterwards, and neither token value appears in any output file.
+- **Memory is small: about 137 MiB peak** in samples taken every 3 s over the 15 s run (108, 127, 136 MiB; CPU
+  under 5%). A 3 GiB limit is far too generous for this size of task. This is one tiny repo, so it says the harness
+  is light, not what a real repo needs. #109 should still measure a larger one.
+- **Rate-limit events are in the stream** as `rate_limit_event`, with the window (`five_hour`, `seven_day`),
+  `utilization` (0.03 after this run), `resetsAt` and overage status. This is the input the back-off needs.
+- **The harness meets the floor with no change.** HOME on the `/workspace` tmpfs was enough: no
+  permissions error on the read-only root, non-root uid 10001, no capabilities.
+- **Finding: the agent could not run the tests.** The image has no `python`, so it wrote the code and tests and
+  said they were unverified. A lane's image has to carry the toolchain of the repos it serves. Slice 4 does not
+  decide how (one image per language, a base plus language layers, or a repo-declared image); it needs an
+  answer before real repos.
+- **Finding: a bare `exit status 1` hid a 401.** The first two attempts failed on a bad token. The runner now
+  names the API error from the stream (`authentication_failed (HTTP 401)`). `claude auth status` reports
+  `oauth_token` for any token, valid or not, so it only proves the token was seen, not that it works.
