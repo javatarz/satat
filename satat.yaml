@@ -9,7 +9,7 @@ lanes:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
   # Publishing it to GHCR comes later. Run it with: go run ./cmd/satat-step --repo ... --issue N
   claude:
-    image: satat-claude@sha256:46101524ea3480cdd55660458629420c251bbdc3d7650a6d76a0955efd639889
+    image: satat-claude@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12
     # The image's entrypoint is the Satat runner; no command override.
     memory: 3GiB
     cpus: 2
