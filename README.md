@@ -22,6 +22,7 @@ See [CONTEXT.md](./CONTEXT.md) for versions and the domain glossary.
 - [docs/adr/](./docs/adr/) — architecture decisions (0024 is the runtime)
 - [docs/roadmap/](./docs/roadmap/) — design roadmap: where Satat is heading, not yet decided
 - [docs/research/v2/](./docs/research/v2/) — v0.2 research and spikes
+- [CONTRIBUTING.md](./CONTRIBUTING.md) — how the team works, PRs and commit messages
 - [AGENTS.md](./AGENTS.md) — conventions for agents and contributors
 
 ## Repo structure
