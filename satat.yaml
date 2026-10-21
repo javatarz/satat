@@ -4,6 +4,15 @@
 # text, workflow input or agent output can change one (ADR 0027). The Docker launcher refuses
 # to start if a lane breaks the hardening floor (non-root, no capabilities, read-only root,
 # limits set, image pinned by digest).
+# Caps the workflow enforces through Hatchet (ADR 0023): the whole platform, each repo, each credential
+# account, and each lane (max_runs under the lane). Over-cap work queues; it is not dropped.
+# Sized for the laptop: the Docker VM has 5.77 GiB, the platform takes about 0.4 GiB, and a Claude step
+# measured about 0.14 GiB on a small repo (docker-prototype.md), so 2 is far below the limit.
+limits:
+  global: 2
+  per_repo: 1
+  per_account: 1
+
 lanes:
   # Claude Code on the subscription token (slice 4). The image is built locally:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
@@ -20,6 +29,10 @@ lanes:
     # SATAT_GITHUB_TOKEN is a read-only token for the test repo. Prototype shortcut: the agent
     # can read it from the runner's process environment. ADR 0025 replaces it.
     pass_env: [CLAUDE_CODE_OAUTH_TOKEN, SATAT_GITHUB_TOKEN]
+    # The credential account this lane spends (the Claude subscription): one cap across lanes that
+    # share it. max_runs is this lane's own cap.
+    account: claude-subscription
+    max_runs: 1
     # Needs to reach Anthropic and GitHub; open egress until the proxy exists (see smoke).
     internal: false
 

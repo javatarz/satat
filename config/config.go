@@ -22,11 +22,32 @@ import (
 
 // Config is the parsed satat.yaml.
 type Config struct {
-	Lanes []launcher.Lane
+	Lanes  []launcher.Lane
+	Limits Limits
+	// Accounts maps a lane name to the credential account it spends, for the per-account cap.
+	// A lane without an entry is its own account.
+	Accounts map[string]string
+	// LaneMaxRuns is each lane's own cap (lane.max_runs), by lane name.
+	LaneMaxRuns map[string]int
+}
+
+// Limits are the deploy-time caps the workflow enforces through Hatchet (ADR 0023). Global is the
+// whole platform; PerRepo and PerAccount are the defaults for each repo and each account.
+type Limits struct {
+	Global     int
+	PerRepo    int
+	PerAccount int
 }
 
 type file struct {
-	Lanes map[string]laneFile `yaml:"lanes"`
+	Limits limitsFile          `yaml:"limits"`
+	Lanes  map[string]laneFile `yaml:"lanes"`
+}
+
+type limitsFile struct {
+	Global     int `yaml:"global"`
+	PerRepo    int `yaml:"per_repo"`
+	PerAccount int `yaml:"per_account"`
 }
 
 type laneFile struct {
@@ -41,6 +62,8 @@ type laneFile struct {
 	Internal  bool     `yaml:"internal"`
 	Runtime   string   `yaml:"runtime"`
 	Timeout   string   `yaml:"timeout"`
+	Account   string   `yaml:"account"`
+	MaxRuns   int      `yaml:"max_runs"`
 }
 
 // Load reads and parses the file at path.
@@ -71,15 +94,34 @@ func Parse(r io.Reader) (Config, error) {
 	if len(f.Lanes) == 0 {
 		return Config{}, errors.New("no lanes defined")
 	}
-	var c Config
+	c := Config{
+		Limits:      Limits{Global: f.Limits.Global, PerRepo: f.Limits.PerRepo, PerAccount: f.Limits.PerAccount},
+		Accounts:    map[string]string{},
+		LaneMaxRuns: map[string]int{},
+	}
 	var errs []error
+	if c.Limits.Global <= 0 || c.Limits.PerRepo <= 0 || c.Limits.PerAccount <= 0 {
+		errs = append(errs, errors.New("limits: global, per_repo and per_account are required and must be positive"))
+	}
 	for _, name := range sortedKeys(f.Lanes) {
-		l, err := f.Lanes[name].lane(name)
+		lf := f.Lanes[name]
+		l, err := lf.lane(name)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("lane %q: %w", name, err))
 			continue
 		}
+		if lf.MaxRuns < 0 {
+			errs = append(errs, fmt.Errorf("lane %q: max_runs must not be negative", name))
+		}
 		c.Lanes = append(c.Lanes, l)
+		c.Accounts[name] = lf.Account
+		if c.Accounts[name] == "" {
+			c.Accounts[name] = name
+		}
+		c.LaneMaxRuns[name] = lf.MaxRuns
+		if lf.MaxRuns == 0 {
+			c.LaneMaxRuns[name] = 1
+		}
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err

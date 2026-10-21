@@ -15,7 +15,7 @@ import (
 const digest = "busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
 
 func lane(extra string) string {
-	return "lanes:\n  a:\n    image: " + digest + "\n    memory: 512MiB\n    cpus: 1\n    pids: 64\n    workspace: 64MiB\n" + extra
+	return "limits:\n  global: 2\n  per_repo: 1\n  per_account: 1\nlanes:\n  a:\n    image: " + digest + "\n    memory: 512MiB\n    cpus: 1\n    pids: 64\n    workspace: 64MiB\n" + extra
 }
 
 func TestParsesALane(t *testing.T) {
@@ -31,6 +31,20 @@ func TestParsesALane(t *testing.T) {
 		l.CPUs != 1 || l.PidsLimit != 64 || l.Timeout != 90*time.Second || !l.Internal ||
 		len(l.PassEnv) != 1 || l.PassEnv[0] != "FOO" {
 		t.Fatalf("unexpected lane: %+v", l)
+	}
+}
+
+func TestLimitsAndLaneCaps(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("    account: shared\n    max_runs: 3\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Limits != (Limits{Global: 2, PerRepo: 1, PerAccount: 1}) || c.Accounts["a"] != "shared" || c.LaneMaxRuns["a"] != 3 {
+		t.Fatalf("unexpected: %+v %v %v", c.Limits, c.Accounts, c.LaneMaxRuns)
+	}
+	c, err = Parse(strings.NewReader(lane("")))
+	if err != nil || c.Accounts["a"] != "a" || c.LaneMaxRuns["a"] != 1 {
+		t.Fatalf("defaults: %v %v %v err %v", c.Accounts, c.LaneMaxRuns, c.Limits, err)
 	}
 }
 
@@ -52,18 +66,21 @@ func TestLanesComeBackInNameOrder(t *testing.T) {
 
 func TestRefusesBadFiles(t *testing.T) {
 	cases := map[string]struct{ yaml, want string }{
-		"empty":            {"", "empty file"},
-		"no lanes":         {"lanes: {}\n", "no lanes"},
-		"unknown key":      {lane("    memroy: 1GiB\n"), "memroy"},
-		"unknown top key":  {lane("") + "extra: 1\n", "extra"},
-		"missing memory":   {strings.Replace(lane(""), "    memory: 512MiB\n", "", 1), "memory: required"},
-		"bare number size": {strings.Replace(lane(""), "512MiB", "536870912", 1), "not a size"},
-		"decimal unit":     {strings.Replace(lane(""), "512MiB", "512MB", 1), "not a size"},
-		"zero size":        {strings.Replace(lane(""), "512MiB", "0MiB", 1), "positive"},
-		"overflow size":    {strings.Replace(lane(""), "512MiB", "99999999999999GiB", 1), "too large"},
-		"bad timeout":      {lane("    timeout: soon\n"), "timeout"},
-		"negative timeout": {lane("    timeout: -5m\n"), "timeout"},
-		"not yaml":         {"lanes: [", "yaml"},
+		"empty":             {"", "empty file"},
+		"no lanes":          {"lanes: {}\n", "no lanes"},
+		"unknown key":       {lane("    memroy: 1GiB\n"), "memroy"},
+		"unknown top key":   {lane("") + "extra: 1\n", "extra"},
+		"missing memory":    {strings.Replace(lane(""), "    memory: 512MiB\n", "", 1), "memory: required"},
+		"bare number size":  {strings.Replace(lane(""), "512MiB", "536870912", 1), "not a size"},
+		"decimal unit":      {strings.Replace(lane(""), "512MiB", "512MB", 1), "not a size"},
+		"zero size":         {strings.Replace(lane(""), "512MiB", "0MiB", 1), "positive"},
+		"overflow size":     {strings.Replace(lane(""), "512MiB", "99999999999999GiB", 1), "too large"},
+		"bad timeout":       {lane("    timeout: soon\n"), "timeout"},
+		"negative timeout":  {lane("    timeout: -5m\n"), "timeout"},
+		"not yaml":          {"lanes: [", "yaml"},
+		"no limits":         {strings.Replace(lane(""), "limits:\n  global: 2\n  per_repo: 1\n  per_account: 1\n", "", 1), "limits"},
+		"zero limit":        {strings.Replace(lane(""), "global: 2", "global: 0", 1), "limits"},
+		"negative lane cap": {lane("    max_runs: -1\n"), "max_runs"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
