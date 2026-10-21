@@ -1,8 +1,9 @@
 # Satat
 
-Satat (सतत, "continuous / constant") is a self-hosted, always-on AI coding agent that
-watches a GitHub backlog, picks up labeled issues, writes code, runs tests, and opens draft
-pull requests for human review.
+Satat (सतत, "continuous / constant") is a self-hosted, always-on system that runs AI coding
+agents: it watches a GitHub backlog, picks up labeled issues, has an agent write code and run
+tests, and opens draft pull requests for human review. Where it is heading is in
+[docs/roadmap/](docs/roadmap/).
 
 ## Versions
 
@@ -20,14 +21,41 @@ same thing.
 ## Language
 
 **Satat**:
-The name of the whole system — the agent, its infrastructure, its repos, its identity.
-Used in docs, commit messages, and notification text (e.g. "Satat opened PR #142").
+The name of the whole system: the harness it runs agents in, its infrastructure, its repos, its
+identity. Used in docs, commit messages, and notification text (e.g. "Satat opened PR #142").
 _Avoid_: "the agent", "the bot", "openhands"
 
 **Agent**:
-The OpenHands agent process that clones a repo, implements a fix, and opens a PR.
-Runs in a Docker sandbox on the VM.
-_Avoid_: "bot", "worker"
+The coding agent program that does the work: Claude Code, OpenCode or Pi, off the shelf today.
+Its built-in tools (shell, file edits) come with it; the skills and tools Satat gives it are
+part of the harness. Satat runs it one-shot in an isolated container for each step. In
+v0.1 this was the OpenHands agent.
+_Avoid_: "bot", "worker", "binary", "harness"
+
+**Model**:
+The LLM the agent calls, reached through LiteLLM. Chosen separately from the agent, so any
+agent can be paired with any model it supports.
+_Avoid_: "agent" for the model
+
+**Harness**:
+Everything around the agent that makes it likely to succeed. It has two halves: context and
+loops. Satat builds and runs the harness; it does not build the agent.
+_Avoid_: using "harness" for the agent itself (e.g. "Claude Code is the harness")
+
+**Context**:
+The half of the harness that primes the agent: intent made durable, versioned and visible, such
+as skills, docs and memory. Advisory: the agent can read it and still ignore it.
+
+**Loop**:
+The half of the harness that enforces: a check wired so that failing it goes back to the agent.
+An **inner loop** answers while the agent can still fix the work (lint, tests, the judge and
+reviewer before the draft PR). An **outer loop** answers after the work has shipped, so it can
+only change the next piece of work (conversation retros that raise tickets).
+_Avoid_: "loop" for an agent repeating itself; say it is going in circles
+
+**Control gate**:
+An inner-loop check a step must pass before its work moves on: lint, tests, security checks or
+review.
 
 **Canvas**:
 The OpenHands Agent Canvas web UI — the control plane for conversations and automations.
