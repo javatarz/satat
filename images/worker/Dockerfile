@@ -20,8 +20,8 @@ RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/zricethezav/gitleak
 
 FROM ${BASE_IMAGE}
 RUN apt-get update \
- && apt-get install -y --no-install-recommends git ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+  && apt-get install -y --no-install-recommends git ca-certificates \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build /out/satat-worker /out/gitleaks /usr/local/bin/
 RUN groupadd --gid 10002 satat && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin satat
 USER 10002:10002
