@@ -75,6 +75,70 @@ its own kitchen. It must scale from a two-person team to a large engineering org
 Satat is **not a product**. It is a working reference and a body of tested opinions that the
 team can take into engagements, and the source for blogs and talks.
 
+## How it fits together
+
+Every workflow that starts somewhere other than a person's issue ends in a draft issue. Only a
+human moves an issue from `needs-triage` to `ready-for-agent`, and only `ready-for-agent`
+issues reach the agent. Green is decided, amber is being shaped, and grey dashed is an idea.
+
+```mermaid
+flowchart LR
+  person[Issue written<br/>by a person]
+  feature[Feature or spec]
+  breakdown[Agent breaks it<br/>into draft issues]
+  alert[Production alert<br/>or drift]
+  diagnose[Agent diagnoses,<br/>drafts an issue]
+  retro[Retro over agent<br/>conversations, drafts<br/>an issue with a hypothesis]
+  triage{{A human accepts it:<br/>needs-triage to<br/>ready-for-agent}}
+
+  subgraph satat[Satat]
+    queue[Hatchet queue]
+    context[Context<br/>skills, docs, memory]
+    agent[Agent in an isolated<br/>container per step<br/>Claude Code, OpenCode, Pi]
+    gateway[LiteLLM]
+    inner[Inner loop<br/>control gates, judge, reviewer]
+    capture[Conversation capture<br/>and observability]
+  end
+
+  model[(Models)]
+  pr[Draft PR]
+  merge{{A human merges}}
+  prod[Running system]
+  docs[Docs workflow<br/>opens a docs PR]
+  evals[Evals measure<br/>agent, model and harness]
+
+  person --> triage
+  feature --> breakdown --> triage
+  alert --> diagnose --> triage
+  retro --> triage
+  triage --> queue --> agent
+  context -. primes .-> agent
+  agent <--> gateway <--> model
+  agent --> inner
+  inner -- not right yet --> agent
+  inner -- passes --> pr --> merge --> prod
+  merge --> docs
+  prod --> alert
+  agent --> capture --> retro
+  evals -.-> agent
+
+  classDef decided fill:#d3f0d8,stroke:#2f7d3e,color:#0b2e14
+  classDef shaping fill:#fde8c4,stroke:#b7791f,color:#3d2600
+  classDef idea fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
+  class person,triage,queue,gateway,model,pr,merge decided
+  class agent,inner,docs,evals shaping
+  class alert,diagnose,retro,context,capture,feature,breakdown idea
+```
+
+| Workflow | Starts with | Ends with | Status | Themes |
+|---|---|---|---|---|
+| Issue to draft PR | A human labels an issue `ready-for-agent` | A draft PR that a human merges | Shaping (#112) | [Inner loop](inner-loop.md), [interchangeable agents](interchangeable-agents.md) |
+| Feature breakdown | A feature or spec | Draft issues waiting for a human to accept them | Idea | [Per-codebase workflows](per-codebase-workflows.md) |
+| Production signal to issue | An alert or drift in the running system | A diagnosis as a draft issue | Idea | [Signal-driven intake](signal-driven-intake.md), [observability](observability.md) |
+| Harness self-improvement | A schedule | An issue with a hypothesis about the harness | Idea | [Observability](observability.md), [memory](memory.md) |
+| Docs sync | A merged PR (weekly for now) | A docs PR | Shaping | [Self-documenting repos](self-documenting-repos.md) |
+| Eval run | A change to the agent, model or harness | Scores to compare against the last run | Shaping | [Evals](evals.md) |
+
 ## Sequencing: why this order
 
 1. **Thin slice end to end** (v0.2): issue to draft PR on Docker, horizontally scalable.
