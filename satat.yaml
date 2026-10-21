@@ -42,3 +42,30 @@ lanes:
     # when the egress proxy exists and the lane's network should have no route out except to
     # containers attached to it.
     internal: false
+
+  # Runs a command over a set of files with no network. Used by the eval harness to run held-out
+  # tests; the step input is {"files": {path: base64}, "command": [...]}.
+  check-python:
+    image: python@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f
+    command:
+      - python
+      - -I
+      - -c
+      - |
+        import base64, json, os, subprocess, sys
+        spec = json.load(open(os.environ["SATAT_INPUT"]))
+        root = "/workspace/repo"
+        for name, data in spec["files"].items():
+            if name.startswith("/") or ".." in name.split("/"):
+                sys.exit("refusing path " + name)
+            path = os.path.join(root, name)
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "wb") as f:
+                f.write(base64.b64decode(data))
+        sys.exit(subprocess.run(spec["command"], cwd=root, stderr=subprocess.STDOUT).returncode)
+    memory: 512MiB
+    cpus: 1
+    pids: 128
+    workspace: 128MiB
+    timeout: 5m
+    internal: true
