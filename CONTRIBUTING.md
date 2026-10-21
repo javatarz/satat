@@ -47,6 +47,11 @@ trying things, and we never let the product stop working while we do.
 
 - Every change goes through a pull request, not straight to `main`. Satat's agents learn from
   the same PRs, tests and checks we write.
+- PRs are rebase-merged, so every commit lands on `main` as you wrote it. Each commit should
+  stand on its own and pass the checks.
+- `main` requires signed commits. Set up
+  [commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
+  before your first PR.
 - Humans may merge their own PRs. Tag a reviewer when you want one.
 - Agent PRs need a human's approval before they merge, at least until our evals are strong
   enough to trust them. Satat only opens draft PRs
@@ -59,8 +64,9 @@ We follow these
 [developer experience non-negotiables](https://karun.me/blog/2025/06/23/what-makes-developer-experience-world-class/):
 
 1. A short README that says what the code does and how to get started.
-2. One command to set up a workstation and one to run the system. We use `just` for these; the
-   justfile is still to come.
+2. A single entry point for every task: one command to set up a workstation, one to run the
+   system, and one each to lint and test. Which tool doesn't matter (`just`, `make`, a script),
+   as long as it's one place.
 3. Fast feedback: linting and tests quick enough to run on every commit.
 4. Pre-commit checks that run the CI safety net locally.
 5. Everything runs locally, without the internet where possible.
@@ -78,12 +84,33 @@ The hooks also need `actionlint` on your path, and Terraform at the version pinn
 
 ## Commit messages
 
-`scripts/check-commit-msg.sh` enforces the mechanical rules. The rest is judgement.
+We follow [How to Write a Git Commit Message](https://cbea.ms/git-commit/), with one change:
+don't wrap the body by hand. Let tools wrap it for display. With the commit-msg hook installed,
+`scripts/check-commit-msg.sh` checks the mechanical rules: a capitalised subject, no full stop,
+72 characters at most, and a blank line before the body.
 
-- Imperative mood: "Add feature", not "Added feature".
-- Start with a verb for the kind of change: `Add`, `Fix`, `Update`, `Remove`, `Refactor`,
+**Subject**
+
+- Use the imperative mood. It should complete "If applied, this commit will ...".
+- Start with the verb for the kind of change: `Add`, `Fix`, `Update`, `Remove`, `Refactor`,
   `Rename`, `Move`, `Docs`, `Test` or `Config`.
-- Capitalise the subject, keep it to 50 characters (72 at most), and leave off the full stop.
-- Append the issue number (`#N`) when there is one.
-- One logical change per commit.
-- The body explains why. The code already shows how. Don't wrap lines by hand.
+- Capitalise it and leave off the full stop.
+- Aim for 50 characters, 72 at most, not counting the issue reference.
+- End with the issue number (`#N`) when there is one. Skip it for trivial chores.
+
+**Body**
+
+- Separate it from the subject with a blank line.
+- Explain what changed and why. The diff already shows how. Mention trade-offs and anything
+  you ruled out.
+- Use a `Closes #N` footer when the commit finishes the issue.
+
+**Scope**
+
+- One logical change per commit, so any one can be reverted cleanly.
+
+```text
+Fix parallel Docker tests clobbering each other #112
+
+Package-level parallelism let one package's label reap remove another's running container. Run Go tests with -p 1 in CI and document it.
+```
