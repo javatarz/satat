@@ -15,9 +15,9 @@ import (
 const fakeClaude = `#!/bin/sh
 rec="$FAKE_DIR"
 if [ "$1" = auth ]; then
-  echo "auth $*" >> "$rec/calls"
-  echo "{\"authMethod\":\"${FAKE_AUTH:-oauth_token}\"}"
-  exit 0
+	echo "auth $*" >> "$rec/calls"
+	echo "{\"authMethod\":\"${FAKE_AUTH:-oauth_token}\"}"
+	exit 0
 fi
 echo "$*" > "$rec/args"
 env > "$rec/env"
@@ -26,17 +26,17 @@ pwd > "$rec/cwd"
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"rate_limit_event","status":"allowed"}'
 case "$FAKE_MODE" in
-  commit) echo fixed > fix.txt; git add fix.txt; git -c user.name=a -c user.email=a@b commit -q -m "Fix it";;
-  leave)  echo fixed > fix.txt;;
+	commit) echo fixed > fix.txt; git add fix.txt; git -c user.name=a -c user.email=a@b commit -q -m "Fix it";;
+	leave)  echo fixed > fix.txt;;
 esac
 if [ "$FAKE_MODE" = auth401 ]; then
-  echo '{"type":"system","subtype":"api_retry","attempt":1,"error_status":401,"error":"authentication_failed"}'
-  echo '{"type":"result","is_error":true,"terminal_reason":"api_error"}'
-  exit 1
+	echo '{"type":"system","subtype":"api_retry","attempt":1,"error_status":401,"error":"authentication_failed"}'
+	echo '{"type":"result","is_error":true,"terminal_reason":"api_error"}'
+	exit 1
 fi
 if [ "$FAKE_MODE" = error ]; then
-  echo '{"type":"result","is_error":true,"result":"boom"}'
-  exit 1
+	echo '{"type":"result","is_error":true,"result":"boom"}'
+	exit 1
 fi
 echo '{"type":"result","is_error":false,"result":"done","num_turns":2}'
 `
