@@ -20,6 +20,7 @@ See [CONTEXT.md](./CONTEXT.md) for versions and the domain glossary.
 
 - [CONTEXT.md](./CONTEXT.md) — domain glossary and versions
 - [docs/adr/](./docs/adr/) — architecture decisions (0024 is the runtime)
+- [docs/roadmap/](./docs/roadmap/) — design roadmap: where Satat is heading, not yet decided
 - [docs/research/v2/](./docs/research/v2/) — v0.2 research and spikes
 - [AGENTS.md](./AGENTS.md) — conventions for agents and contributors
 
