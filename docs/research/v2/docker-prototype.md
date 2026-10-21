@@ -108,3 +108,28 @@ a throwaway private repo (`javatarz/satat-sandbox`, issue 1: add `greet(name)` w
 - **Finding: a bare `exit status 1` hid a 401.** The first two attempts failed on a bad token. The runner now
   names the API error from the stream (`authentication_failed (HTTP 401)`). `claude auth status` reports
   `oauth_token` for any token, valid or not, so it only proves the token was seen, not that it works.
+
+## Slice 5: Hatchet workflow and worker (2026-10-21)
+
+The worker now runs in the Compose project (`worker` service), registers `satat-issue` with Hatchet Lite, and
+runs the same pipeline as the hand trigger, started by an event (`satat-enqueue`, standing in for the webhook).
+
+- **End to end through Hatchet:** an issue pushed as an event became a completed run and a draft PR in 23 s of
+  task time (QUEUED to FINISHED), with no container or volume left behind.
+- **The four caps work in Satat's own wiring.** With `per_repo: 1`, two events for one repo ran one after the
+  other: the second was queued at 16:55:03 and started at 16:55:26, three seconds after the first finished.
+  Caps and timeouts are checked by `Spec.Validate` before anything is registered; `Register` refuses a spec
+  with fewer than the four caps or a schedule timeout under 24 h, and a test covers each mutation.
+- **The worker reaches Docker only through the proxy.** `DOCKER_HOST=tcp://docker-proxy:2375`, no socket mount,
+  read-only root, no capabilities, 512 MiB limit. This settles the ADR 0027 item about the Go client through
+  the proxy on colima. The socket check now allows `DOCKER_HOST` on the worker only, and only pointing at the
+  proxy; three negative cases are caught.
+- **Gotcha: the first tenant is not the default one.** Hatchet Lite creates an `internal` tenant before
+  `Default`. A token made for the wrong tenant registers a worker and accepts events with no error, and no run
+  is ever created. `scripts/hatchet-token.sh` now selects the tenant by slug.
+- **Gotcha: the Compose file needs all required variables even for `exec`.** The token script supplies dummies.
+- **Idle worker footprint** is small (a Go binary and gitleaks in a slim Debian image); the 512 MiB limit has
+  not been approached. Not measured under load.
+- **Not done:** the webhook intake (slice 6), retries (set to 0 because the launcher adopts a re-delivered step),
+  the Claude-lane back-off, and a restart test (kill the worker mid-step and watch the next attempt adopt it) on
+  the real stack.

@@ -55,7 +55,8 @@ holder safe.
 - ~~That the endpoint allowlist is enough for the launcher.~~ Verified in slice 2 (2026-10-19): the
   launcher conformance suite passes through the proxy with the `compose.yaml` flags, including
   `PutArchive`, volume and network create, image pull, logs, wait and stop.
-- That the proxy works with the Hatchet Go worker's Docker client on Docker Desktop and colima.
+- ~~That the proxy works with the Hatchet Go worker's Docker client on Docker Desktop and colima.~~ Verified in
+  slice 5 (2026-10-21) on colima: the worker container uses `DOCKER_HOST=tcp://docker-proxy:2375`.
 - Rootless Docker with per-lane networks and the egress proxy on a Linux host.
 
 Revisit this ADR if a second component needs the Docker API, or if the worker starts to act
