@@ -26,6 +26,8 @@ The team is spread across time zones and everyone has a day job, so we work asyn
 - Link dependencies ("Depends on #N") so people working the same weekend don't collide.
 - `ready-for-agent` means an issue is fully specified and Satat may pick it up. The other
   labels are in [triage labels](docs/agents/triage-labels.md).
+- Bigger efforts are planned as a wayfinder map: one `wayfinder:map` issue with child tickets.
+  `scripts/next-issue.sh` lists the next unblocked, unassigned ticket on the newest map.
 - Research goes in `docs/research/`, and the settled outcome becomes an ADR in `docs/adr/`.
   Don't leave findings only in an issue.
 
@@ -45,18 +47,44 @@ trying things, and we never let the product stop working while we do.
 
 ## Pull requests
 
+### Rebase merges only
+
+**PRs are rebase-merged. There are no merge commits and no squashing.** Every commit in your PR
+lands on `main` exactly as you wrote it, so:
+
+- Each commit must build and pass the checks on its own.
+- Each commit message is written for `main`, not for your reviewer. "Fix review comments" and
+  "WIP" commits have to be folded into the commits they fix before you merge.
+- Keep the history in the order a reader should follow it.
+
+### A good PR
+
+- **One thing.** A PR does what its title says and nothing else. No drive-by refactoring: if you
+  spot something worth tidying, open a separate PR or an issue.
+- **Small.** Easier to review, and easier to revert.
+- **Tests come with the change.** A PR that changes behaviour includes the tests that prove it.
+  Run them before you push. For Go, that's `go test -p 1 ./...`: tests that start containers
+  share one Docker daemon, so packages must not run in parallel, and `-short` skips them.
+- **Docs come with the change.** Update the docs in the same PR. They aren't a separate task.
+- **The description says what, why and how you tested it,** and links the issue (`Closes #N`).
+- **Open it as a draft** when you want early feedback.
+
+### Merging
+
 - Every change goes through a pull request, not straight to `main`. Satat's agents learn from
   the same PRs, tests and checks we write.
-- PRs are rebase-merged, so every commit lands on `main` as you wrote it. Each commit should
-  stand on its own and pass the checks.
 - `main` requires signed commits. Set up
   [commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
   before your first PR.
 - Humans may merge their own PRs. Tag a reviewer when you want one.
 - Agent PRs need a human's approval before they merge, at least until our evals are strong
-  enough to trust them. Satat only opens draft PRs
+  enough to trust them (#124). Satat only opens draft PRs
   ([ADR 0022](docs/adr/0022-v2-platform-requirement-decisions.md)).
-- Update the docs in the same PR as the change they describe. Docs aren't a separate task.
+
+### Secrets
+
+Never commit secrets, tokens or keys. gitleaks and the private-key and AWS-credential checks run
+in pre-commit and again in CI. Where secrets do live is in [AGENTS.md](AGENTS.md#secrets).
 
 ## Developer experience
 
