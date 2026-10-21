@@ -14,6 +14,11 @@ Default five-label vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, 
 
 Single-context: `CONTEXT.md` at root + `docs/adr/`. See `docs/agents/domain.md`.
 
+### Design roadmap
+
+`docs/roadmap/` holds direction that isn't an ADR or an issue yet. When grooming or designing,
+read the relevant theme and flag any change that goes against it.
+
 ## Conventions
 
 ### Scratch directory
