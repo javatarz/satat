@@ -70,6 +70,48 @@ services:
     networks:
       - docker-api
 
+  # The Satat worker: runs the issue workflow, holds the Docker API (through the proxy) and the
+  # GitHub write token (ADR 0027). Create HATCHET_CLIENT_TOKEN first with scripts/hatchet-token.sh;
+  # scripts/compose-up.sh fills the other secrets from 1Password.
+  worker:
+    build:
+      context: .
+      dockerfile: images/worker/Dockerfile
+      args:
+        GO_IMAGE: golang@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61
+        BASE_IMAGE: debian@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+    restart: unless-stopped
+    depends_on:
+      hatchet-lite:
+        condition: service_healthy
+      docker-proxy:
+        condition: service_started
+    environment:
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:?run scripts/hatchet-token.sh}
+      HATCHET_CLIENT_HOST_PORT: hatchet-lite:7077
+      HATCHET_CLIENT_TLS_STRATEGY: none
+      DOCKER_HOST: tcp://docker-proxy:2375
+      SATAT_CONFIG: /etc/satat/satat.yaml
+      HOME: /tmp
+      # Passed to step containers by name, as the lane's pass_env says (ADR 0026).
+      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?use scripts/compose-up.sh}
+      SATAT_GITHUB_TOKEN: ${SATAT_GITHUB_TOKEN:?use scripts/compose-up.sh}
+      # Used by the pusher only; never passed to a step.
+      SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?use scripts/compose-up.sh}
+    volumes:
+      - ./satat.yaml:/etc/satat/satat.yaml:ro
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    mem_limit: 512m
+    networks:
+      - default
+      - docker-api
+
 networks:
   docker-api:
     internal: true
