@@ -1,0 +1,18 @@
+# First eval case: the sandbox repo's issue 1 (add greet). A quick check that the whole path works,
+# to be replaced by richer cases. The tests the agent is graded on are hidden_test_greet.py, which
+# the agent never sees.
+name: sandbox-greet
+repo: javatarz/satat-sandbox
+base: main
+issue: 1
+checks:
+  tests:
+    lane: check-python
+    command: [python, -m, unittest, discover, -v, -p, "*test*.py"]
+    hidden: [hidden_test_greet.py]
+    require_output: [HiddenGreetTest, test_empty_name_is_an_error]
+  scope:
+    allowed_paths: [hello.py, test_hello.py]
+    max_files: 2
+  commits:
+    max: 3
