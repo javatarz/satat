@@ -69,6 +69,11 @@ type Config struct {
 const (
 	oauthVar = "CLAUDE_CODE_OAUTH_TOKEN"
 	cloneVar = "SATAT_GITHUB_TOKEN"
+	nameVar  = "SATAT_GIT_NAME"
+	emailVar = "SATAT_GIT_EMAIL"
+
+	defaultGitName  = "Satat"
+	defaultGitEmail = "satat@users.noreply.github.com"
 )
 
 var (
@@ -149,7 +154,11 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	// The clone token goes to git only; claude's environment never has it.
 	// Commits the agent makes are Satat's: a fixed identity in the environment, not git config
 	// on disk, so there is nothing for the agent to rewrite.
-	claudeEnv := append(withoutKeys(cfg.Env, cloneVar), gitIdentity...)
+	identity, err := gitIdentity(env)
+	if err != nil {
+		return err
+	}
+	claudeEnv := append(withoutKeys(cfg.Env, cloneVar), identity...)
 
 	method, err := authMethod(ctx, cfg, claudeEnv)
 	if err != nil {
@@ -181,7 +190,7 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 
 	// Commit whatever is left, as Satat, whether or not claude finished cleanly: the diff is
 	// what a reviewer needs to see.
-	if err := commitLeftovers(ctx, cfg, repoDir, in); err != nil {
+	if err := commitLeftovers(ctx, cfg, identity, repoDir, in); err != nil {
 		return errors.Join(claudeErr, err)
 	}
 	if res.HeadSHA, err = gitOut(ctx, cfg, repoDir, "rev-parse", "HEAD"); err != nil {
@@ -335,13 +344,30 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 	return nil
 }
 
-// gitIdentity is the author and committer for every commit in the run.
-var gitIdentity = []string{
-	"GIT_AUTHOR_NAME=Satat", "GIT_AUTHOR_EMAIL=satat@users.noreply.github.com",
-	"GIT_COMMITTER_NAME=Satat", "GIT_COMMITTER_EMAIL=satat@users.noreply.github.com",
+// gitIdentity is the author and committer for every commit in the run: Satat unless the
+// operator set SATAT_GIT_NAME or SATAT_GIT_EMAIL. Empty counts as unset.
+func gitIdentity(env map[string]string) ([]string, error) {
+	name, email := defaultGitName, defaultGitEmail
+	for _, f := range []struct {
+		key string
+		dst *string
+	}{{nameVar, &name}, {emailVar, &email}} {
+		v := strings.TrimSpace(env[f.key])
+		if v == "" {
+			continue
+		}
+		if strings.ContainsAny(v, "<>\n\r") {
+			return nil, fmt.Errorf("%s must not contain <, > or a line break", f.key)
+		}
+		*f.dst = v
+	}
+	return []string{
+		"GIT_AUTHOR_NAME=" + name, "GIT_AUTHOR_EMAIL=" + email,
+		"GIT_COMMITTER_NAME=" + name, "GIT_COMMITTER_EMAIL=" + email,
+	}, nil
 }
 
-func commitLeftovers(ctx context.Context, cfg Config, dir string, in Input) error {
+func commitLeftovers(ctx context.Context, cfg Config, identity []string, dir string, in Input) error {
 	status, err := gitOut(ctx, cfg, dir, "status", "--porcelain")
 	if err != nil || status == "" {
 		return err
@@ -349,7 +375,7 @@ func commitLeftovers(ctx context.Context, cfg Config, dir string, in Input) erro
 	if err := git(ctx, cfg, cfg.Env, dir, "add", "-A"); err != nil {
 		return err
 	}
-	return git(ctx, cfg, append(append([]string{}, cfg.Env...), gitIdentity...), dir,
+	return git(ctx, cfg, append(append([]string{}, cfg.Env...), identity...), dir,
 		"commit", "--quiet", "-m", fmt.Sprintf("Resolve #%d (uncommitted changes left by the agent)", in.Issue.Number))
 }
 
