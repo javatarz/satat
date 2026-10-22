@@ -96,6 +96,10 @@ services:
       # Passed to step containers by name, as the lane's pass_env says (ADR 0026).
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?use scripts/compose-up.sh}
       SATAT_GITHUB_TOKEN: ${SATAT_GITHUB_TOKEN:?use scripts/compose-up.sh}
+      # Author and committer for the agent's commits. Optional: set them in the environment to
+      # override the defaults.
+      SATAT_GIT_NAME: ${SATAT_GIT_NAME:-Satat}
+      SATAT_GIT_EMAIL: ${SATAT_GIT_EMAIL:-satat@users.noreply.github.com}
       # Used by the pusher only; never passed to a step.
       SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?use scripts/compose-up.sh}
     volumes:
