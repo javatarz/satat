@@ -155,7 +155,10 @@ func TestAgentCommitsAsSatat(t *testing.T) {
 		t.Fatal(err)
 	}
 	cenv := e.read(t, filepath.Join(e.fake, "env"))
-	for _, v := range gitIdentity {
+	for _, v := range []string{
+		"GIT_AUTHOR_NAME=Satat", "GIT_AUTHOR_EMAIL=satat@users.noreply.github.com",
+		"GIT_COMMITTER_NAME=Satat", "GIT_COMMITTER_EMAIL=satat@users.noreply.github.com",
+	} {
 		if !strings.Contains(cenv, v+"\n") {
 			t.Errorf("claude's environment is missing %s", v)
 		}
@@ -165,6 +168,21 @@ func TestAgentCommitsAsSatat(t *testing.T) {
 	}
 	if p := e.read(t, filepath.Join(e.out, "changes.patch")); !strings.Contains(p, "From: Satat <satat@users.noreply.github.com>") {
 		t.Errorf("the agent's commit is not authored as Satat:\n%s", p)
+	}
+}
+
+func TestOperatorCanSetTheIdentity(t *testing.T) {
+	// An empty value falls back to the default, so Compose can always pass both.
+	e := setup(t, "bare", "SATAT_GIT_NAME=Ada Bot", "SATAT_GIT_EMAIL=")
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	cenv := e.read(t, filepath.Join(e.fake, "env"))
+	if !strings.Contains(cenv, "GIT_COMMITTER_NAME=Ada Bot\n") || !strings.Contains(cenv, "GIT_AUTHOR_EMAIL=satat@users.noreply.github.com\n") {
+		t.Errorf("identity not applied:\n%s", cenv)
+	}
+	if p := e.read(t, filepath.Join(e.out, "changes.patch")); !strings.Contains(p, "From: Ada Bot <satat@users.noreply.github.com>") {
+		t.Errorf("commit is not authored as the configured name:\n%s", p)
 	}
 }
 
@@ -275,6 +293,8 @@ func TestRefusesToStart(t *testing.T) {
 		"bedrock":        {[]string{"CLAUDE_CODE_USE_BEDROCK=1"}, "CLAUDE_CODE_USE_BEDROCK is set"},
 		"wrong auth":     {[]string{"FAKE_AUTH=api_key"}, `auth method is "api_key"`},
 		"no oauth token": {[]string{"CLAUDE_CODE_OAUTH_TOKEN="}, "CLAUDE_CODE_OAUTH_TOKEN is not set"},
+		"bad git name":   {[]string{"SATAT_GIT_NAME=Eve <eve@x>"}, "SATAT_GIT_NAME must not contain"},
+		"bad git email":  {[]string{"SATAT_GIT_EMAIL=a@b\nc"}, "SATAT_GIT_EMAIL must not contain"},
 		"no clone token": {[]string{"SATAT_GITHUB_TOKEN="}, "SATAT_GITHUB_TOKEN is not set"},
 	}
 	for name, tc := range cases {
