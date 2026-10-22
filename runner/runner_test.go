@@ -27,6 +27,7 @@ echo '{"type":"system","subtype":"init"}'
 echo '{"type":"rate_limit_event","status":"allowed"}'
 case "$FAKE_MODE" in
 	commit) echo fixed > fix.txt; git add fix.txt; git -c user.name=a -c user.email=a@b commit -q -m "Fix it";;
+	bare)   echo fixed > fix.txt; git add fix.txt; git commit -q -m "Fix it";;
 	leave)  echo fixed > fix.txt;;
 esac
 if [ "$FAKE_MODE" = auth401 ]; then
@@ -144,6 +145,26 @@ func TestCommittedChangesBecomeAPatch(t *testing.T) {
 	}
 	if tr := e.read(t, filepath.Join(e.out, "transcript.jsonl")); strings.Count(tr, "\n") != 3 {
 		t.Errorf("transcript should have the 3 stream lines:\n%s", tr)
+	}
+}
+
+// The agent has no git config to lean on, so without a fixed identity it would improvise one.
+func TestAgentCommitsAsSatat(t *testing.T) {
+	e := setup(t, "bare")
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	cenv := e.read(t, filepath.Join(e.fake, "env"))
+	for _, v := range gitIdentity {
+		if !strings.Contains(cenv, v+"\n") {
+			t.Errorf("claude's environment is missing %s", v)
+		}
+	}
+	if r := e.result(t); r.Status != "changes" || r.Commits != 1 {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+	if p := e.read(t, filepath.Join(e.out, "changes.patch")); !strings.Contains(p, "From: Satat <satat@users.noreply.github.com>") {
+		t.Errorf("the agent's commit is not authored as Satat:\n%s", p)
 	}
 }
 

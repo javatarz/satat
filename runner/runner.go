@@ -147,7 +147,9 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	}
 
 	// The clone token goes to git only; claude's environment never has it.
-	claudeEnv := withoutKeys(cfg.Env, cloneVar)
+	// Commits the agent makes are Satat's: a fixed identity in the environment, not git config
+	// on disk, so there is nothing for the agent to rewrite.
+	claudeEnv := append(withoutKeys(cfg.Env, cloneVar), gitIdentity...)
 
 	method, err := authMethod(ctx, cfg, claudeEnv)
 	if err != nil {
@@ -333,6 +335,12 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 	return nil
 }
 
+// gitIdentity is the author and committer for every commit in the run.
+var gitIdentity = []string{
+	"GIT_AUTHOR_NAME=Satat", "GIT_AUTHOR_EMAIL=satat@users.noreply.github.com",
+	"GIT_COMMITTER_NAME=Satat", "GIT_COMMITTER_EMAIL=satat@users.noreply.github.com",
+}
+
 func commitLeftovers(ctx context.Context, cfg Config, dir string, in Input) error {
 	status, err := gitOut(ctx, cfg, dir, "status", "--porcelain")
 	if err != nil || status == "" {
@@ -341,7 +349,7 @@ func commitLeftovers(ctx context.Context, cfg Config, dir string, in Input) erro
 	if err := git(ctx, cfg, cfg.Env, dir, "add", "-A"); err != nil {
 		return err
 	}
-	return git(ctx, cfg, cfg.Env, dir, "-c", "user.name=Satat", "-c", "user.email=satat@users.noreply.github.com",
+	return git(ctx, cfg, append(append([]string{}, cfg.Env...), gitIdentity...), dir,
 		"commit", "--quiet", "-m", fmt.Sprintf("Resolve #%d (uncommitted changes left by the agent)", in.Issue.Number))
 }
 
