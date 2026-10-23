@@ -111,8 +111,9 @@ services:
       # (SATAT_GITHUB_TOKEN, the read token it clones repos, polls and checks the ready-for-agent
       # label with, so it needs Issues: read as well as Contents: read, since a private repo answers
       # 404 without it; and SATAT_PUSH_TOKEN, used by the pusher; no step gets either). `satat
-      # deploy up` resolves them
-      # from satat.yaml's deploy.secrets into the environment of `docker compose`.
+      # deploy up` resolves them from satat.yaml's deploy.secrets into the environment of `docker
+      # compose`, so they are never written to the repo or the host's working tree (dockerd keeps
+      # the container's environment inside the Docker VM).
 {{- range .WorkerEnv}}
       {{.}}: ${ {{- .}}:?run satat deploy up}
 {{- end}}

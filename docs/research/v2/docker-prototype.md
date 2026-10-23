@@ -183,7 +183,7 @@ lane.
 | Measurement | Result |
 |---|---|
 | Cold `deploy up` (no containers or volumes, includes the worker image build) | 3 min 32 s, all services healthy |
-| Warm `deploy up` | 0.3 s: only `ps`, no new Hatchet token, no container restarted |
+| Warm `deploy up` (before the always-roll-out change; see the notes) | 0.3 s: only `ps`, no new Hatchet token, no container restarted |
 | Time to unready after stopping hatchet-lite | about 8 s (still ready at 4 s, which is inside the 12 s heartbeat age) |
 | Recovery after starting hatchet-lite again | about 15 s while the worker record went INACTIVE, then ACTIVE. Restart count stayed 0 |
 | `agent rm` on a running `sleep` agent | container gone within 4 s |
@@ -204,10 +204,10 @@ Notes:
   ("removed 2 agent containers"). By design (`cmd/satat-worker`), the reaper removes agent containers older than twice the longest lane timeout plus an hour; that wait was not measured.
 - **Idle RAM with the health server was not measured.** The health server is one goroutine and one
   REST call every 5 s, but there is no number to record here.
-- Not run: the `claude` lane and issue runs with real secrets, the R19 path (a failed agent run
-  whose output Hatchet dropped, which is unit-tested only), paging of `agent ls` and run lookup
-  against a busy tenant (unit-tested against a fake), and the worker heartbeat while an agent uses
-  most of the VM's memory.
+- Not run: the `claude` lane and issue runs with real secrets, a failed agent run whose output
+  Hatchet dropped (`agent run --wait` then prints the run's error and exits 1; unit-tested only),
+  paging of `agent ls` and run lookup against a busy tenant (unit-tested against a fake), and the
+  worker heartbeat while an agent uses most of the VM's memory.
 
 ## Cache volumes for #120 (2026-10-25)
 
