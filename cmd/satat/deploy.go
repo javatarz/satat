@@ -170,7 +170,7 @@ func runUp(args []string) error {
 func runDown(args []string) error {
 	var volumes *bool
 	_, target, err := loadTarget("deploy down", args, func(fs *flag.FlagSet) {
-		volumes = fs.Bool("volumes", false, "also delete the platform's volumes (Postgres and Hatchet data)")
+		volumes = fs.Bool("volumes", false, "also delete the platform's volumes (Postgres and Hatchet data) and the now-dead Hatchet token in .env")
 	})
 	if err != nil {
 		return err
