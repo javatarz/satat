@@ -1,6 +1,9 @@
 // Command satat is the operator's CLI for Satat.
 //
 //	satat deploy render [--config satat.yaml] [--check]
+//	satat deploy up [--config satat.yaml]
+//	satat deploy down [--volumes] [--config satat.yaml]
+//	satat deploy status [--config satat.yaml]
 package main
 
 import (
