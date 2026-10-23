@@ -28,11 +28,15 @@ type fakeHatchet struct {
 func (f *fakeHatchet) Push(_ context.Context, event string, in any) error {
 	f.pushEvent = event
 	f.pushed = append(f.pushed, in)
-	f.rows = append(f.rows, RunRow{ID: "run-new", Kind: "agent", Lane: "smoke", State: "QUEUED", Started: time.Now()})
+	nonce := ""
+	if in, ok := in.(workflows.Input); ok {
+		nonce = in.Nonce
+	}
+	f.rows = append(f.rows, RunRow{ID: "run-new", Kind: "agent", Lane: "smoke", State: "QUEUED", Started: time.Now(), Nonce: nonce})
 	return nil
 }
 
-func (f *fakeHatchet) List(context.Context) ([]RunRow, error) { return f.rows, nil }
+func (f *fakeHatchet) List(context.Context, ListFilter) ([]RunRow, error) { return f.rows, nil }
 
 func (f *fakeHatchet) Get(_ context.Context, id string) (RunRow, *workflows.Output, error) {
 	for _, r := range f.rows {
@@ -68,9 +72,9 @@ func testConfig() config.Config {
 }
 
 func TestRunPushesAgentEvent(t *testing.T) {
-	// An older run of the same lane is there already, even one stamped later than the push (Hatchet's
-	// clock may run ahead): the new run is the one that was not listed before.
-	f := &fakeHatchet{rows: []RunRow{{ID: "run-old", Kind: "agent", Lane: "smoke", State: "RUNNING", Started: time.Now().Add(time.Hour)}}}
+	// Another run of the same lane is there already, even one stamped later than the push; only the
+	// nonce says which run is ours.
+	f := &fakeHatchet{rows: []RunRow{{ID: "run-old", Kind: "agent", Lane: "smoke", State: "RUNNING", Started: time.Now().Add(time.Hour), Nonce: "other"}}}
 	var out bytes.Buffer
 	err := agentRun(context.Background(), f, testConfig(), "smoke", []byte(`{"files":{"a":"b"}}`), false, &out, fast)
 	if err != nil {
@@ -83,6 +87,9 @@ func TestRunPushesAgentEvent(t *testing.T) {
 	var got map[string]any
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatal(err)
+	}
+	if n, _ := got["nonce"].(string); len(n) != 32 {
+		t.Fatalf("nonce = %q, want 32 hex characters", n)
 	}
 	if got["kind"] != "agent" || got["repo"] != "adhoc" || got["lane"] != "smoke" {
 		t.Fatalf("pushed input = %s", raw)
@@ -97,6 +104,30 @@ func TestRunPushesAgentEvent(t *testing.T) {
 	}
 }
 
+// twoRunsFake lists two same-lane runs, newest first, whose nonces match the pushed input only
+// for the older one.
+type twoRunsFake struct{ fakeHatchet }
+
+func (f *twoRunsFake) Push(ctx context.Context, event string, in any) error {
+	nonce := in.(workflows.Input).Nonce
+	f.rows = []RunRow{
+		{ID: "theirs", Kind: "agent", Lane: "smoke", State: "QUEUED", Started: time.Now().Add(time.Second), Nonce: "someone-else"},
+		{ID: "ours", Kind: "agent", Lane: "smoke", State: "QUEUED", Started: time.Now(), Nonce: nonce},
+	}
+	return nil
+}
+
+func TestRunFindsOwnRunByNonce(t *testing.T) {
+	f := &twoRunsFake{}
+	var out bytes.Buffer
+	if err := agentRun(context.Background(), f, testConfig(), "smoke", nil, false, &out, fast); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(out.String(), "ours\n") {
+		t.Fatalf("output = %q, want the run with our nonce", out.String())
+	}
+}
+
 func TestRunWaitExitCode(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -108,6 +139,7 @@ func TestRunWaitExitCode(t *testing.T) {
 	}{
 		{"ok", &workflows.Output{Status: "ok", Stdout: "hello"}, "COMPLETED", "", 0, "status: ok"},
 		{"agent exit code", &workflows.Output{Status: "failed", ExitCode: 3, Stderr: "boom"}, "COMPLETED", "", 3, "exit: 3"},
+		{"oom", &workflows.Output{Status: "oom", ExitCode: 137, OOMKilled: true}, "COMPLETED", "", 137, "status: oom"},
 		{"cancelled", &workflows.Output{Status: "cancelled", ExitCode: 137, Cancelled: true}, "COMPLETED", "", 1, "status: cancelled"},
 		{"timed out", &workflows.Output{Status: "timed_out", ExitCode: 137, TimedOut: true}, "COMPLETED", "", 1, "status: timed_out"},
 		{"launch error has no output", nil, "FAILED", "launching: image pull failed", 1, "image pull failed"},

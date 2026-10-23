@@ -48,6 +48,8 @@ type Input struct {
 	Kind string `json:"kind,omitempty"`
 	// StepInput is the lane's input JSON for an agent run.
 	StepInput json.RawMessage `json:"step_input,omitempty"`
+	// Nonce is set by the agent CLI so it can find its own run; the worker ignores it.
+	Nonce string `json:"nonce,omitempty"`
 }
 
 // Output is what a finished run reports in the dashboard.
