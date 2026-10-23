@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -47,6 +48,14 @@ const SecretFromEnv = "env"
 
 // WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps.
 var WorkerSecrets = []string{"SATAT_PUSH_TOKEN"}
+
+// WorkerEnv is the worker's own static environment in compose.yaml. A lane may not pass any of
+// these to its step: that would hand an agent the Hatchet token or the worker's Docker and config
+// settings, and duplicate the key in the worker's compose environment.
+var WorkerEnv = []string{
+	"HATCHET_CLIENT_TOKEN", "HATCHET_CLIENT_HOST_PORT", "HATCHET_CLIENT_TLS_STRATEGY",
+	"HATCHET_CLIENT_SERVER_URL", "DOCKER_HOST", "SATAT_CONFIG", "HOME",
+}
 
 // SecretNames is every secret the platform needs, sorted and unique: each lane's pass_env plus
 // the worker's own.
@@ -151,6 +160,11 @@ func Parse(r io.Reader) (Config, error) {
 		}
 		if lf.MaxRuns < 0 {
 			errs = append(errs, fmt.Errorf("lane %q: max_runs must not be negative", name))
+		}
+		for _, n := range l.PassEnv {
+			if slices.Contains(WorkerEnv, n) {
+				errs = append(errs, fmt.Errorf("lane %q: pass_env must not list %s, which is the worker's own environment", name, n))
+			}
 		}
 		c.Lanes = append(c.Lanes, l)
 		c.Accounts[name] = lf.Account
