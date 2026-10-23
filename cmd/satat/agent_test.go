@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -234,4 +236,75 @@ func TestRmUnknownFinishedAndRunning(t *testing.T) {
 	if len(f.cancelled) != 2 || f.cancelled[0] != "live" || f.cancelled[1] != "wait" {
 		t.Fatalf("cancelled = %v", f.cancelled)
 	}
+}
+
+// The agent commands default the Hatchet client env for a Compose stack on this machine, reading
+// the token from the env file deploy up wrote. No value is ever printed, here or by the code.
+func TestHatchetEnvDefaults(t *testing.T) {
+	const fileToken = "eyJ-from-env-file"
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN="+fileToken+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	configPath := filepath.Join(dir, "satat.yaml")
+	compose := config.Config{Deploy: config.Deploy{Target: "compose"}}
+	none := func(string) (string, bool) { return "", false }
+
+	t.Run("compose with nothing set", func(t *testing.T) {
+		got, err := hatchetEnv(compose, configPath, none)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["HATCHET_CLIENT_TOKEN"] != fileToken {
+			t.Error("HATCHET_CLIENT_TOKEN was not read from the env file")
+		}
+		for k, want := range map[string]string{
+			"HATCHET_CLIENT_HOST_PORT":    "localhost:7077",
+			"HATCHET_CLIENT_TLS_STRATEGY": "none",
+			"HATCHET_CLIENT_SERVER_URL":   "http://localhost:8888",
+		} {
+			if got[k] != want {
+				t.Errorf("%s = %q, want %q", k, got[k], want)
+			}
+		}
+	})
+
+	t.Run("set values win", func(t *testing.T) {
+		set := map[string]string{
+			"HATCHET_CLIENT_TOKEN":        "eyJ-from-shell",
+			"HATCHET_CLIENT_HOST_PORT":    "h:1",
+			"HATCHET_CLIENT_TLS_STRATEGY": "tls",
+			"HATCHET_CLIENT_SERVER_URL":   "https://h",
+		}
+		got, err := hatchetEnv(compose, configPath, func(k string) (string, bool) { v, ok := set[k]; return v, ok })
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 0 {
+			t.Errorf("overrides set env: %d keys", len(got))
+		}
+	})
+
+	t.Run("other target gets only the token", func(t *testing.T) {
+		got, err := hatchetEnv(config.Config{}, configPath, none)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got["HATCHET_CLIENT_TOKEN"] != fileToken {
+			t.Error("HATCHET_CLIENT_TOKEN was not read from the env file")
+		}
+		if len(got) != 1 {
+			t.Errorf("got %d keys, want only the token", len(got))
+		}
+	})
+
+	t.Run("no env file", func(t *testing.T) {
+		got, err := hatchetEnv(compose, filepath.Join(t.TempDir(), "satat.yaml"), none)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok := got["HATCHET_CLIENT_TOKEN"]; ok {
+			t.Error("a token was set with no env file")
+		}
+	})
 }
