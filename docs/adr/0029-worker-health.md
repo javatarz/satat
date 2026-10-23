@@ -51,9 +51,16 @@ every 4 seconds.
 - Each check is one REST call every 5 s, a negligible load on hatchet-lite.
 - A worker paused in Hatchet (`PAUSED`) reports unready, which is the truth: it takes no work.
 
+## Verified
+
+On the Compose stack on colima (scratch config, placeholder secrets,
+[docker-prototype.md](../research/v2/docker-prototype.md#deploy-adapter-2026-10-23)):
+
+- After stopping hatchet-lite the worker turned unready in about 8 s, inside the 30 s bound.
+- After starting it again the worker was ready in about 15 s with a restart count of 0.
+
 ## Not verified
 
-- The time to unready after stopping hatchet-lite on the real stack, and recovery without a restart.
 - That the worker keeps its heartbeat while an agent run uses most of the Docker VM's memory (the
   #104 stall), and so doesn't flap unready under load.
 

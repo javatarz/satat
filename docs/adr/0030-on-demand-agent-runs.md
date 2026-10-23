@@ -53,16 +53,34 @@ the same subscription with neither the lane cap nor the account cap holding.
 - Outputs beyond the 4 KiB tail aren't kept. Someone who needs the files runs `satat-step` by hand,
   as today.
 - A `sleep` test lane joins `satat.yaml` for the cancel test, next to `smoke`.
+- **Agent runs share one repo key, `adhoc`** (R20), so `limits.per_repo` caps all on-demand agents
+  together. With the shipped defaults (`per_repo` 1, `per_account` 1, lane `max_runs` 1) only one
+  on-demand agent runs at a time. An operator who wants more raises those limits in `satat.yaml`.
+  A separate per-repo default for `adhoc` is not decided.
+- The CLI finds the run it started by a random nonce in the run input (R21), not by timestamp, so
+  two operators pushing to the same lane at once don't see each other's run.
 - The workflow name stays `satat-issue` for now, though it carries both kinds. Renaming it would
   orphan run history. Revisit when the workflow interpreter (#108) replaces the hard-coded workflow.
 
+## Verified
+
+On the Compose stack on colima (scratch config with the limits raised to 3, `smoke` and `sleep`
+lanes, placeholder secrets, [docker-prototype.md](../research/v2/docker-prototype.md#deploy-adapter-2026-10-23)):
+
+- `agent rm` cancels a running agent and its container is gone within 4 s.
+- With the global cap left at 2 and `per_repo`, `per_account` and the `sleep` lane's `max_runs`
+  raised to 3, three agents gave two RUNNING and one QUEUED.
+- `docker compose up --remove-orphans` leaves running agents alone.
+
 ## Not verified
 
-- That cancelling a run in Hatchet ends the Go task context promptly, and the container is gone
-  within 15 s.
-- That `Runs().List` can filter by workflow and expose each run's input, so `agent ls` can show kind
-  and lane without one extra call per run.
-- Shared caps across the two events with a real `claude` run and an issue run at the same time.
+- Shared caps across the two events with a real `claude` run and an issue run at the same time (the
+  `claude` lane and real secrets were not used).
+- The R19 path against live Hatchet: a failed run with no output makes `agent run --wait` print the
+  run's error and exit 1. It is unit-tested only.
+- `agent ls` paging and the run lookup against a busy tenant. They are tested against a fake only.
+- That a worker recreated while agents run adopts or stops them. They are orphaned until the reaper
+  or `deploy down`.
 
 Revisit this ADR if on-demand runs need their own caps, longer-lived agents, or full output
 retention.
