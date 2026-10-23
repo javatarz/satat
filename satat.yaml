@@ -46,9 +46,10 @@ deploy:
     SATAT_PUSH_TOKEN: op://Satat Harness/satat-sandbox-write
 
 lanes:
-  # Claude Code on the subscription token (slice 4). The image is built locally:
-  #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
-  # Publishing it to GHCR comes later. Run it with: go run ./cmd/satat-step --repo ... --issue N
+  # Claude Code on the subscription token (slice 4). Build and push the image to a registry:
+  #   SATAT_REGISTRY=localhost:5000 scripts/build-claude-image.sh
+  # It prints `image: <registry>/satat-claude@sha256:...` (the registry's manifest digest); paste
+  # that reference below. Run it with: go run ./cmd/satat-step --repo ... --issue N
   claude:
     image: satat-claude@sha256:5d0a2935e81590e39b09bb3ad74298e05281080f9871c2f359a048389062f0c9
     # The image's entrypoint is the Satat runner; no command override.
