@@ -112,6 +112,19 @@ lanes:
     # containers attached to it.
     internal: false
 
+  # Idle lane for exercising on-demand agent runs (`satat agent`): sleeps until cancelled or timed
+  # out. No pass_env and no network.
+  sleep:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "sleep 600"]
+    # 128MiB, not 64: the floor needs workspace plus the 64MiB /tmp to fit under the limit.
+    memory: 128MiB
+    cpus: 0.25
+    pids: 16
+    workspace: 8MiB
+    timeout: 15m
+    internal: true
+
   # Runs a command over a set of files with no network. Used by the eval harness to run held-out
   # tests; the step input is {"files": {path: base64}, "command": [...]}.
   check-python:

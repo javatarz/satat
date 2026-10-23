@@ -6,6 +6,7 @@ package workflows
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -25,6 +26,9 @@ const (
 	Name = "satat-issue"
 	// EventIssue starts the workflow. Intake (slice 6) and the hand trigger push it.
 	EventIssue = "satat:issue"
+	// EventAgent starts a one-shot agent run on the same workflow, so it shares the four caps with
+	// issue runs (deploy-targets.md decision 4).
+	EventAgent = "satat:agent"
 
 	// MinScheduleTimeout is the shortest wait behind a cap or a rate limit a task may allow. The
 	// default is 5 minutes, after which queued work is cancelled without running (hatchet-caps-spike).
@@ -49,6 +53,10 @@ type Input struct {
 	Account string       `json:"account"`
 	LaneCap int          `json:"lane_cap"`
 	Issue   runner.Issue `json:"issue"`
+	// Kind is KindIssue or KindAgent; empty means issue, so inputs from before agents still run.
+	Kind string `json:"kind,omitempty"`
+	// StepInput is the lane's input JSON for an agent run.
+	StepInput json.RawMessage `json:"step_input,omitempty"`
 }
 
 // Output is what a finished run reports in the dashboard.
@@ -65,6 +73,15 @@ type Output struct {
 	Commits  int `json:"commits"`
 	// Reason says why a run was skipped.
 	Reason string `json:"reason,omitempty"`
+
+	// The rest is set by agent runs only.
+	Kind      string         `json:"kind,omitempty"`
+	Stdout    string         `json:"stdout,omitempty"`
+	Stderr    string         `json:"stderr,omitempty"`
+	Files     map[string]int `json:"files,omitempty"`
+	TimedOut  bool           `json:"timed_out,omitempty"`
+	OOMKilled bool           `json:"oom_killed,omitempty"`
+	Cancelled bool           `json:"cancelled,omitempty"`
 }
 
 // MapIssue builds a run input from config. It is the only place caps are looked up. It lower-cases
@@ -112,7 +129,7 @@ const issueKeyExpression = "input.repo + '#' + string(input.issue.number)"
 func Define(l config.Limits, executionTimeout time.Duration) Spec {
 	return Spec{
 		Name:   Name,
-		Events: []string{EventIssue},
+		Events: []string{EventIssue, EventAgent},
 		Caps: []Cap{
 			{Expression: capExpressions[0], Max: l.Global},
 			{Expression: capExpressions[1], Max: 1, MaxExpression: "input.lane_cap"},
@@ -182,6 +199,8 @@ type Handler struct {
 	Gate Gate
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Secrets are the values scrubbed from an agent run's output tails.
+	Secrets []string
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;
@@ -200,6 +219,10 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 // RunAttempt is Run for a run that has already been backed off attempt times; the count sets how
 // long to wait when the step reports no reset time.
 func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt int) (Output, error) {
+	// An agent run has no issue, so the ready-for-agent gate does not apply to it.
+	if in.Kind == KindAgent {
+		return h.runAgent(ctx, runID, in)
+	}
 	st, reason, err := h.notReady(ctx, in)
 	if err != nil {
 		err = fmt.Errorf("not launched: cannot read %s#%d: %w", in.Repo, in.Issue.Number, err)

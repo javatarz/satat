@@ -174,6 +174,7 @@ func run() error {
 		Issues:   pipeline.GitHubIssues{Token: readToken},
 		Allowed:  allowed,
 		Gate:     limiter,
+		Secrets:  secretValues(cfg),
 	})
 	if err != nil {
 		return err
@@ -265,4 +266,16 @@ type eventPusher struct{ hc *hatchet.Client }
 
 func (e eventPusher) Push(ctx context.Context, key string, payload any) error {
 	return e.hc.Events().Push(ctx, key, payload)
+}
+
+// secretValues are the non-empty values, from this process's environment, of every secret name in
+// the config. An agent run's output is scrubbed of them before it reaches the Hatchet history.
+func secretValues(cfg config.Config) []string {
+	var vals []string
+	for _, n := range cfg.SecretNames() {
+		if v := os.Getenv(n); v != "" {
+			vals = append(vals, v)
+		}
+	}
+	return vals
 }
