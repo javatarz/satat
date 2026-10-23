@@ -496,10 +496,20 @@ record runs of it.
    `.env` if they're absent, resolves the other secrets into the child process only, starts the
    stack and waits until the worker reports ready. Running it again changes nothing that is already
    healthy. `satat deploy status` shows each service and the worker's readiness; `satat deploy down`
-   stops it and removes any agent containers left behind.
+   stops it and removes any agent containers left behind. `deploy down --volumes` also deletes
+   the platform's data and the Hatchet token in `.env`, which is dead without that data.
+
+   `deploy up` always runs the worker's `compose up`, so a changed worker is recreated, and agents
+   running at that moment are orphaned: `agent rm` then reports them cancelled while their
+   containers keep running, with their tokens, until they exit, the reaper removes them or
+   `deploy down`. `deploy up` warns when agents are running; run it when none are.
 3. Check it with `go run ./cmd/satat agent run smoke --wait`. It starts a one-shot agent on the
    `smoke` lane through Hatchet and prints the result ([ADR 0030](adr/0030-on-demand-agent-runs.md)).
-   `agent ls` lists queued and running runs, and `agent rm <run>` cancels one.
+   `agent ls` lists queued and running runs, and `agent rm <run>` cancels one. The agent commands
+   use the Hatchet SDK's `HATCHET_CLIENT_*` variables and fill in any that are unset: the token
+   from the `.env` beside `--config`, and for `deploy.target: compose` the ports the stack
+   publishes on this machine (`localhost:7077`, TLS `none`, `http://localhost:8888`). A variable
+   you set wins. The token is never printed.
 4. Label the issue `ready-for-agent` (the worker skips it otherwise), queue it with
    `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.

@@ -20,21 +20,28 @@ every 4 seconds.
 
 - **Two endpoints on the worker**, on `SATAT_HEALTH_ADDR` (default `127.0.0.1:8001`):
   - `/livez` is 200 while the process responds. It doesn't look at Hatchet, so a Hatchet restart
-    never kills in-flight agents.
+    never makes the worker restart and kill in-flight agents. (A recreate by `deploy up` still
+    orphans them; see [ADR 0028](0028-infrastructure-adapter-compose-first.md).)
   - `/readyz` is 200 only when all of these hold. Otherwise it's 503 with JSON naming each failing
     check:
     1. Hatchet lists this process's own worker as `ACTIVE`, with `lastHeartbeatAt` within 12 s
        (3 × the SDK heartbeat);
-    2. the Docker API answers `_ping` through the socket proxy.
+    2. the Docker API answers `_ping` through the socket proxy;
+    3. every lane loaded and passed the floor (`lanes`, checked once at start).
 
-  Lanes that fail the floor already stop the worker from starting.
+  The health server starts before lane setup, so a lane that fails (an image the daemon can't
+  pull, say) shows as the failing `lanes` check for the start grace, after which the worker exits
+  non-zero as before.
 - **Its own record, by name.** The worker registers as `satat-worker-<hostname>`, so readiness never
   passes on a stale record left by an earlier container. It reads Hatchet's view of the worker,
   not local state, which also covers a worker that's connected but no longer heartbeating.
 - **Checks run every 5 s.** Readiness turns false within 30 s of losing Hatchet.
 - **Exit rule.** The worker exits non-zero only if it's never ready within a 2-minute start-up
-  grace, and the restart policy retries. After the first ready, losing Hatchet makes it unready
-  and never makes it exit.
+  grace, and the restart policy retries. After the first ready, a transport outage (Hatchet
+  stopped, restarted or unreachable) makes it unready and never makes it exit, so agents it is
+  running finish. A listener stop error is different: when Hatchet rejects the worker, such as
+  `Unauthenticated` after a Hatchet reset (`deploy down --volumes`, say) invalidated its token,
+  the SDK's listener stops and the worker exits with it.
 - **`satat-worker healthcheck`** calls `/readyz`, prints the JSON and exits 0 or 1, so the image needs
   no `curl`. Compose uses it as the service `healthcheck`. On Kubernetes later, `/livez` and
   `/readyz` become the liveness and readiness probes, with no change to the worker.

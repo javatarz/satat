@@ -35,7 +35,9 @@ definitions was considered and left out. `satat.yaml` stays the only source.
   2. create `POSTGRES_PASSWORD` in `.env` if it's absent, and never rotate it;
   3. start Postgres, hatchet-lite and the proxy, and wait for them to be healthy;
   4. create the Hatchet token if it's absent;
-  5. resolve the other secrets into the child process environment only;
+  5. resolve the other secrets into the child process environment only, so they are never
+     written to the repo or the host's working tree (dockerd still keeps the worker's container
+     environment inside the Docker VM);
   6. start the worker and wait for its readiness ([ADR 0029](0029-worker-health.md)).
 
   It's idempotent. `down` also removes agent containers left behind, by label. `status` reports
@@ -64,6 +66,16 @@ definitions was considered and left out. `satat.yaml` stays the only source.
 - The rendered `compose.yaml` is generated text in git. A hand edit is lost on the next render,
   and its header says so.
 - Anonymous-pull registries only, for now. A public package or a local registry.
+- `deploy up` always runs the worker's `compose up`, so a changed worker image or environment
+  recreates the worker, and agents running at that moment are orphaned. The new worker neither
+  adopts nor stops them: `agent rm` reports the run cancelled in Hatchet while the container
+  keeps running, with its tokens, until it exits, the reaper removes it (after twice the longest
+  lane timeout plus an hour) or `deploy down`. `deploy up` prints a warning first when any agent
+  container is running. Run it when no agents are running, or follow it with `deploy down` and
+  `deploy up` to clear them.
+- `deploy down --volumes` deletes Hatchet's data, so it also removes the now-dead
+  `HATCHET_CLIENT_TOKEN` from `.env`; the next `up` mints a new one. `POSTGRES_PASSWORD` is kept
+  and the fresh volume adopts it.
 
 ## Verified
 
@@ -72,8 +84,11 @@ Measured on colima with a scratch config, no `claude` lane and placeholder secre
 
 - `docker compose up --remove-orphans` leaves agent containers alone. Colima only: Docker Desktop
   was not tried.
-- `deploy up` takes 3 min 32 s cold (with the worker image build) and 0.3 s warm. A warm run
-  leaves the worker container's ID and start time unchanged.
+- `deploy up` takes 3 min 32 s cold (with the worker image build) and 0.3 s warm. The 0.3 s was
+  measured before `up` was changed to always run the worker's `compose up -d --build`, so a warm
+  run now also includes a cached image build and takes longer. What still holds is the worker
+  check taken after that change: a warm run leaves the worker container's ID and `StartedAt`
+  unchanged ([docker-prototype.md](../research/v2/docker-prototype.md#deploy-adapter-2026-10-23)).
 
 ## Not verified
 

@@ -53,11 +53,11 @@ the same subscription with neither the lane cap nor the account cap holding.
 - Outputs beyond the 4 KiB tail aren't kept. Someone who needs the files runs `satat-step` by hand,
   as today.
 - A `sleep` test lane joins `satat.yaml` for the cancel test, next to `smoke`.
-- **Agent runs share one repo key, `adhoc`** (R20), so `limits.per_repo` caps all on-demand agents
+- **Agent runs share one repo key, `adhoc`**, so `limits.per_repo` caps all on-demand agents
   together. With the shipped defaults (`per_repo` 1, `per_account` 1, lane `max_runs` 1) only one
   on-demand agent runs at a time. An operator who wants more raises those limits in `satat.yaml`.
   A separate per-repo default for `adhoc` is not decided.
-- The CLI finds the run it started by a random nonce in the run input (R21), not by timestamp, so
+- The CLI finds the run it started by a random nonce in the run input, not by timestamp, so
   two operators pushing to the same lane at once don't see each other's run.
 - The workflow name stays `satat-issue` for now, though it carries both kinds. Renaming it would
   orphan run history. Revisit when the workflow interpreter (#108) replaces the hard-coded workflow.
@@ -76,8 +76,8 @@ lanes, placeholder secrets, [docker-prototype.md](../research/v2/docker-prototyp
 
 - Shared caps across the two events with a real `claude` run and an issue run at the same time (the
   `claude` lane and real secrets were not used).
-- The R19 path against live Hatchet: a failed run with no output makes `agent run --wait` print the
-  run's error and exit 1. It is unit-tested only.
+- A failed run whose output Hatchet dropped, against live Hatchet: it makes `agent run --wait`
+  print the run's error and exit 1. It is unit-tested only.
 - `agent ls` paging and the run lookup against a busy tenant. They are tested against a fake only.
 - That a worker recreated while agents run adopts or stops them. They are orphaned until the reaper
   or `deploy down`.
