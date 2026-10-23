@@ -33,6 +33,39 @@ type Config struct {
 	CacheReaper CacheReaper
 	// Poller says which repos the worker polls for ready-for-agent issues (#135).
 	Poller Poller
+	// Deploy says where Satat is deployed and where each secret comes from.
+	Deploy Deploy
+}
+
+// Deploy is the optional deploy section. Secrets is nil when the section is absent, so a caller
+// that needs the map can tell "not configured" from "configured empty".
+type Deploy struct {
+	Target string
+	// Secrets maps a secret name to where its value comes from: SecretFromEnv, or an op://
+	// reference. Values are references, never secrets.
+	Secrets map[string]string
+}
+
+// SecretFromEnv says a secret's value is already in the caller's environment.
+const SecretFromEnv = "env"
+
+// WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps: the push
+// token, and the read token it checks issues and clones repos with (no step holds either).
+var WorkerSecrets = []string{"SATAT_GITHUB_TOKEN", "SATAT_PUSH_TOKEN"}
+
+// SecretNames is every secret the platform needs, sorted and unique: each lane's pass_env plus
+// the worker's own.
+func (c Config) SecretNames() []string {
+	seen := map[string]bool{}
+	for _, l := range c.Lanes {
+		for _, n := range l.PassEnv {
+			seen[n] = true
+		}
+	}
+	for _, n := range WorkerSecrets {
+		seen[n] = true
+	}
+	return sortedKeys(seen)
 }
 
 // Poller is the worker's issue poll. With no repos it is off.
@@ -78,6 +111,7 @@ type file struct {
 	CacheReaper cacheReaperFile     `yaml:"cache_reaper"`
 	Poller      pollerFile          `yaml:"poller"`
 	Lanes       map[string]laneFile `yaml:"lanes"`
+	Deploy      *deployFile         `yaml:"deploy"`
 }
 
 type pollerFile struct {
@@ -94,6 +128,11 @@ type pollRepoFile struct {
 type cacheReaperFile struct {
 	MaxUnused string `yaml:"max_unused"`
 	MaxSize   string `yaml:"max_size"`
+}
+
+type deployFile struct {
+	Target  string            `yaml:"target"`
+	Secrets map[string]string `yaml:"secrets"`
 }
 
 type limitsFile struct {
@@ -159,6 +198,7 @@ func Parse(r io.Reader) (Config, error) {
 		Limits:      Limits{Global: f.Limits.Global, PerRepo: f.Limits.PerRepo, PerAccount: f.Limits.PerAccount},
 		Accounts:    map[string]string{},
 		LaneMaxRuns: map[string]int{},
+		Deploy:      Deploy{Target: "compose"},
 	}
 	var errs []error
 	if c.Limits.Global <= 0 || c.Limits.PerRepo <= 0 || c.Limits.PerAccount <= 0 {
@@ -191,6 +231,11 @@ func Parse(r io.Reader) (Config, error) {
 	var perr error
 	if c.Poller, perr = f.Poller.parse(c.Accounts); perr != nil {
 		errs = append(errs, fmt.Errorf("poller: %w", perr))
+	}
+	if f.Deploy != nil {
+		c.Deploy.Target = f.Deploy.Target
+		c.Deploy.Secrets = f.Deploy.Secrets
+		errs = append(errs, c.checkDeploy()...)
 	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
@@ -263,6 +308,41 @@ func (cf cacheReaperFile) parse() (CacheReaper, error) {
 		r.MaxBytes = n
 	}
 	return r, errors.Join(errs...)
+}
+
+// checkDeploy validates a present deploy section. Messages name variables and lanes, never the
+// configured values.
+func (c Config) checkDeploy() []error {
+	var errs []error
+	if c.Deploy.Target != "compose" {
+		errs = append(errs, fmt.Errorf("deploy: target must be %q", "compose"))
+	}
+	for _, name := range sortedKeys(c.Deploy.Secrets) {
+		if ref := c.Deploy.Secrets[name]; ref != SecretFromEnv && !strings.HasPrefix(ref, "op://") {
+			errs = append(errs, fmt.Errorf("deploy: secrets.%s must be %q or an op:// reference", name, SecretFromEnv))
+		}
+	}
+	used := map[string]bool{}
+	for _, l := range c.Lanes {
+		for _, n := range l.PassEnv {
+			used[n] = true
+			if _, ok := c.Deploy.Secrets[n]; !ok {
+				errs = append(errs, fmt.Errorf("deploy: secrets has no entry for %s, which lane %q passes", n, l.Name))
+			}
+		}
+	}
+	for _, n := range WorkerSecrets {
+		used[n] = true
+		if _, ok := c.Deploy.Secrets[n]; !ok {
+			errs = append(errs, fmt.Errorf("deploy: secrets has no entry for %s, which the worker uses", n))
+		}
+	}
+	for _, name := range sortedKeys(c.Deploy.Secrets) {
+		if !used[name] {
+			errs = append(errs, fmt.Errorf("deploy: secrets.%s is not used by any lane or the worker", name))
+		}
+	}
+	return errs
 }
 
 func (lf laneFile) lane(name string) (launcher.Lane, error) {
