@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -34,16 +36,24 @@ type RunRow struct {
 	// Error is Hatchet's message for a failed run. A launch error makes the task return an error,
 	// and Hatchet may then keep no output, so this is all a --wait caller has to show.
 	Error string
+	// Nonce is the correlation value agent run put in the run's input.
+	Nonce string
 }
 
 // errNoSuchRun is what hatchetAPI.Get returns for an ID Hatchet does not know.
 var errNoSuchRun = errors.New("no such run")
 
+// ListFilter narrows a run listing. A zero Since means no time window.
+type ListFilter struct {
+	ActiveOnly bool // only QUEUED and RUNNING runs
+	Since      time.Time
+}
+
 // hatchetAPI is the part of Hatchet the agent commands use.
 type hatchetAPI interface {
 	Push(ctx context.Context, event string, in any) error
-	// List returns the workflow's runs from the last 24 hours.
-	List(ctx context.Context) ([]RunRow, error)
+	// List returns the workflow's runs matching the filter, all pages of them.
+	List(ctx context.Context, f ListFilter) ([]RunRow, error)
 	// Get returns the run and its output, nil when Hatchet kept none.
 	Get(ctx context.Context, id string) (RunRow, *workflows.Output, error)
 	Cancel(ctx context.Context, id string) error
@@ -135,21 +145,19 @@ func agentRun(ctx context.Context, api hatchetAPI, cfg config.Config, lane strin
 	if err != nil {
 		return err
 	}
-	// Hatchet's clock can run ahead of this machine's (the VM under Docker does), so "created after
-	// the push" is judged by which runs were already there, not by timestamps.
-	before, err := api.List(ctx)
+	// The nonce lets this command find its own run among concurrent pushes to the same lane.
+	nonce, err := newNonce()
 	if err != nil {
 		return err
 	}
-	known := make(map[string]bool, len(before))
-	for _, r := range before {
-		known[r.ID] = true
-	}
+	in.Nonce = nonce
+	// Hatchet's clock can run ahead of this machine's, so the window starts well before the push.
+	since := time.Now().Add(-10 * time.Minute)
 	if err := api.Push(ctx, workflows.EventAgent, in); err != nil {
 		return fmt.Errorf("push event: %w", err)
 	}
 	fmt.Fprintf(w, "queued %s: run lookup pending\n", lane)
-	id, err := findRun(ctx, api, lane, known, t)
+	id, err := findRun(ctx, api, nonce, since, t)
 	if err != nil {
 		return err
 	}
@@ -160,23 +168,27 @@ func agentRun(ctx context.Context, api hatchetAPI, cfg config.Config, lane strin
 	return followRun(ctx, api, id, w, t.Wait)
 }
 
-// findRun polls for the newest agent run on the lane that was not there before the push. Pushing
-// an event returns no run ID, so this is how the run is found.
-func findRun(ctx context.Context, api hatchetAPI, lane string, known map[string]bool, t pollTimings) (string, error) {
+func newNonce() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// findRun polls for the run whose input carries the nonce. Pushing an event returns no run ID, so
+// this is how the run is found.
+func findRun(ctx context.Context, api hatchetAPI, nonce string, since time.Time, t pollTimings) (string, error) {
 	deadline := time.Now().Add(t.LookupTimeout)
 	for {
-		rows, err := api.List(ctx)
+		rows, err := api.List(ctx, ListFilter{Since: since})
 		if err != nil {
 			return "", err
 		}
-		var best *RunRow
-		for i, r := range rows {
-			if r.Kind == workflows.KindAgent && r.Lane == lane && !known[r.ID] && (best == nil || r.Started.After(best.Started)) {
-				best = &rows[i]
+		for _, r := range rows {
+			if r.Nonce == nonce {
+				return r.ID, nil
 			}
-		}
-		if best != nil {
-			return best.ID, nil
 		}
 		if time.Now().After(deadline) {
 			return "", fmt.Errorf("the run was queued but not found after %s: check `satat agent ls`", t.LookupTimeout)
@@ -260,7 +272,7 @@ func active(state string) bool { return state == "QUEUED" || state == "RUNNING" 
 
 // agentLs lists the runs that are queued or running.
 func agentLs(ctx context.Context, api hatchetAPI, w io.Writer, now time.Time) error {
-	rows, err := api.List(ctx)
+	rows, err := api.List(ctx, ListFilter{ActiveOnly: true})
 	if err != nil {
 		return err
 	}
@@ -311,6 +323,10 @@ type sdkAPI struct {
 }
 
 func newHatchetAPI() (hatchetAPI, error) {
+	// The SDK logs at debug level by default, which would mix into --wait output.
+	if _, ok := os.LookupEnv("HATCHET_CLIENT_LOG_LEVEL"); !ok {
+		os.Setenv("HATCHET_CLIENT_LOG_LEVEL", "error")
+	}
 	hc, err := hatchet.NewClient()
 	if err != nil {
 		return nil, fmt.Errorf("hatchet client (needs HATCHET_CLIENT_TOKEN): %w", err)
@@ -333,28 +349,43 @@ func (a *sdkAPI) Push(ctx context.Context, event string, in any) error {
 	return a.hc.Events().Push(ctx, event, in)
 }
 
-func (a *sdkAPI) List(ctx context.Context) ([]RunRow, error) {
+func (a *sdkAPI) List(ctx context.Context, f ListFilter) ([]RunRow, error) {
 	wf, err := a.workflowID(ctx)
 	if err != nil {
 		return nil, err
 	}
-	limit := int64(200)
+	const page = int64(200)
 	payloads := true
-	list, err := a.hc.Runs().List(ctx, rest.V1WorkflowRunListParams{
-		Since:           time.Now().Add(-24 * time.Hour),
+	// Since is required by the API; without a window, ask for everything Hatchet could hold.
+	since := f.Since
+	if since.IsZero() {
+		since = time.Unix(0, 0)
+	}
+	params := rest.V1WorkflowRunListParams{
+		Since:           since,
 		WorkflowIds:     &[]uuid.UUID{wf},
-		Limit:           &limit,
+		Limit:           func() *int64 { l := page; return &l }(),
 		IncludePayloads: &payloads,
-	})
-	if err != nil {
-		return nil, err
 	}
-	rows := make([]RunRow, 0, len(list.Rows))
-	for _, r := range list.Rows {
-		kind, lane := kindAndLane(r.Input)
-		rows = append(rows, RunRow{ID: r.TaskExternalId.String(), Kind: kind, Lane: lane, State: string(r.Status), Started: r.CreatedAt})
+	if f.ActiveOnly {
+		params.Statuses = &[]rest.V1TaskStatus{rest.V1TaskStatusQUEUED, rest.V1TaskStatusRUNNING}
 	}
-	return rows, nil
+	var rows []RunRow
+	for offset := int64(0); ; offset += page {
+		o := offset
+		params.Offset = &o
+		list, err := a.hc.Runs().List(ctx, params)
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range list.Rows {
+			kind, lane, nonce := inputFields(r.Input)
+			rows = append(rows, RunRow{ID: r.TaskExternalId.String(), Kind: kind, Lane: lane, Nonce: nonce, State: string(r.Status), Started: r.CreatedAt})
+		}
+		if int64(len(list.Rows)) < page {
+			return rows, nil
+		}
+	}
 }
 
 func (a *sdkAPI) Get(ctx context.Context, id string) (RunRow, *workflows.Output, error) {
@@ -378,8 +409,8 @@ func (a *sdkAPI) Get(ctx context.Context, id string) (RunRow, *workflows.Output,
 	if d.Run.WorkflowId != wf {
 		return RunRow{}, nil, errNoSuchRun
 	}
-	kind, lane := kindAndLane(d.Run.Input)
-	row := RunRow{ID: id, Kind: kind, Lane: lane, State: string(d.Run.Status)}
+	kind, lane, nonce := inputFields(d.Run.Input)
+	row := RunRow{ID: id, Kind: kind, Lane: lane, Nonce: nonce, State: string(d.Run.Status)}
 	if d.Run.CreatedAt != nil {
 		row.Started = *d.Run.CreatedAt
 	}
@@ -398,18 +429,19 @@ func (a *sdkAPI) Cancel(ctx context.Context, id string) error {
 	return err
 }
 
-// kindAndLane reads a run's input. The workflow input may arrive as the run's input itself or
+// inputFields reads a run's input. The workflow input may arrive as the run's input itself or
 // nested under "input"; an input with no kind is an issue run (see workflows.Input).
-func kindAndLane(in map[string]any) (kind, lane string) {
+func inputFields(in map[string]any) (kind, lane, nonce string) {
 	if nested, ok := in["input"].(map[string]any); ok && in["lane"] == nil {
 		in = nested
 	}
 	kind, _ = in["kind"].(string)
 	lane, _ = in["lane"].(string)
+	nonce, _ = in["nonce"].(string)
 	if kind == "" {
 		kind = workflows.KindIssue
 	}
-	return kind, lane
+	return kind, lane, nonce
 }
 
 // decodeOutput returns the run's Output, or nil when Hatchet kept none. A run's output may be
