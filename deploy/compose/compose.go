@@ -97,8 +97,9 @@ var platform = []string{"postgres", "hatchet-lite", "docker-proxy"}
 
 // Up does what the operator used to do by hand: check the render, create the Postgres password and
 // the Hatchet token once, start the platform, then the worker with the secrets in its environment,
-// waiting for each to be healthy. A service already running and healthy is left alone, so Up on a
-// healthy stack runs nothing but `ps`.
+// waiting for each to be healthy. A platform service already running and healthy is left alone.
+// The worker's up always runs, so a change rolls out; on an unchanged healthy stack compose
+// recreates nothing, and no token or password is created.
 func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secrets) error {
 	files, err := t.Render(cfg)
 	if err != nil {
@@ -154,29 +155,29 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 		t.say("created %s in %s", keyToken, envFile)
 	}
 
-	if len(notHealthy(entries, []string{"worker"})) > 0 {
-		// The only command that gets the real secrets, and only in its environment.
-		env := os.Environ()
-		names := make([]string, 0, len(secrets))
-		for name := range secrets {
-			names = append(names, name)
+	// The worker is always brought up, so new worker code or a changed environment rolls out;
+	// compose leaves an unchanged container alone. This is the only command that gets the real
+	// secrets, and only in its environment.
+	env := os.Environ()
+	names := make([]string, 0, len(secrets))
+	for name := range secrets {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		env = append(env, name+"="+secrets[name])
+	}
+	t.say("building and starting worker")
+	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
+		return err
+	}
+	timeout := or(t.workerTimeout, defaultWorkerTimeout)
+	if err := t.wait(ctx, []string{"worker"}, timeout); err != nil {
+		if errors.Is(err, errTimeout) {
+			// Docker's health lags the check by up to its interval, so give both.
+			return fmt.Errorf("%w; worker readiness now: %s", err, t.healthcheck(ctx))
 		}
-		sort.Strings(names)
-		for _, name := range names {
-			env = append(env, name+"="+secrets[name])
-		}
-		t.say("building and starting worker")
-		if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
-			return err
-		}
-		timeout := or(t.workerTimeout, defaultWorkerTimeout)
-		if err := t.wait(ctx, []string{"worker"}, timeout); err != nil {
-			if errors.Is(err, errTimeout) {
-				// Docker's health lags the check by up to its interval, so give both.
-				return fmt.Errorf("%w; worker readiness now: %s", err, t.healthcheck(ctx))
-			}
-			return err
-		}
+		return err
 	}
 	t.say("all services healthy")
 	return nil

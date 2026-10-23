@@ -172,7 +172,10 @@ func TestUpIsIdempotent(t *testing.T) {
 	if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := f.summary(), []string{"ps --all --format json"}; !slices.Equal(got, want) {
+	// The worker's up always runs (compose recreates nothing unchanged); no platform up, no psql,
+	// no hatchet-admin.
+	want := []string{"ps --all --format json", "up -d --build worker", "ps --all --format json"}
+	if got := f.summary(); !slices.Equal(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
 	if got, _ := os.ReadFile(env); string(got) != before {
@@ -263,6 +266,12 @@ func TestUpSecretsOnlyInChildEnv(t *testing.T) {
 			if joined != "up -d --build worker" && slices.Contains(c.env, name+"="+v) {
 				t.Errorf("%s value in env of %q", name, joined)
 			}
+		}
+	}
+	// Placeholders are for the other commands only; the worker container must never get one.
+	for _, kv := range workerUpEnv {
+		if strings.HasSuffix(kv, "=unused") {
+			t.Errorf("worker compose up env has placeholder %s", kv)
 		}
 	}
 	for name, v := range s {
