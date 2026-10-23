@@ -293,6 +293,50 @@ func TestUpSecretsOnlyInChildEnv(t *testing.T) {
 	}
 }
 
+// Recreating the worker orphans agents still running, so up warns before the worker's up.
+func TestUpWarnsAboutRunningAgents(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		running func(context.Context) (int, error)
+		want    string
+	}{
+		{"none", func(context.Context) (int, error) { return 0, nil }, ""},
+		{"two", func(context.Context) (int, error) { return 2, nil }, "warning: 2 agent containers are running"},
+		{"error", func(context.Context) (int, error) { return 0, errors.New("daemon gone") }, "warning: could not check for running agents: daemon gone"},
+		{"nil", nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tg, f, out, cfg := setup(t)
+			if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			platformUp, workerUp := true, true
+			f.respond = coldStack(&platformUp, &workerUp)
+			callsAtCheck := -1
+			if tc.running != nil {
+				tg.Running = func(ctx context.Context) (int, error) {
+					callsAtCheck = len(f.calls)
+					return tc.running(ctx)
+				}
+			}
+
+			if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+				t.Fatal(err)
+			}
+			if tc.running != nil && (callsAtCheck < 0 || f.calls[callsAtCheck].args[0] != "up") {
+				t.Errorf("Running not checked just before the worker's up (calls %q)", f.summary())
+			}
+			hasWarning := strings.Contains(out.String(), "warning")
+			if tc.want == "" && hasWarning {
+				t.Errorf("unexpected warning:\n%s", out)
+			}
+			if tc.want != "" && !strings.Contains(out.String(), tc.want) {
+				t.Errorf("output lacks %q:\n%s", tc.want, out)
+			}
+		})
+	}
+}
+
 func TestUpTimeoutReportsFailingCheck(t *testing.T) {
 	tg, f, _, cfg := setup(t)
 	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
