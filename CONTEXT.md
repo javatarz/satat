@@ -58,6 +58,36 @@ _Avoid_: "loop" for an agent repeating itself; say it is going in circles
 An inner-loop check a step must pass before its work moves on: lint, tests, security checks or
 review.
 
+**Platform**:
+The long-lived part of a Satat install: the queue, its database, the worker and what the worker
+needs to reach agents. It runs for as long as the install does.
+_Avoid_: "the stack" when only the platform is meant
+
+**Worker**:
+The one trusted platform process that takes work from the queue and starts agents. Nothing else
+in an install starts agents or holds the credentials to do so.
+_Avoid_: "agent" for the worker; agents never take work from the queue themselves
+
+**Lane**:
+A named, fixed shape an agent runs in: its image, limits, network and the secrets it may
+receive. Lanes are configuration; nothing an issue or an agent writes can change one.
+
+**Agent run**:
+One agent on one lane doing one task and exiting. It starts from an issue or on demand from an
+operator, and it can be listed and cancelled while it waits or runs.
+_Avoid_: "agent pod", "agent worker"; an agent run is temporary
+
+**Launcher**:
+What turns a lane and a task into a running agent and cleans up after it, on whichever runtime the
+install uses.
+
+**Infrastructure adapter**:
+What brings the platform up, down and reports its health on one kind of infrastructure, such as
+Docker Compose or Kubernetes. Choosing a different adapter changes where the platform runs, not
+how lanes, workflows or agents behave.
+_Avoid_: "deploy script", "launcher" (the launcher handles agent runs; the adapter handles the
+platform)
+
 **Canvas**:
 The OpenHands Agent Canvas web UI — the control plane for conversations and automations.
 Served behind Caddy at the domain, protected by oauth2-proxy (GitHub OAuth) and an API key.
