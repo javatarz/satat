@@ -31,6 +31,20 @@ poller:
   cron: "*/5 * * * *"
   repos: []
 
+# Where Satat is deployed and where each secret comes from. Every name a lane passes (pass_env) and
+# every secret the worker uses must be listed, so a missing one fails at load, not at the first
+# run. Values are references, never secrets: "op://..." is a 1Password item resolved when
+# `satat deploy up` runs, and "env" takes the variable from the caller's environment. Resolved
+# values go into the child process environment only, never to disk.
+deploy:
+  target: compose
+  secrets:
+    CLAUDE_CODE_OAUTH_TOKEN: op://Satat Harness/claude-code-oauth-token
+    # The worker's read token: it checks issues and clones repos before each step. No lane gets it.
+    SATAT_GITHUB_TOKEN: op://Satat Harness/satat-sandbox-read
+    # The worker's push token (SATAT_PUSH_TOKEN), write access to the sandbox repo. No lane gets it.
+    SATAT_PUSH_TOKEN: op://Satat Harness/satat-sandbox-write
+
 lanes:
   # Claude Code on the subscription token (slice 4). The image is built locally:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
