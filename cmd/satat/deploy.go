@@ -62,6 +62,21 @@ func targetFor(cfg config.Config, dir string) (deploy.Target, error) {
 				}
 				return l.Reap(ctx, 0)
 			},
+			// Up warns before the worker's up when agents are running, since a recreate orphans them.
+			Running: func(ctx context.Context) (int, error) {
+				api, err := client.New(client.FromEnv)
+				if err != nil {
+					return 0, err
+				}
+				defer api.Close()
+				list, err := api.ContainerList(ctx, client.ContainerListOptions{
+					Filters: make(client.Filters).Add("label", "satat.managed=true"),
+				})
+				if err != nil {
+					return 0, err
+				}
+				return len(list.Items), nil
+			},
 		}, nil
 	case "":
 		return nil, errors.New("config has no deploy.target")

@@ -66,6 +66,10 @@ type Target struct {
 	// Reap removes agent containers and volumes left behind, by their satat.* labels. Down calls
 	// it after `docker compose down` when it is set.
 	Reap func(ctx context.Context) (int, error)
+	// Running counts agent containers running now, by their satat.* labels. Up calls it before the
+	// worker's up, which may recreate the worker and orphan them, and warns when there are any.
+	// Nil skips the check.
+	Running func(ctx context.Context) (int, error)
 
 	// Zero means the defaults; tests shorten them.
 	poll, platformTimeout, workerTimeout time.Duration
@@ -167,6 +171,7 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	for _, name := range names {
 		env = append(env, name+"="+secrets[name])
 	}
+	t.warnRunningAgents(ctx)
 	t.say("building and starting worker")
 	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
 		return err
@@ -181,6 +186,23 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	}
 	t.say("all services healthy")
 	return nil
+}
+
+// warnRunningAgents says when agents are running, because a recreated worker orphans them: they
+// keep running, with their tokens, until they exit, the reaper removes them or deploy down, and
+// agent rm can no longer stop them. A failed check is a warning too, never a failed up.
+func (t *Target) warnRunningAgents(ctx context.Context) {
+	if t.Running == nil {
+		return
+	}
+	n, err := t.Running(ctx)
+	switch {
+	case err != nil:
+		t.say("warning: could not check for running agents: %v", err)
+	case n > 0:
+		t.say("warning: %d agent containers are running; if the worker is recreated they are orphaned "+
+			"and keep running until they exit, the reaper removes them or satat deploy down", n)
+	}
 }
 
 // createToken is scripts/hatchet-token.sh: look up the default tenant, mint a token for it and
