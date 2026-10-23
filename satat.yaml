@@ -17,7 +17,8 @@ limits:
 # every secret the worker uses must be listed, so a missing one fails at load, not at the first
 # run. Values are references, never secrets: "op://..." is a 1Password item resolved when
 # `satat deploy up` runs, and "env" takes the variable from the caller's environment. Resolved
-# values go into the child process environment only, never to disk.
+# values go into the child process environment only, never to the repo or the host's working
+# tree (dockerd keeps the worker's container environment inside the Docker VM).
 deploy:
   target: compose
   secrets:

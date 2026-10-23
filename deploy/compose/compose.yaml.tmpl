@@ -99,7 +99,9 @@ services:
       HOME: /tmp
       # Secrets, by name: the ones a lane passes to its step (pass_env, ADR 0026) and the worker's own
       # (SATAT_PUSH_TOKEN is used by the pusher only, never passed to a step). `satat deploy up`
-      # resolves them from satat.yaml's deploy.secrets into the environment of `docker compose`.
+      # resolves them from satat.yaml's deploy.secrets into the environment of `docker compose`, so
+      # they are never written to the repo or the host's working tree (dockerd keeps the
+      # container's environment inside the Docker VM).
 {{- range .WorkerEnv}}
       {{.}}: ${ {{- .}}:?run satat deploy up}
 {{- end}}

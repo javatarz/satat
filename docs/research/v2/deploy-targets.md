@@ -62,7 +62,8 @@ time through the launcher and removes them when they exit.
   while the worker is cut off from Hatchet.
 - Secrets written to `compose.yaml`, git, or rendered files. `.env` stays gitignored (mode 600)
   and holds only the two platform-local secrets it holds today, `POSTGRES_PASSWORD` and
-  `HATCHET_CLIENT_TOKEN`. Agent and pusher secrets are never written to disk.
+  `HATCHET_CLIENT_TOKEN`. Agent and pusher secrets are never written to the repo or the host's
+  working tree (dockerd keeps the worker's container environment inside the Docker VM).
 
 ## Decisions
 
@@ -175,7 +176,9 @@ The worker serves on port `8001`, bound inside its container:
   `curl` added. Compose: `healthcheck: ["CMD", "/usr/local/bin/satat-worker", "healthcheck"]`.
 - **Exit rule:** the worker exits non-zero only if it never connects to Hatchet within a start-up
   grace period, and `restart: unless-stopped` retries. After a first successful connect, an outage
-  of any length makes it unready but never makes it exit, so in-flight agents finish.
+  of any length makes it unready but never makes it exit, so in-flight agents finish. (Narrowed
+  in [ADR 0029](../../adr/0029-worker-health.md): this holds for transport outages, and a worker
+  recreated by `deploy up` orphans running agents, [ADR 0028](../../adr/0028-infrastructure-adapter-compose-first.md).)
 - Docker doesn't restart unhealthy containers outside Swarm, so in Compose the healthcheck is what
   `deploy up` and `deploy status` read. On k3d later it maps onto liveness and readiness probes
   with no change to the worker.
