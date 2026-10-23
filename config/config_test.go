@@ -386,3 +386,17 @@ func TestDeployParsesAndListsSecretNames(t *testing.T) {
 		t.Fatalf("secrets: %v", c.Deploy.Secrets)
 	}
 }
+
+// A lane must not pass a variable the worker sets for itself: it would hand the Hatchet token (or
+// the worker's Docker or config settings) to an agent, and duplicate a key in compose.yaml.
+func TestPassEnvRefusesWorkerEnv(t *testing.T) {
+	for _, name := range []string{
+		"HATCHET_CLIENT_TOKEN", "HATCHET_CLIENT_HOST_PORT", "HATCHET_CLIENT_TLS_STRATEGY",
+		"HATCHET_CLIENT_SERVER_URL", "DOCKER_HOST", "SATAT_CONFIG", "HOME",
+	} {
+		msg := parseErr(t, lane("    pass_env: [FOO, "+name+"]\n"))
+		if !strings.Contains(msg, name) || !strings.Contains(msg, `"a"`) || !strings.Contains(msg, "worker") {
+			t.Errorf("%s: error should name the variable, the lane and the worker: %s", name, msg)
+		}
+	}
+}
