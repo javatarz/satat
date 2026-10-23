@@ -8,24 +8,33 @@
 // pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_INTAKE_REPOS (comma-separated
 // owner/name) turns on the GitHub webhook intake for those repos only. With repos under poller: in
 // satat.yaml the worker also polls them for ready-for-agent issues, which needs Issues: read and
-// Pull requests: read on SATAT_GITHUB_TOKEN.
+// Pull requests: read on SATAT_GITHUB_TOKEN. SATAT_HEALTH_ADDR (default 127.0.0.1:8001) is where
+// /livez and /readyz are served.
+//
+// "satat-worker healthcheck" asks a running worker for /readyz and exits 0 only if it is ready; the
+// compose healthcheck calls it.
 package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"maps"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
 	"time"
 
+	"github.com/hatchet-dev/hatchet/pkg/client/rest"
 	"github.com/hatchet-dev/hatchet/pkg/cmdutils"
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
 	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/health"
 	"github.com/javatarz/satat/launcher/docker"
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/poller"
@@ -33,11 +42,56 @@ import (
 	"github.com/javatarz/satat/workflows"
 )
 
+const (
+	healthInterval = 5 * time.Second
+	// heartbeatMaxAge is three times the Hatchet SDK's 4 s heartbeat (pkg/client/action_listener.go),
+	// so readiness turns false within 30 s of losing Hatchet but one late heartbeat is tolerated.
+	heartbeatMaxAge = 12 * time.Second
+	// startGrace is how long the worker may take to become ready the first time. After that it never
+	// exits because Hatchet went away.
+	startGrace        = 2 * time.Minute
+	defaultHealthAddr = "127.0.0.1:8001"
+)
+
 func main() {
+	// Before any config or env checks: the probe runs in a container where only the address matters.
+	if len(os.Args) > 1 && os.Args[1] == "healthcheck" {
+		os.Exit(healthcheck())
+	}
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "satat-worker:", err)
 		os.Exit(1)
 	}
+}
+
+func healthAddr() string {
+	if a := os.Getenv("SATAT_HEALTH_ADDR"); a != "" {
+		return a
+	}
+	return defaultHealthAddr
+}
+
+// healthcheck prints the body of /readyz and returns the process exit code.
+func healthcheck() int {
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+healthAddr()+"/readyz", nil)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "satat-worker healthcheck:", err)
+		return 1
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "satat-worker healthcheck:", err)
+		return 1
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 64<<10))
+	fmt.Print(string(body))
+	if resp.StatusCode != http.StatusOK {
+		return 1
+	}
+	return 0
 }
 
 func run() error {
@@ -146,12 +200,54 @@ func run() error {
 		workflowsToRun = append(workflowsToRun, poller.Register(hc, cfg.Poller.Cron, p))
 		log.Info("poller on", "repos", len(repos), "cron", cfg.Poller.Cron)
 	}
-	w, err := hc.NewWorker("satat-worker", hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake and the poll from waiting behind steps
+	host, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("hostname: %w", err)
+	}
+	// The hostname makes the name unique per container, so readiness can find this process's own
+	// record and ignore the ones earlier containers left behind in Hatchet.
+	name := "satat-worker-" + host
+	w, err := hc.NewWorker(name, hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake and the poll from waiting behind steps
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}
-	log.Info("worker starting", "workflow", spec.Name, "global_cap", cfg.Limits.Global, "execution_timeout", spec.ExecutionTimeout)
-	return w.StartBlocking(ctx)
+
+	checker := health.New(healthInterval,
+		health.HatchetWorker(func(ctx context.Context) ([]rest.Worker, error) {
+			list, err := hc.Workers().List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if list == nil || list.Rows == nil {
+				return nil, nil
+			}
+			return *list.Rows, nil
+		}, name, heartbeatMaxAge, time.Now),
+		health.DockerPing(func(ctx context.Context) error {
+			_, err := api.Ping(ctx, client.PingOptions{})
+			return err
+		}),
+	)
+	srv := &http.Server{Addr: healthAddr(), Handler: checker.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("health server stopped", "err", err)
+		}
+	}()
+	defer srv.Close()
+	checker.Start(ctx)
+
+	log.Info("worker starting", "name", name, "workflow", spec.Name, "global_cap", cfg.Limits.Global, "execution_timeout", spec.ExecutionTimeout, "health_addr", srv.Addr)
+	done := make(chan error, 1)
+	go func() { done <- w.StartBlocking(ctx) }()
+
+	// Exit non-zero only if the worker never becomes ready; once it has been ready, losing Hatchet
+	// shows up as unready and the worker waits for it to come back.
+	if err := health.WaitReady(ctx, checker, startGrace); err != nil {
+		return err
+	}
+	log.Info("worker ready")
+	return <-done
 }
 
 func splitList(s string) []string {
