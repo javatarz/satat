@@ -482,23 +482,31 @@ go test -p 1 ./...          # needs Docker
 go test -short -p 1 ./...   # skips the tests that start containers
 ```
 
-**The platform.** Needs Docker (colima and Docker Desktop are what the docs cover), `gh`, and
-1Password CLI for `scripts/compose-up.sh`. The steps below follow the scripts' own comments; the
-[prototype notes](research/v2/docker-prototype.md) record runs of them.
+**The platform.** `satat deploy up` brings it up on Compose
+([ADR 0028](adr/0028-infrastructure-adapter-compose-first.md)). It needs Docker with the `compose`
+plugin (colima and Docker Desktop are what the docs cover) and one source for the secrets: the
+1Password CLI `op`, signed in, for the `op://` references in `satat.yaml`'s `deploy.secrets`, or
+`env` references that read the variable from your shell. The [prototype notes](research/v2/docker-prototype.md)
+record runs of it.
 
-1. Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD`.
-2. Build the Claude lane image with `scripts/build-claude-image.sh`. It prints a digest-pinned
-   reference; put it in the `claude` lane's `image` in `satat.yaml`.
-3. Start Hatchet, then run `scripts/hatchet-token.sh` once. It writes `HATCHET_CLIENT_TOKEN` to
-   `.env` without printing it.
-4. Start everything with `scripts/compose-up.sh`. It takes the Claude, read and write tokens from
-   1Password and never writes them to disk.
-5. Label the issue `ready-for-agent` (the worker skips it otherwise), queue it with
+1. Build the Claude lane image and push it with `SATAT_REGISTRY=<registry> scripts/build-claude-image.sh`.
+   It prints a reference pinned by manifest digest; put it in the `claude` lane's `image` in
+   `satat.yaml`.
+2. Run `go run ./cmd/satat deploy up`. It creates `POSTGRES_PASSWORD` and the Hatchet token in
+   `.env` if they're absent, resolves the other secrets into the child process only, starts the
+   stack and waits until the worker reports ready. Running it again changes nothing that is already
+   healthy. `satat deploy status` shows each service and the worker's readiness; `satat deploy down`
+   stops it and removes any agent containers left behind.
+3. Check it with `go run ./cmd/satat agent run smoke --wait`. It starts a one-shot agent on the
+   `smoke` lane through Hatchet and prints the result ([ADR 0030](adr/0030-on-demand-agent-runs.md)).
+   `agent ls` lists queued and running runs, and `agent rm <run>` cancels one.
+4. Label the issue `ready-for-agent` (the worker skips it otherwise), queue it with
    `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.
 
-`just setup` does step 1 with a random password, and `just run` does steps 3 and 4 after
-`just doctor` has checked the prerequisites.
+`scripts/hatchet-token.sh` and `scripts/compose-up.sh` still work but duplicate `deploy up`.
+`just setup` (writes `.env` with a random `POSTGRES_PASSWORD`) and `just run` (the two scripts,
+after `just doctor` has checked the prerequisites) still drive that older path.
 
 Never put token values in the repo ([AGENTS.md](../AGENTS.md#secrets)).
 
@@ -511,12 +519,13 @@ Do not read these as features. They are decided or planned, not present:
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
+| k3d adapter and Kubernetes launcher: a second `deploy.Target` with Helm, and a launcher that runs agents as pods | [deploy-targets.md](research/v2/deploy-targets.md), [ADR 0028](adr/0028-infrastructure-adapter-compose-first.md) |
 | Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
 | Egress proxy with a hostname allowlist and no secrets, and a worker-side clone, so a step holds no GitHub token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
 | GitHub App identity, per-push tokens and signed commits (later; v0.2 uses a machine-user token and no broker). Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
 | LiteLLM in the stack. The Claude lane talks to Anthropic directly; the `gateway/` directory is a config template carried from v0.1. | [ADR 0026](adr/0026-docker-first-runtime.md), [ADR 0002](adr/0002-litellm-model-routing.md) |
-| The full `satat.yaml` spec. Only `limits` and `lanes` exist. | #108 |
-| Publishing the Claude lane image to GHCR. It is built locally. | [ADR 0026](adr/0026-docker-first-runtime.md) |
+| The full `satat.yaml` spec. Only `limits`, `cache_reaper`, `poller`, `lanes` and `deploy` exist. | #108 |
+| Publishing the Claude lane image to GHCR. The build script pushes to the registry you name; the `satat.yaml` pin has not been moved to one yet. | [ADR 0026](adr/0026-docker-first-runtime.md) |
 | Back-off on Claude rate limits is built, but untested against a live Hatchet; a restart test of adoption on the real stack | [docker-prototype.md](research/v2/docker-prototype.md) |
 | Reading `.satat/commands.yaml`. The file exists in this repo (format in [CONTRIBUTING.md](../CONTRIBUTING.md#satatcommandsyaml)) but nothing parses it yet. | #167, #175 |
 | Inner loops (lint, judge, reviewer) before the draft PR | [inner loop](roadmap/inner-loop.md) |

@@ -65,13 +65,22 @@ definitions was considered and left out. `satat.yaml` stays the only source.
   and its header says so.
 - Anonymous-pull registries only, for now. A public package or a local registry.
 
+## Verified
+
+Measured on colima with a scratch config, no `claude` lane and placeholder secrets
+([docker-prototype.md](../research/v2/docker-prototype.md#deploy-adapter-2026-10-23)):
+
+- `docker compose up --remove-orphans` leaves agent containers alone. Colima only: Docker Desktop
+  was not tried.
+- `deploy up` takes 3 min 32 s cold (with the worker image build) and 0.3 s warm. A warm run
+  leaves the worker container's ID and start time unchanged.
+
 ## Not verified
 
-- That `docker compose up --remove-orphans` leaves agent containers alone when they carry no
-  compose project label, on colima and Docker Desktop.
-- `deploy up` start-up time from cold and warm, and the platform's idle RAM with the health
-  server (to record in `docker-prototype.md`).
-- The build script's manifest digest against a plain-HTTP local registry.
+- The platform's idle RAM with the health server. It was not measured.
+- `deploy up` with the real `claude` lane image and 1Password secrets, and with Docker Desktop.
+- The build script's manifest digest against a registry. The script was written and shellchecked,
+  and nobody has run it against one yet.
 
 Revisit this ADR when a second adapter is built, or if `deploy.secrets` needs a source other than
 1Password or the shell.
