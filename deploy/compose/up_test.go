@@ -344,6 +344,29 @@ func TestDownPassesVolumesFlag(t *testing.T) {
 	}
 }
 
+// down -v deletes Hatchet's volumes, so the token in the env file would be dead on the next up.
+// The password stays: a fresh Postgres volume adopts it.
+func TestDownVolumesForgetsHatchetToken(t *testing.T) {
+	for _, removeData := range []bool{false, true} {
+		tg, f, _, _ := setup(t)
+		f.respond = func([]string) ([]byte, error) { return nil, nil }
+		env := filepath.Join(tg.Dir, ".env")
+		if err := os.WriteFile(env, []byte("POSTGRES_PASSWORD=keep-me\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := tg.Down(context.Background(), removeData); err != nil {
+			t.Fatal(err)
+		}
+		if pw, ok, _ := deploy.ReadKey(env, "POSTGRES_PASSWORD"); !ok || pw != "keep-me" {
+			t.Errorf("removeData=%v: POSTGRES_PASSWORD = %q %v, want kept", removeData, pw, ok)
+		}
+		_, ok, _ := deploy.ReadKey(env, "HATCHET_CLIENT_TOKEN")
+		if ok == removeData {
+			t.Errorf("removeData=%v: HATCHET_CLIENT_TOKEN present = %v", removeData, ok)
+		}
+	}
+}
+
 func TestDownReportsReapError(t *testing.T) {
 	tg, f, _, _ := setup(t)
 	f.respond = func([]string) ([]byte, error) { return nil, nil }

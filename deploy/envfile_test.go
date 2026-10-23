@@ -98,3 +98,41 @@ func TestRandomPassword(t *testing.T) {
 		t.Error("two passwords equal")
 	}
 }
+
+func TestRemoveKeyDropsOnlyThatKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	orig := "# comment\n\nPOSTGRES_PASSWORD=pw\nHATCHET_CLIENT_TOKEN=eyJold\nOTHER=x y"
+	if err := os.WriteFile(path, []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	removed, err := RemoveKey(path, "HATCHET_CLIENT_TOKEN")
+	if err != nil || !removed {
+		t.Fatalf("removed=%v err=%v", removed, err)
+	}
+	got, _ := os.ReadFile(path)
+	if want := "# comment\n\nPOSTGRES_PASSWORD=pw\nOTHER=x y"; string(got) != want {
+		t.Errorf("got %q want %q", got, want)
+	}
+	info, _ := os.Stat(path)
+	if info.Mode().Perm() != 0o600 {
+		t.Errorf("mode = %v", info.Mode().Perm())
+	}
+}
+
+func TestRemoveKeyMissingFileOrKey(t *testing.T) {
+	path := filepath.Join(t.TempDir(), ".env")
+	if removed, err := RemoveKey(path, "X"); removed || err != nil {
+		t.Errorf("missing file: removed=%v err=%v", removed, err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Errorf("missing file was created: %v", err)
+	}
+	const orig = "# X=1\nY=2\n"
+	_ = os.WriteFile(path, []byte(orig), 0o600)
+	if removed, err := RemoveKey(path, "X"); removed || err != nil {
+		t.Errorf("absent key: removed=%v err=%v", removed, err)
+	}
+	if got, _ := os.ReadFile(path); string(got) != orig {
+		t.Errorf("file changed: %q", got)
+	}
+}
