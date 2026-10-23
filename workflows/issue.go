@@ -6,6 +6,7 @@ package workflows
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -23,6 +24,9 @@ const (
 	Name = "satat-issue"
 	// EventIssue starts the workflow. Intake (slice 6) and the hand trigger push it.
 	EventIssue = "satat:issue"
+	// EventAgent starts a one-shot agent run on the same workflow, so it shares the four caps with
+	// issue runs (deploy-targets.md decision 4).
+	EventAgent = "satat:agent"
 
 	// MinScheduleTimeout is the shortest wait behind a cap or a rate limit a task may allow. The
 	// default is 5 minutes, after which queued work is cancelled without running (hatchet-caps-spike).
@@ -40,6 +44,10 @@ type Input struct {
 	Account string       `json:"account"`
 	LaneCap int          `json:"lane_cap"`
 	Issue   runner.Issue `json:"issue"`
+	// Kind is KindIssue or KindAgent; empty means issue, so inputs from before agents still run.
+	Kind string `json:"kind,omitempty"`
+	// StepInput is the lane's input JSON for an agent run.
+	StepInput json.RawMessage `json:"step_input,omitempty"`
 }
 
 // Output is what a finished run reports in the dashboard.
@@ -51,6 +59,15 @@ type Output struct {
 	Reused   bool   `json:"reused,omitempty"`
 	ExitCode int    `json:"exit_code"`
 	Commits  int    `json:"commits"`
+
+	// The rest is set by agent runs only.
+	Kind      string         `json:"kind,omitempty"`
+	Stdout    string         `json:"stdout,omitempty"`
+	Stderr    string         `json:"stderr,omitempty"`
+	Files     map[string]int `json:"files,omitempty"`
+	TimedOut  bool           `json:"timed_out,omitempty"`
+	OOMKilled bool           `json:"oom_killed,omitempty"`
+	Cancelled bool           `json:"cancelled,omitempty"`
 }
 
 // MapIssue builds a run input from config. It is the only place caps are looked up.
@@ -87,7 +104,7 @@ var capExpressions = []string{"'global'", "input.lane", "input.repo", "input.acc
 func Define(l config.Limits, executionTimeout time.Duration) Spec {
 	return Spec{
 		Name:   Name,
-		Events: []string{EventIssue},
+		Events: []string{EventIssue, EventAgent},
 		Caps: []Cap{
 			{Expression: capExpressions[0], Max: l.Global},
 			{Expression: capExpressions[1], Max: 1, MaxExpression: "input.lane_cap"},
@@ -134,11 +151,16 @@ func (s Spec) Validate() error {
 type Handler struct {
 	Launcher launcher.Launcher
 	Pusher   pipeline.Publisher
+	// Secrets are the values scrubbed from an agent run's output tails.
+	Secrets []string
 }
 
 // Run takes one input to a result. A step that fails, or a change that cannot be published, is an
 // error so the run shows as failed; a step that changes nothing is a normal result.
 func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error) {
+	if in.Kind == KindAgent {
+		return h.runAgent(ctx, runID, in)
+	}
 	rep, err := pipeline.Run(ctx, pipeline.Options{
 		Launcher: h.Launcher, Pusher: h.Pusher,
 		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue,

@@ -34,7 +34,7 @@ func TestDefineMeetsADR0023(t *testing.T) {
 	if s.ScheduleTimeout < MinScheduleTimeout || s.ExecutionTimeout != 30*time.Minute {
 		t.Errorf("timeouts: schedule %s execution %s", s.ScheduleTimeout, s.ExecutionTimeout)
 	}
-	if len(s.Events) != 1 || s.Events[0] != EventIssue {
+	if len(s.Events) != 2 || s.Events[0] != EventIssue || s.Events[1] != EventAgent {
 		t.Errorf("events: %v", s.Events)
 	}
 }

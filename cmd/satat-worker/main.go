@@ -129,7 +129,7 @@ func run() error {
 		return fmt.Errorf("hatchet client: %w", err)
 	}
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
-	wf, err := workflows.Register(hc, spec, workflows.Handler{Launcher: l, Pusher: &pusher.Pusher{Token: token}})
+	wf, err := workflows.Register(hc, spec, workflows.Handler{Launcher: l, Pusher: &pusher.Pusher{Token: token}, Secrets: secretValues(cfg)})
 	if err != nil {
 		return err
 	}
@@ -181,4 +181,16 @@ func run() error {
 	}
 	log.Info("worker ready")
 	return <-done
+}
+
+// secretValues are the non-empty values, from this process's environment, of every secret name in
+// the config. An agent run's output is scrubbed of them before it reaches the Hatchet history.
+func secretValues(cfg config.Config) []string {
+	var vals []string
+	for _, n := range cfg.SecretNames() {
+		if v := os.Getenv(n); v != "" {
+			vals = append(vals, v)
+		}
+	}
+	return vals
 }
