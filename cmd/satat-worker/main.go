@@ -4,7 +4,9 @@
 // Environment: the Hatchet client settings (HATCHET_CLIENT_TOKEN, HATCHET_CLIENT_HOST_PORT,
 // HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST, SATAT_PUSH_TOKEN, and every name a lane lists in
 // pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_HEALTH_ADDR (default
-// 127.0.0.1:8001) is where /livez and /readyz are served.
+// 127.0.0.1:8001) is where /livez and /readyz are served. The server starts before lane setup, so
+// a setup failure is reported by /readyz (the lanes check) for the start grace before the worker
+// exits non-zero.
 //
 // "satat-worker healthcheck" asks a running worker for /readyz and exits 0 only if it is ready; the
 // compose healthcheck calls it.
@@ -110,28 +112,10 @@ func run() error {
 	}
 	ctx, cancel := cmdutils.NewInterruptContext()
 	defer cancel()
-	if err := l.Setup(ctx); err != nil {
-		return fmt.Errorf("setup lanes: %w", err)
-	}
-
-	// Anything a lane's step left behind longer than twice its timeout is the debris of a crash.
-	var longest time.Duration
-	for _, lane := range cfg.Lanes {
-		longest = max(longest, lane.Timeout)
-	}
-	if longest == 0 {
-		longest = 30 * time.Minute
-	}
-	go l.RunReaper(ctx, 5*time.Minute, 2*longest+time.Hour)
 
 	hc, err := hatchet.NewClient()
 	if err != nil {
 		return fmt.Errorf("hatchet client: %w", err)
-	}
-	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
-	wf, err := workflows.Register(hc, spec, workflows.Handler{Launcher: l, Pusher: &pusher.Pusher{Token: token}, Secrets: secretValues(cfg)})
-	if err != nil {
-		return err
 	}
 	host, err := os.Hostname()
 	if err != nil {
@@ -140,12 +124,12 @@ func run() error {
 	// The hostname makes the name unique per container, so readiness can find this process's own
 	// record and ignore the ones earlier containers left behind in Hatchet.
 	name := "satat-worker-" + host
-	w, err := hc.NewWorker(name, hatchet.WithWorkflows(wf), hatchet.WithSlots(cfg.Limits.Global))
-	if err != nil {
-		return fmt.Errorf("worker: %w", err)
-	}
 
+	// The health server starts before lane setup, so a setup failure (a lane image that is not
+	// pullable, say) shows in /readyz as the lanes check instead of as a container that restarts.
+	var lanes health.LaneSetup
 	checker := health.New(healthInterval,
+		lanes.Check(),
 		health.HatchetWorker(func(ctx context.Context) ([]rest.Worker, error) {
 			list, err := hc.Workers().List(ctx)
 			if err != nil {
@@ -169,6 +153,40 @@ func run() error {
 	}()
 	defer srv.Close()
 	checker.Start(ctx)
+
+	setupStart := time.Now()
+	if err := l.Setup(ctx); err != nil {
+		lanes.Done(err)
+		// Stay up for the rest of the start grace so the healthcheck can report why, then exit
+		// non-zero as before and let restart: unless-stopped retry.
+		log.Error("lane setup failed; exiting after the start grace", "err", err, "grace", startGrace)
+		select {
+		case <-ctx.Done():
+		case <-time.After(startGrace - time.Since(setupStart)):
+		}
+		return fmt.Errorf("setup lanes: %w", err)
+	}
+	lanes.Done(nil)
+
+	// Anything a lane's step left behind longer than twice its timeout is the debris of a crash.
+	var longest time.Duration
+	for _, lane := range cfg.Lanes {
+		longest = max(longest, lane.Timeout)
+	}
+	if longest == 0 {
+		longest = 30 * time.Minute
+	}
+	go l.RunReaper(ctx, 5*time.Minute, 2*longest+time.Hour)
+
+	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
+	wf, err := workflows.Register(hc, spec, workflows.Handler{Launcher: l, Pusher: &pusher.Pusher{Token: token}, Secrets: secretValues(cfg)})
+	if err != nil {
+		return err
+	}
+	w, err := hc.NewWorker(name, hatchet.WithWorkflows(wf), hatchet.WithSlots(cfg.Limits.Global))
+	if err != nil {
+		return fmt.Errorf("worker: %w", err)
+	}
 
 	log.Info("worker starting", "name", name, "workflow", spec.Name, "global_cap", cfg.Limits.Global, "execution_timeout", spec.ExecutionTimeout, "health_addr", srv.Addr)
 	done := make(chan error, 1)
