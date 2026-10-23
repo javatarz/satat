@@ -9,7 +9,8 @@
 // owner/name) turns on the GitHub webhook intake for those repos only. With repos under poller: in
 // satat.yaml the worker also polls them for ready-for-agent issues, which needs Issues: read and
 // Pull requests: read on SATAT_GITHUB_TOKEN. SATAT_HEALTH_ADDR (default 127.0.0.1:8001) is where
-// /livez and /readyz are served.
+// /livez and /readyz are served. The server starts before lane setup, so a setup failure is
+// reported by /readyz (the lanes check) for the start grace before the worker exits non-zero.
 //
 // "satat-worker healthcheck" asks a running worker for /readyz and exits 0 only if it is ready; the
 // compose healthcheck calls it.
@@ -126,9 +127,61 @@ func run() error {
 	}
 	ctx, cancel := cmdutils.NewInterruptContext()
 	defer cancel()
+
+	hc, err := hatchet.NewClient()
+	if err != nil {
+		return fmt.Errorf("hatchet client: %w", err)
+	}
+	host, err := os.Hostname()
+	if err != nil {
+		return fmt.Errorf("hostname: %w", err)
+	}
+	// The hostname makes the name unique per container, so readiness can find this process's own
+	// record and ignore the ones earlier containers left behind in Hatchet.
+	name := "satat-worker-" + host
+
+	// The health server starts before lane setup, so a setup failure (a lane image that is not
+	// pullable, say) shows in /readyz as the lanes check instead of as a container that restarts.
+	var lanes health.LaneSetup
+	checker := health.New(healthInterval,
+		lanes.Check(),
+		health.HatchetWorker(func(ctx context.Context) ([]rest.Worker, error) {
+			list, err := hc.Workers().List(ctx)
+			if err != nil {
+				return nil, err
+			}
+			if list == nil || list.Rows == nil {
+				return nil, nil
+			}
+			return *list.Rows, nil
+		}, name, heartbeatMaxAge, time.Now),
+		health.DockerPing(func(ctx context.Context) error {
+			_, err := api.Ping(ctx, client.PingOptions{})
+			return err
+		}),
+	)
+	srv := &http.Server{Addr: healthAddr(), Handler: checker.Handler(), ReadHeaderTimeout: 5 * time.Second}
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Error("health server stopped", "err", err)
+		}
+	}()
+	defer srv.Close()
+	checker.Start(ctx)
+
+	setupStart := time.Now()
 	if err := l.Setup(ctx); err != nil {
+		lanes.Done(err)
+		// Stay up for the rest of the start grace so the healthcheck can report why, then exit
+		// non-zero as before and let restart: unless-stopped retry.
+		log.Error("lane setup failed; exiting after the start grace", "err", err, "grace", startGrace)
+		select {
+		case <-ctx.Done():
+		case <-time.After(startGrace - time.Since(setupStart)):
+		}
 		return fmt.Errorf("setup lanes: %w", err)
 	}
+	lanes.Done(nil)
 
 	// Anything a lane's step left behind longer than twice its timeout is the debris of a crash.
 	var longest time.Duration
@@ -147,10 +200,6 @@ func run() error {
 		StepAge:   2*longest + time.Hour,
 	})
 
-	hc, err := hatchet.NewClient()
-	if err != nil {
-		return fmt.Errorf("hatchet client: %w", err)
-	}
 	// A run starts only in a repo the intake or the poller lists.
 	allowed := splitList(os.Getenv("SATAT_INTAKE_REPOS"))
 	for _, r := range cfg.Poller.Repos {
@@ -201,42 +250,10 @@ func run() error {
 		workflowsToRun = append(workflowsToRun, poller.Register(hc, cfg.Poller.Cron, p))
 		log.Info("poller on", "repos", len(repos), "cron", cfg.Poller.Cron)
 	}
-	host, err := os.Hostname()
-	if err != nil {
-		return fmt.Errorf("hostname: %w", err)
-	}
-	// The hostname makes the name unique per container, so readiness can find this process's own
-	// record and ignore the ones earlier containers left behind in Hatchet.
-	name := "satat-worker-" + host
 	w, err := hc.NewWorker(name, hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake and the poll from waiting behind steps
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}
-
-	checker := health.New(healthInterval,
-		health.HatchetWorker(func(ctx context.Context) ([]rest.Worker, error) {
-			list, err := hc.Workers().List(ctx)
-			if err != nil {
-				return nil, err
-			}
-			if list == nil || list.Rows == nil {
-				return nil, nil
-			}
-			return *list.Rows, nil
-		}, name, heartbeatMaxAge, time.Now),
-		health.DockerPing(func(ctx context.Context) error {
-			_, err := api.Ping(ctx, client.PingOptions{})
-			return err
-		}),
-	)
-	srv := &http.Server{Addr: healthAddr(), Handler: checker.Handler(), ReadHeaderTimeout: 5 * time.Second}
-	go func() {
-		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Error("health server stopped", "err", err)
-		}
-	}()
-	defer srv.Close()
-	checker.Start(ctx)
 
 	log.Info("worker starting", "name", name, "workflow", spec.Name, "global_cap", cfg.Limits.Global, "execution_timeout", spec.ExecutionTimeout, "health_addr", srv.Addr)
 	done := make(chan error, 1)
