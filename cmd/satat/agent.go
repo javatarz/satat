@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"text/tabwriter"
@@ -21,6 +22,7 @@ import (
 	"github.com/hatchet-dev/hatchet/pkg/client/rest"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/deploy"
 	"github.com/javatarz/satat/workflows"
 )
 
@@ -108,13 +110,14 @@ func runAgentCmd(args []string) error {
 
 	ctx, cancel := signalContext()
 	defer cancel()
-	var cfg config.Config
+	// run needs the config for its lanes; ls and rm use it only to default the Hatchet client env,
+	// so they still work without one when that env is set.
+	cfg, err := config.Load(*path)
+	if err != nil && (sub == "run" || !errors.Is(err, os.ErrNotExist)) {
+		return err
+	}
 	var stepInput []byte
 	if sub == "run" {
-		var err error
-		if cfg, err = config.Load(*path); err != nil {
-			return err
-		}
 		if *input != "" {
 			if stepInput, err = os.ReadFile(*input); err != nil {
 				return err
@@ -124,7 +127,7 @@ func runAgentCmd(args []string) error {
 			}
 		}
 	}
-	api, err := newHatchetAPI()
+	api, err := newHatchetAPI(cfg, *path)
 	if err != nil {
 		return err
 	}
@@ -322,17 +325,61 @@ type sdkAPI struct {
 	workflow uuid.UUID
 }
 
-func newHatchetAPI() (hatchetAPI, error) {
+// newHatchetAPI connects with the SDK's HATCHET_CLIENT_* environment, defaulted by hatchetEnv.
+func newHatchetAPI(cfg config.Config, configPath string) (hatchetAPI, error) {
 	// The SDK logs at debug level by default, which would mix into --wait output.
 	if _, ok := os.LookupEnv("HATCHET_CLIENT_LOG_LEVEL"); !ok {
 		os.Setenv("HATCHET_CLIENT_LOG_LEVEL", "error")
 	}
+	defaults, err := hatchetEnv(cfg, configPath, os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	for k, v := range defaults {
+		os.Setenv(k, v)
+	}
 	hc, err := hatchet.NewClient()
 	if err != nil {
-		return nil, fmt.Errorf("hatchet client (needs HATCHET_CLIENT_TOKEN): %w", err)
+		// Never wrap the token or any env value into the message.
+		return nil, fmt.Errorf("hatchet client (needs HATCHET_CLIENT_TOKEN, set or in %s): %w", envFileFor(configPath), err)
 	}
 	return &sdkAPI{hc: hc}, nil
 }
+
+// composeClientEnv is how a CLI on the host reaches a Compose stack: the ports compose.yaml
+// publishes on 127.0.0.1, without TLS. The worker uses the in-network names instead.
+var composeClientEnv = map[string]string{
+	"HATCHET_CLIENT_HOST_PORT":    "localhost:7077",
+	"HATCHET_CLIENT_TLS_STRATEGY": "none",
+	"HATCHET_CLIENT_SERVER_URL":   "http://localhost:8888",
+}
+
+// hatchetEnv returns the Hatchet client variables to set because lookup has none: the token from
+// the env file deploy up writes next to the config, and for a Compose target the local endpoints.
+// A variable already set always wins. The values are secrets and are never printed.
+func hatchetEnv(cfg config.Config, configPath string, lookup func(string) (string, bool)) (map[string]string, error) {
+	out := map[string]string{}
+	if _, ok := lookup("HATCHET_CLIENT_TOKEN"); !ok {
+		token, found, err := deploy.ReadKey(envFileFor(configPath), "HATCHET_CLIENT_TOKEN")
+		if err != nil {
+			return nil, fmt.Errorf("reading HATCHET_CLIENT_TOKEN: %w", err)
+		}
+		if found && token != "" {
+			out["HATCHET_CLIENT_TOKEN"] = token
+		}
+	}
+	if cfg.Deploy.Target == "compose" {
+		for k, v := range composeClientEnv {
+			if _, ok := lookup(k); !ok {
+				out[k] = v
+			}
+		}
+	}
+	return out, nil
+}
+
+// envFileFor is the env file deploy up keeps beside the config.
+func envFileFor(configPath string) string { return filepath.Join(filepath.Dir(configPath), ".env") }
 
 func (a *sdkAPI) workflowID(ctx context.Context) (uuid.UUID, error) {
 	if a.workflow == uuid.Nil {
