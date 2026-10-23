@@ -228,3 +228,72 @@ func TestClaudeImageStartsUnderTheFloor(t *testing.T) {
 		t.Fatalf("result.json missing or wrong: %v", res.Files)
 	}
 }
+
+func parseErr(t *testing.T, y string) string {
+	t.Helper()
+	_, err := Parse(strings.NewReader(y))
+	if err == nil {
+		t.Fatal("want an error")
+	}
+	return err.Error()
+}
+
+func TestDeployDefaultsWhenAbsent(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("    pass_env: [FOO]\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Deploy.Target != "compose" || c.Deploy.Secrets != nil {
+		t.Fatalf("unexpected deploy: %+v", c.Deploy)
+	}
+}
+
+func TestDeployRefusesUnknownTarget(t *testing.T) {
+	msg := parseErr(t, lane("")+"deploy:\n  target: kubernetes\n  secrets:\n    SATAT_PUSH_TOKEN: env\n")
+	if !strings.Contains(msg, "target") {
+		t.Fatalf("error should name target: %s", msg)
+	}
+}
+
+func TestDeployNeedsEverySecretMapped(t *testing.T) {
+	y := lane("    pass_env: [CLAUDE_CODE_OAUTH_TOKEN]\n")
+	msg := parseErr(t, y+"deploy:\n  target: compose\n  secrets:\n    SATAT_PUSH_TOKEN: env\n")
+	if !strings.Contains(msg, "CLAUDE_CODE_OAUTH_TOKEN") || !strings.Contains(msg, `"a"`) {
+		t.Fatalf("error should name the variable and the lane: %s", msg)
+	}
+	msg = parseErr(t, y+"deploy:\n  target: compose\n  secrets:\n    CLAUDE_CODE_OAUTH_TOKEN: env\n")
+	if !strings.Contains(msg, "SATAT_PUSH_TOKEN") || !strings.Contains(msg, "worker") {
+		t.Fatalf("error should name the variable and the worker: %s", msg)
+	}
+}
+
+func TestDeployRefusesBadSecretRef(t *testing.T) {
+	msg := parseErr(t, lane("")+"deploy:\n  target: compose\n  secrets:\n    SATAT_PUSH_TOKEN: plain-value\n")
+	if !strings.Contains(msg, "op://") {
+		t.Fatalf("error should mention op://: %s", msg)
+	}
+	if strings.Contains(msg, "plain-value") {
+		t.Fatalf("error must not echo the value: %s", msg)
+	}
+}
+
+func TestDeployRefusesUnusedSecret(t *testing.T) {
+	msg := parseErr(t, lane("")+"deploy:\n  target: compose\n  secrets:\n    SATAT_PUSH_TOKEN: env\n    STRAY: env\n")
+	if !strings.Contains(msg, "STRAY") {
+		t.Fatalf("error should name the unused entry: %s", msg)
+	}
+}
+
+func TestDeployParsesAndListsSecretNames(t *testing.T) {
+	y := lane("    pass_env: [FOO, BAR]\n") + "deploy:\n  target: compose\n  secrets:\n    FOO: env\n    BAR: op://V/i\n    SATAT_PUSH_TOKEN: env\n"
+	c, err := Parse(strings.NewReader(y))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(c.SecretNames(), ","); got != "BAR,FOO,SATAT_PUSH_TOKEN" {
+		t.Fatalf("SecretNames = %s", got)
+	}
+	if c.Deploy.Secrets["BAR"] != "op://V/i" || c.Deploy.Secrets["FOO"] != SecretFromEnv {
+		t.Fatalf("secrets: %v", c.Deploy.Secrets)
+	}
+}
