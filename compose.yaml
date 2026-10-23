@@ -94,6 +94,8 @@ services:
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:?run scripts/hatchet-token.sh}
       HATCHET_CLIENT_HOST_PORT: hatchet-lite:7077
       HATCHET_CLIENT_TLS_STRATEGY: none
+      # The REST client (worker health) would otherwise use the token's server URL, localhost:8888.
+      HATCHET_CLIENT_SERVER_URL: http://hatchet-lite:8888
       DOCKER_HOST: tcp://docker-proxy:2375
       SATAT_CONFIG: /etc/satat/satat.yaml
       HOME: /tmp
@@ -114,6 +116,13 @@ services:
       SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?use scripts/compose-up.sh}
     volumes:
       - ./satat.yaml:/etc/satat/satat.yaml:ro
+    # Ready means Hatchet lists this worker as ACTIVE with a fresh heartbeat and Docker answers.
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/satat-worker", "healthcheck"]
+      interval: 10s
+      timeout: 5s
+      retries: 2
+      start_period: 2m
     read_only: true
     tmpfs:
       - /tmp:size=512m,mode=1777
