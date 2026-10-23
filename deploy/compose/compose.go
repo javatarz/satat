@@ -208,7 +208,10 @@ func (t *Target) createToken(ctx context.Context, envFile string) error {
 	return err
 }
 
-// Down runs `docker compose down` (with -v when removeData), then reaps agent containers.
+// Down runs `docker compose down` (with -v when removeData), then reaps agent containers. With
+// removeData it also forgets the Hatchet token: the volumes holding Hatchet's tenant and keys are
+// gone, so the token is dead and the next up must mint a new one. The Postgres password is kept;
+// a fresh volume adopts it.
 func (t *Target) Down(ctx context.Context, removeData bool) error {
 	args := []string{"down"}
 	if removeData {
@@ -217,6 +220,12 @@ func (t *Target) Down(ctx context.Context, removeData bool) error {
 	var errs []error
 	if _, err := t.compose(ctx, t.env(), args...); err != nil {
 		errs = append(errs, err)
+	} else if removeData {
+		if removed, err := deploy.RemoveKey(t.envFile(), keyToken); err != nil {
+			errs = append(errs, err)
+		} else if removed {
+			t.say("removed %s from %s", keyToken, t.envFile())
+		}
 	}
 	if t.Reap != nil {
 		n, err := t.Reap(ctx)

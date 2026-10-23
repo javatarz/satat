@@ -49,28 +49,62 @@ func EnsureKey(path, key string, gen func() (string, error)) (created bool, err 
 		content += "\n"
 	}
 	content += key + "=" + value + "\n"
+	if err := writeEnvFile(path, content); err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+// RemoveKey deletes every key= line from the env file. Every other line is kept byte for byte, and
+// the file is rewritten as EnsureKey writes it. A missing file or key reports removed=false and
+// leaves the file untouched.
+func RemoveKey(path, key string) (removed bool, err error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, nil
+	}
 	if err != nil {
 		return false, err
+	}
+	lines := strings.SplitAfter(string(data), "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if k, _, found := strings.Cut(strings.TrimSuffix(line, "\n"), "="); found && k == key {
+			removed = true
+			continue
+		}
+		kept = append(kept, line)
+	}
+	if !removed {
+		return false, nil
+	}
+	if err := writeEnvFile(path, strings.Join(kept, "")); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// writeEnvFile replaces path with content through a temp file and a rename, with mode 0600, so a
+// reader never sees half a file and the secrets are never world-readable.
+func writeEnvFile(path, content string) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".tmp*")
+	if err != nil {
+		return err
 	}
 	defer os.Remove(tmp.Name()) // no-op after a successful rename
 	// Set the mode before anything is written; the rename keeps it.
 	if err := tmp.Chmod(0o600); err != nil {
 		tmp.Close()
-		return false, err
+		return err
 	}
 	if _, err := tmp.WriteString(content); err != nil {
 		tmp.Close()
-		return false, err
+		return err
 	}
 	if err := tmp.Close(); err != nil {
-		return false, err
+		return err
 	}
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return false, err
-	}
-	return true, nil
+	return os.Rename(tmp.Name(), path)
 }
 
 // RandomPassword returns 32 random bytes as unpadded base64url.
