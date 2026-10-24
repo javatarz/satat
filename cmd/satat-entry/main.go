@@ -120,8 +120,8 @@ func execute(ctx context.Context, o options) entry.Result {
 	env = append(stepEnv, env...)
 
 	oomBefore := oomKills()
-	stdout := &capped{}
-	stderr := &capped{}
+	stdout := newCapped(secrets)
+	stderr := newCapped(secrets)
 	runCtx, cancel := context.WithTimeout(ctx, o.timeout)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, o.command[0], o.command[1:]...)
@@ -137,13 +137,14 @@ func execute(ctx context.Context, o options) entry.Result {
 	stop()
 
 	res := entry.Result{
-		ExitCode:      exitCode(cmd.ProcessState),
-		OOMKilled:     oomKills() > oomBefore,
-		TimedOut:      errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil,
-		Stdout:        entry.Scrub(stdout.buf.Bytes(), secrets),
-		Stderr:        entry.Scrub(stderr.buf.Bytes(), secrets),
-		LogsTruncated: stdout.truncated || stderr.truncated,
+		ExitCode:  exitCode(cmd.ProcessState),
+		OOMKilled: oomKills() > oomBefore,
+		TimedOut:  errors.Is(runCtx.Err(), context.DeadlineExceeded) && ctx.Err() == nil,
 	}
+	var outCut, errCut bool
+	res.Stdout, outCut = stdout.scrubbed(secrets)
+	res.Stderr, errCut = stderr.scrubbed(secrets)
+	res.LogsTruncated = outCut || errCut
 	if errors.Is(waitErr, exec.ErrWaitDelay) {
 		res.Stderr = diag(res.Stderr, "output pipes still open %s after the command exited", killGrace)
 	}
@@ -302,19 +303,61 @@ func diag(stderr []byte, format string, a ...any) []byte {
 	return fmt.Appendf(stderr, "satat-entry: "+format+"\n", a...)
 }
 
-// capped keeps the first entry.MaxStream bytes written to it and drops the rest.
+// capped keeps the first limit bytes written to it and drops the rest. The limit is MaxStream
+// plus room for one secret less a byte, so a secret that starts before MaxStream is captured whole
+// and can be scrubbed before the stream is cut to MaxStream.
 type capped struct {
 	buf       bytes.Buffer
+	limit     int
 	truncated bool
+}
+
+func newCapped(secrets []string) *capped {
+	longest := 0
+	for _, s := range secrets {
+		longest = max(longest, len(s))
+	}
+	return &capped{limit: entry.MaxStream + max(longest-1, 0)}
 }
 
 func (c *capped) Write(p []byte) (int, error) {
 	n := len(p)
-	room := entry.MaxStream - c.buf.Len()
+	room := c.limit - c.buf.Len()
 	if room < len(p) {
 		c.truncated = true
 		p = p[:max(room, 0)]
 	}
 	c.buf.Write(p)
 	return n, nil
+}
+
+// scrubbed returns the captured stream with secrets replaced, cut to entry.MaxStream, and whether
+// anything was dropped. When the stream was cut, a tail that is the start of a secret is dropped
+// too: scrubbing shortens the text, so a secret cut at the capture limit can move into the kept
+// part.
+func (c *capped) scrubbed(secrets []string) ([]byte, bool) {
+	b := entry.Scrub(c.buf.Bytes(), secrets)
+	cut := c.truncated
+	if len(b) > entry.MaxStream {
+		b, cut = b[:entry.MaxStream], true
+	}
+	if cut {
+		b = b[:len(b)-secretPrefixTail(b, secrets)]
+	}
+	return b, cut
+}
+
+// secretPrefixTail returns the length of the longest tail of b that is a proper prefix of a
+// secret, or 0.
+func secretPrefixTail(b []byte, secrets []string) int {
+	longest := 0
+	for _, s := range secrets {
+		for k := min(len(s)-1, len(b)); k > longest; k-- {
+			if bytes.HasSuffix(b, []byte(s[:k])) {
+				longest = k
+				break
+			}
+		}
+	}
+	return longest
 }
