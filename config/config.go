@@ -43,6 +43,12 @@ type Deploy struct {
 	Secrets map[string]string
 }
 
+// Deploy targets.
+const (
+	TargetCompose    = "compose"
+	TargetKubernetes = "kubernetes"
+)
+
 // SecretFromEnv says a secret's value is already in the caller's environment.
 const SecretFromEnv = "env"
 
@@ -145,7 +151,7 @@ func Parse(r io.Reader) (Config, error) {
 		Limits:      Limits{Global: f.Limits.Global, PerRepo: f.Limits.PerRepo, PerAccount: f.Limits.PerAccount},
 		Accounts:    map[string]string{},
 		LaneMaxRuns: map[string]int{},
-		Deploy:      Deploy{Target: "compose"},
+		Deploy:      Deploy{Target: TargetCompose},
 	}
 	var errs []error
 	if c.Limits.Global <= 0 || c.Limits.PerRepo <= 0 || c.Limits.PerAccount <= 0 {
@@ -191,8 +197,17 @@ func Parse(r io.Reader) (Config, error) {
 // configured values.
 func (c Config) checkDeploy() []error {
 	var errs []error
-	if c.Deploy.Target != "compose" {
-		errs = append(errs, fmt.Errorf("deploy: target must be %q", "compose"))
+	if c.Deploy.Target != TargetCompose && c.Deploy.Target != TargetKubernetes {
+		errs = append(errs, fmt.Errorf("deploy: target must be %q or %q", TargetCompose, TargetKubernetes))
+	}
+	if c.Deploy.Target == TargetKubernetes {
+		// A Kubernetes container has no image-default command to fall back on in the manifests,
+		// so each lane states it.
+		for _, l := range c.Lanes {
+			if len(l.Command) == 0 {
+				errs = append(errs, fmt.Errorf("deploy: lane %q needs a command on the kubernetes target", l.Name))
+			}
+		}
 	}
 	for _, name := range sortedKeys(c.Deploy.Secrets) {
 		if ref := c.Deploy.Secrets[name]; ref != SecretFromEnv && !strings.HasPrefix(ref, "op://") {
