@@ -3,6 +3,7 @@ package kubernetes
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"path/filepath"
@@ -82,7 +83,8 @@ func summarize(c call) string {
 		return "exec hatchet-admin"
 	case strings.HasPrefix(s, "kubectl exec ") && strings.Contains(s, " deploy/satat-worker "):
 		return "exec healthcheck"
-	case strings.HasPrefix(s, "kubectl apply -f -"), strings.HasPrefix(s, "kubectl create -f -"):
+	case strings.HasPrefix(s, "kubectl apply -f -"), strings.HasPrefix(s, "kubectl create -f -"),
+		strings.HasPrefix(s, serverSide):
 		return s + " " + manifestName(c.stdin)
 	}
 	return s
@@ -179,10 +181,14 @@ const (
 	getCRDs     = "kubectl get crd sandboxclaims.extensions.agents.x-k8s.io sandboxtemplates.extensions.agents.x-k8s.io " +
 		"sandboxwarmpools.extensions.agents.x-k8s.io --ignore-not-found -o name"
 	getPods = "kubectl get pods -n satat -l app.kubernetes.io/instance=satat -o json"
+	// serverSide is how every Secret is applied, so its values stay out of last-applied.
+	serverSide = "kubectl apply --server-side --field-manager=satat -f -"
+	readToken  = "kubectl get secret satat-hatchet-token -n satat -o jsonpath={.data.HATCHET_CLIENT_TOKEN}"
 )
 
 func TestUpOrder(t *testing.T) {
 	target, run, _, cfg := setup(t)
+	target.Config = filepath.Join(target.Dir, "other.yaml") // --config other.yaml
 	if err := target.Up(context.Background(), cfg, secrets); err != nil {
 		t.Fatal(err)
 	}
@@ -196,13 +202,13 @@ func TestUpOrder(t *testing.T) {
 		"kubectl apply -f - lanes",
 		getPassword,
 		"kubectl create -f - Secret/satat/satat-postgres",
-		"kubectl apply -f - Secret/satat-lane-open/satat-lane-secrets",
-		"kubectl apply -f - Secret/satat/satat-worker-secrets",
+		serverSide + " Secret/satat-lane-open/satat-lane-secrets",
+		serverSide + " Secret/satat/satat-worker-secrets",
 		getToken,
 		"helm upgrade worker.replicas=0",
 		"exec psql",
 		"exec hatchet-admin",
-		"kubectl apply -f - Secret/satat/satat-hatchet-token",
+		serverSide + " Secret/satat/satat-hatchet-token",
 		"helm upgrade worker.replicas=1",
 		"exec healthcheck",
 	}
@@ -221,9 +227,16 @@ func TestUpOrder(t *testing.T) {
 	if len(password) < 32 {
 		t.Fatalf("password secret has a %d-character POSTGRES_PASSWORD", len(password))
 	}
+	secretApplies := 0
 	for _, c := range run.calls {
 		if c.name == "kubectl" && !hasPair(c.args, "--context", kubeContext) {
 			t.Errorf("kubectl %q has no --context %s", c.args, kubeContext)
+		}
+		if bytes.Contains(c.stdin, []byte("kind: Secret")) && slices.Contains(c.args, "apply") {
+			secretApplies++
+			if !slices.Contains(c.args, "--server-side") || !slices.Contains(c.args, "--field-manager=satat") {
+				t.Errorf("Secret applied client-side, so its values land in last-applied: %q", c.args)
+			}
 		}
 		if c.name == "helm" && !hasPair(c.args, "--kube-context", kubeContext) {
 			t.Errorf("helm %q has no --kube-context %s", c.args, kubeContext)
@@ -235,6 +248,10 @@ func TestUpOrder(t *testing.T) {
 				}
 			}
 		}
+	}
+
+	if secretApplies != 3 {
+		t.Errorf("%d Secret applies, want the lane, worker and token Secrets", secretApplies)
 	}
 
 	build := run.find("docker build").args
@@ -259,9 +276,9 @@ func TestUpOrder(t *testing.T) {
 	}
 
 	for summary, want := range map[string]map[string]string{
-		"kubectl apply -f - Secret/satat-lane-open/satat-lane-secrets": {"FOO": fooValue},
-		"kubectl apply -f - Secret/satat/satat-worker-secrets":         {"SATAT_GITHUB_TOKEN": readValue, "SATAT_PUSH_TOKEN": pushValue},
-		"kubectl apply -f - Secret/satat/satat-hatchet-token":          {"HATCHET_CLIENT_TOKEN": token},
+		serverSide + " Secret/satat-lane-open/satat-lane-secrets": {"FOO": fooValue},
+		serverSide + " Secret/satat/satat-worker-secrets":         {"SATAT_GITHUB_TOKEN": readValue, "SATAT_PUSH_TOKEN": pushValue},
+		serverSide + " Secret/satat/satat-hatchet-token":          {"HATCHET_CLIENT_TOKEN": token},
 	} {
 		var s struct {
 			StringData map[string]string `yaml:"stringData"`
@@ -283,7 +300,7 @@ func TestUpOrder(t *testing.T) {
 	for _, want := range [][2]string{
 		{"--namespace", "satat"},
 		{"--values", filepath.Join(target.Dir, "satat.k8s", "values.yaml")},
-		{"--set-file", "config=" + filepath.Join(target.Dir, "satat.yaml")},
+		{"--set-file", "config=" + filepath.Join(target.Dir, "other.yaml")},
 		{"--set", "image.ref=" + ref},
 	} {
 		if !hasPair(upgrade, want[0], want[1]) {
@@ -312,8 +329,14 @@ func TestUpIdempotent(t *testing.T) {
 	target, run, _, cfg := setup(t)
 	run.script[getPassword] = "secret/satat-postgres\n"
 	run.script[getToken] = "secret/satat-hatchet-token\n"
+	if err := os.WriteFile(filepath.Join(target.Dir, ".env"), []byte("HATCHET_CLIENT_TOKEN="+token+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	if err := target.Up(context.Background(), cfg, secrets); err != nil {
 		t.Fatal(err)
+	}
+	if run.find(readToken) != nil {
+		t.Error("read the token Secret although the env file has the token")
 	}
 	var helm []string
 	for _, s := range run.summary() {
@@ -326,6 +349,48 @@ func TestUpIdempotent(t *testing.T) {
 	}
 	if !slices.Equal(helm, []string{"helm upgrade worker.replicas=1"}) {
 		t.Errorf("helm calls = %q, want one at replicas 1", helm)
+	}
+}
+
+// A token Secret with no token in the env file (a fresh checkout) is copied back into the file,
+// read from kubectl's stdout only.
+func TestUpRestoresToken(t *testing.T) {
+	for _, existing := range []string{"", "OTHER=1\nHATCHET_CLIENT_TOKEN=\n"} {
+		target, run, _, cfg := setup(t)
+		run.script[getPassword] = "secret/satat-postgres\n"
+		run.script[getToken] = "secret/satat-hatchet-token\n"
+		run.script[readToken] = base64.StdEncoding.EncodeToString([]byte(token))
+		envFile := filepath.Join(target.Dir, ".env")
+		if existing != "" {
+			if err := os.WriteFile(envFile, []byte(existing), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := target.Up(context.Background(), cfg, secrets); err != nil {
+			t.Fatal(err)
+		}
+		if v, ok, _ := deploy.ReadKey(envFile, "HATCHET_CLIENT_TOKEN"); !ok || v != token {
+			t.Errorf("env file %q: token not restored", existing)
+		}
+		if run.find(readToken) == nil || run.find("exec hatchet-admin") != nil {
+			t.Errorf("calls = %q, want the Secret read and no mint", run.summary())
+		}
+		for _, c := range run.calls {
+			if slices.ContainsFunc(c.args, func(a string) bool { return strings.Contains(a, token) }) {
+				t.Errorf("%s %q has the token on its command line", c.name, c.args)
+			}
+		}
+	}
+}
+
+func TestUpRestoreTokenErrorHidesValue(t *testing.T) {
+	target, run, _, cfg := setup(t)
+	run.script[getPassword] = "secret/satat-postgres\n"
+	run.script[getToken] = "secret/satat-hatchet-token\n"
+	run.script[readToken] = "not base64 " + token
+	err := target.Up(context.Background(), cfg, secrets)
+	if err == nil || strings.Contains(err.Error(), token) || strings.Contains(err.Error(), "not base64") {
+		t.Fatalf("err = %v, want a failure that names no content", err)
 	}
 }
 

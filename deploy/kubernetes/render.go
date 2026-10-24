@@ -63,6 +63,9 @@ func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	l.WriteString("# applied by satat deploy up with image " + PlatformPlaceholder + " replaced by the pushed platform image.\n")
 	l.WriteString("# Lane Secrets are not here: deploy up applies them from deploy.secrets.\n")
 	for _, lane := range lanes {
+		if lane.Image == PlatformPlaceholder {
+			return nil, fmt.Errorf("lane %q: image %s is reserved for the platform image", lane.Name, PlatformPlaceholder)
+		}
 		objs, err := k8slauncher.LaneObjects(lane, opts)
 		if err != nil {
 			return nil, err
@@ -94,21 +97,64 @@ func marshal(v any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// withImage replaces every `image: satat-platform` line of the lane objects with ref. It fails if
-// there is none, which would mean the render and this code disagree.
+// withImage replaces the image line of each lane's entry init container, which the render sets
+// to the placeholder, with ref. Only a line that is the image of a list item named entry under
+// initContainers is replaced. It fails if a lane template has no such line, which would mean the
+// render and this code disagree.
 func withImage(lanes []byte, ref string) ([]byte, error) {
 	lines := strings.SplitAfter(string(lanes), "\n")
 	n := 0
-	for i, line := range lines {
-		body := strings.TrimRight(line, "\n")
-		trimmed := strings.TrimLeft(body, " -")
-		if trimmed == "image: "+PlatformPlaceholder {
-			lines[i] = body[:len(body)-len(PlatformPlaceholder)] + ref + line[len(body):]
+	for i := range lines {
+		if isEntryImage(lines, i) {
+			body := strings.TrimRight(lines[i], "\n")
+			lines[i] = body[:len(body)-len(PlatformPlaceholder)] + ref + lines[i][len(body):]
 			n++
 		}
 	}
-	if n == 0 && bytes.Contains(lanes, []byte("kind: SandboxTemplate")) {
-		return nil, fmt.Errorf("%s has no image: %s line to replace", lanesFile, PlatformPlaceholder)
+	if want := bytes.Count(lanes, []byte("\nkind: SandboxTemplate\n")); n != want {
+		return nil, fmt.Errorf("%s has %d entry init container images to replace, want %d", lanesFile, n, want)
 	}
 	return []byte(strings.Join(lines, "")), nil
+}
+
+// isEntryImage says whether lines[i] is `image: satat-platform` in an initContainers item named
+// entry. The render's YAML puts each key of an item at the same indent, the first after "- ".
+func isEntryImage(lines []string, i int) bool {
+	line := strings.TrimRight(lines[i], "\n")
+	key := strings.TrimLeft(line, " ")
+	indent := len(line) - len(key)
+	if strings.HasPrefix(key, "- ") {
+		key, indent = key[2:], indent+2
+	}
+	if key != "image: "+PlatformPlaceholder || indent < 2 {
+		return false
+	}
+	pad := strings.Repeat(" ", indent)
+	itemStart := strings.Repeat(" ", indent-2) + "- "
+	// Back to the item's first line, then the key that holds the list.
+	start := i
+	for !strings.HasPrefix(lines[start], itemStart) {
+		if start--; start < 0 || !strings.HasPrefix(lines[start], pad) && !strings.HasPrefix(lines[start], itemStart) {
+			return false
+		}
+	}
+	// Earlier items of the same list sit between the list's key and this item.
+	owner := start - 1
+	for owner >= 0 && (strings.HasPrefix(lines[owner], pad) || strings.HasPrefix(lines[owner], itemStart)) {
+		owner--
+	}
+	if owner < 0 || strings.TrimSpace(lines[owner]) != "initContainers:" {
+		return false
+	}
+	// The item's keys: its first line and every later line at its indent, until the item ends.
+	for j := start; j < len(lines); j++ {
+		l := strings.TrimRight(lines[j], "\n")
+		if j > start && !strings.HasPrefix(l, pad) {
+			break
+		}
+		if l == itemStart+"name: entry" || l == pad+"name: entry" {
+			return true
+		}
+	}
+	return false
 }

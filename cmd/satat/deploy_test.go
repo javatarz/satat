@@ -1,6 +1,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/javatarz/satat/config"
@@ -23,9 +26,20 @@ func TestKubeDefaults(t *testing.T) {
 	}
 }
 
+// The kubernetes target builds from the repo root above the config, and installs that config.
 func TestTargetForKubernetes(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"go.mod", "images/worker/Dockerfile", "deploy/site/satat.yaml"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(root, "deploy", "site", "satat.yaml")
 	cfg := config.Config{Deploy: config.Deploy{Target: config.TargetKubernetes}}
-	got, err := targetFor(cfg, "/repo", kubeFlags{Context: "c", Registry: "r:1"})
+	got, err := targetFor(cfg, configPath, kubeFlags{Context: "c", Registry: "r:1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -33,7 +47,14 @@ func TestTargetForKubernetes(t *testing.T) {
 	if !ok {
 		t.Fatalf("target is %T", got)
 	}
-	if k.Dir != "/repo" || k.Root != "/repo" || k.Context != "c" || k.Registry != "r:1" {
-		t.Errorf("target = %+v", k)
+	if k.Dir != filepath.Dir(configPath) || k.Root != root || k.Root == k.Dir || k.Config != configPath ||
+		k.Context != "c" || k.Registry != "r:1" {
+		t.Errorf("target = %+v, want Dir %s, Root %s", k, filepath.Dir(configPath), root)
+	}
+
+	// No repo above the config: refused, naming what's missing.
+	if _, err := targetFor(cfg, filepath.Join(t.TempDir(), "satat.yaml"), kubeFlags{}); err == nil ||
+		!strings.Contains(err.Error(), "images/worker/Dockerfile") {
+		t.Errorf("err = %v, want no repo root found", err)
 	}
 }
