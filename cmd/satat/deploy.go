@@ -18,10 +18,12 @@ import (
 	"github.com/javatarz/satat/config"
 	"github.com/javatarz/satat/deploy"
 	"github.com/javatarz/satat/deploy/compose"
+	"github.com/javatarz/satat/deploy/kubernetes"
 	"github.com/javatarz/satat/launcher/docker"
 )
 
-const deployUsage = "usage: satat deploy render [--check] | up | down [--volumes] | status   [--config satat.yaml]"
+const deployUsage = "usage: satat deploy render [--check] | up | down [--volumes] | status   [--config satat.yaml]\n" +
+	"  kubernetes target: up, down and status also take [--context k3d-satat] [--registry host:port]"
 
 func runDeploy(args []string) error {
 	if len(args) == 0 {
@@ -41,10 +43,39 @@ func runDeploy(args []string) error {
 	}
 }
 
-// targetFor returns the deploy target the config names, working in dir.
-func targetFor(cfg config.Config, dir string) (deploy.Target, error) {
+// kubeFlags are the kubernetes target's settings from the command line, defaulted by kubeDefaults.
+type kubeFlags struct{ Context, Registry string }
+
+// kubeDefaults fills what the flags left empty: the context from SATAT_KUBE_CONTEXT, else
+// k3d-satat, and the registry from SATAT_REGISTRY (only up needs one).
+func kubeDefaults(k kubeFlags, lookup func(string) (string, bool)) kubeFlags {
+	if k.Context == "" {
+		k.Context, _ = lookup("SATAT_KUBE_CONTEXT")
+	}
+	if k.Context == "" {
+		k.Context = kubernetes.DefaultContext
+	}
+	if k.Registry == "" {
+		k.Registry, _ = lookup("SATAT_REGISTRY")
+	}
+	return k
+}
+
+// targetFor returns the deploy target the config names, working in dir. For kubernetes, dir is
+// also the repo root the platform image is built from.
+func targetFor(cfg config.Config, dir string, kube kubeFlags) (deploy.Target, error) {
 	switch cfg.Deploy.Target {
-	case "compose":
+	case config.TargetKubernetes:
+		kube = kubeDefaults(kube, os.LookupEnv)
+		return &kubernetes.Target{
+			Dir:      dir,
+			Root:     dir,
+			Context:  kube.Context,
+			Registry: kube.Registry,
+			Run:      kubernetes.ExecRunner{},
+			Out:      os.Stdout,
+		}, nil
+	case config.TargetCompose:
 		return &compose.Target{
 			Dir: dir,
 			Run: compose.ExecRunner{},
@@ -97,7 +128,7 @@ func runRender(args []string) error {
 		return err
 	}
 	dir := filepath.Dir(*path)
-	target, err := targetFor(cfg, dir)
+	target, err := targetFor(cfg, dir, kubeFlags{})
 	if err != nil {
 		return err
 	}
@@ -124,6 +155,10 @@ func runRender(args []string) error {
 			}
 			continue
 		}
+		// The kubernetes target renders into satat.k8s/.
+		if err := os.MkdirAll(filepath.Dir(file), 0o755); err != nil {
+			return err
+		}
 		if err := os.WriteFile(file, files[name], 0o644); err != nil {
 			return err
 		}
@@ -140,6 +175,9 @@ func runRender(args []string) error {
 func loadTarget(name string, args []string, extra func(*flag.FlagSet)) (config.Config, deploy.Target, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	path := fs.String("config", "satat.yaml", "path to satat.yaml")
+	var kube kubeFlags
+	fs.StringVar(&kube.Context, "context", "", "kubernetes target: the kube context to act on (default $SATAT_KUBE_CONTEXT, else "+kubernetes.DefaultContext+")")
+	fs.StringVar(&kube.Registry, "registry", "", "kubernetes target: the registry deploy up pushes the platform image to (default $SATAT_REGISTRY)")
 	if extra != nil {
 		extra(fs)
 	}
@@ -157,7 +195,7 @@ func loadTarget(name string, args []string, extra func(*flag.FlagSet)) (config.C
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	target, err := targetFor(cfg, dir)
+	target, err := targetFor(cfg, dir, kube)
 	return cfg, target, err
 }
 

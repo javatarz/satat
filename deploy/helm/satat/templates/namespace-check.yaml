@@ -1,0 +1,7 @@
+{{- /*
+The lane objects deploy up applies name this namespace: the worker's RoleBindings bind
+satat/satat-worker and the lanes' network policy probes postgres.satat.svc.cluster.local.
+*/ -}}
+{{- if ne .Release.Namespace "satat" }}
+{{- fail "install the satat chart into namespace satat (--namespace satat)" }}
+{{- end }}

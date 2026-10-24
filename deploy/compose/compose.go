@@ -77,10 +77,21 @@ type Target struct {
 
 var _ deploy.Target = (*Target)(nil)
 
-// Render returns compose.yaml. Only the worker's secret and optional environment vary with cfg.
+// Render returns compose.yaml. Only the worker's secret and optional environment vary with cfg; the
+// image digests are deploy's.
 func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	var buf bytes.Buffer
-	data := struct{ WorkerEnv, OptionalEnv []string }{WorkerEnv: cfg.SecretNames(), OptionalEnv: cfg.OptionalEnvNames()}
+	data := struct {
+		WorkerEnv, OptionalEnv                              []string
+		PostgresImage, HatchetLiteImage, GoImage, BaseImage string
+	}{
+		WorkerEnv:        cfg.SecretNames(),
+		OptionalEnv:      cfg.OptionalEnvNames(),
+		PostgresImage:    deploy.PostgresImage,
+		HatchetLiteImage: deploy.HatchetLiteImage,
+		GoImage:          deploy.GoImage,
+		BaseImage:        deploy.BaseImage,
+	}
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("render compose.yaml: %w", err)
 	}
