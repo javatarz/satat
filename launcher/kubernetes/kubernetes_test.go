@@ -596,3 +596,137 @@ func TestUncertainCreateIsCleanedUp(t *testing.T) {
 	}
 	h.assertGone(t)
 }
+
+// pendingPod plays agent-sandbox for a claim whose pod never starts: it creates the pod Pending,
+// with init container entry or the step container waiting for reason, and names the sandbox.
+// After recoverAfter (when non-zero) the pod finishes with exit 0.
+func (h *harness) pendingPod(t *testing.T, container, reason, message string, cond *corev1.PodCondition, recoverAfter time.Duration) {
+	t.Helper()
+	h.goroutine(func() {
+		c := h.waitClaim(t)
+		if c == nil {
+			return
+		}
+		waiting := corev1.ContainerState{Waiting: &corev1.ContainerStateWaiting{Reason: reason, Message: message}}
+		pod := &corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+			Status:     corev1.PodStatus{Phase: corev1.PodPending},
+		}
+		switch container {
+		case entryContainer:
+			pod.Status.InitContainerStatuses = []corev1.ContainerStatus{{Name: entryContainer, State: waiting}}
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: stepContainer, State: corev1.ContainerState{
+				Waiting: &corev1.ContainerStateWaiting{Reason: "PodInitializing"},
+			}}}
+		case stepContainer:
+			pod.Status.ContainerStatuses = []corev1.ContainerStatus{{Name: stepContainer, State: waiting}}
+		}
+		if cond != nil {
+			pod.Status.Conditions = []corev1.PodCondition{*cond}
+		}
+		if _, err := h.core.CoreV1().Pods(testNS).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+			t.Errorf("create pod: %v", err)
+			return
+		}
+		c.Object["status"] = map[string]interface{}{"sandbox": map[string]interface{}{"name": testName}}
+		if _, err := h.claims().UpdateStatus(context.Background(), c, metav1.UpdateOptions{}); err != nil {
+			t.Errorf("update claim status: %v", err)
+			return
+		}
+		if recoverAfter == 0 || !h.sleep(recoverAfter) {
+			return
+		}
+		pod.Status = corev1.PodStatus{Phase: corev1.PodSucceeded, ContainerStatuses: []corev1.ContainerStatus{{
+			Name: stepContainer, State: corev1.ContainerState{Terminated: &corev1.ContainerStateTerminated{ExitCode: 0}},
+		}}}
+		if _, err := h.core.CoreV1().Pods(testNS).UpdateStatus(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+			t.Errorf("update pod status: %v", err)
+		}
+	})
+}
+
+func TestPodThatNeverStartsFailsTheLaunch(t *testing.T) {
+	cases := []struct {
+		container, reason, message string
+	}{
+		{entryContainer, "ErrImagePull", "pull access denied for satat-platform"},
+		{entryContainer, "ImagePullBackOff", "Back-off pulling image"},
+		{stepContainer, "InvalidImageName", "couldn't parse image name"},
+		{stepContainer, "CreateContainerConfigError", "container has runAsNonRoot and image will run as root"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.reason, func(t *testing.T) {
+			h := newHarness(t)
+			h.l.startGrace = 50 * time.Millisecond
+			h.pendingPod(t, tc.container, tc.reason, tc.message, nil, 0)
+			start := time.Now()
+			_, err := h.launch(ctxT(t), nil)
+			if err == nil {
+				t.Fatal("Launch returned no error for a pod that can't start")
+			}
+			for _, want := range []string{tc.container, tc.reason, tc.message} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("err %q does not say %q", err, want)
+				}
+			}
+			if d := time.Since(start); d > 5*time.Second {
+				t.Errorf("Launch took %s, waited towards the deadline", d)
+			}
+			h.assertGone(t)
+		})
+	}
+}
+
+// A pull error that clears within the grace is not a launch error: ErrImagePull can be transient.
+func TestTransientPullErrorRecovers(t *testing.T) {
+	h := newHarness(t)
+	h.l.startGrace = 2 * time.Second
+	h.setLog(frame(t, entry.Result{ExitCode: 0, Stdout: []byte("ok\n")}))
+	h.pendingPod(t, entryContainer, "ErrImagePull", "registry hiccup", nil, 200*time.Millisecond)
+	res, err := h.launch(ctxT(t), nil)
+	if err != nil {
+		t.Fatalf("Launch: %v", err)
+	}
+	if res.ExitCode != 0 || string(res.Stdout) != "ok\n" {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+// When the launcher's deadline fires on a pod that is still Pending, the result says why.
+func TestTimeoutOnPendingPodSaysWhy(t *testing.T) {
+	cases := map[string]struct {
+		container, reason, message string
+		cond                       *corev1.PodCondition
+		want                       []string
+	}{
+		"waiting container": {
+			container: entryContainer, reason: "ContainerCreating", message: "mounting volumes",
+			want: []string{"entry", "ContainerCreating", "mounting volumes"},
+		},
+		"unschedulable": {
+			cond: &corev1.PodCondition{Type: corev1.PodScheduled, Status: corev1.ConditionFalse,
+				Reason: "Unschedulable", Message: "0/1 nodes are available: 1 Insufficient memory"},
+			want: []string{"Unschedulable", "Insufficient memory"},
+		},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			h := newHarness(t)
+			h.l.deadline = 300 * time.Millisecond
+			h.pendingPod(t, tc.container, tc.reason, tc.message, tc.cond, 0)
+			res, err := h.launch(ctxT(t), nil)
+			if err != nil {
+				t.Fatalf("Launch: %v", err)
+			}
+			if !res.TimedOut {
+				t.Fatalf("TimedOut = false: %+v", res)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(string(res.Stderr), want) {
+					t.Errorf("stderr %q does not say %q", res.Stderr, want)
+				}
+			}
+			h.assertGone(t)
+		})
+	}
+}

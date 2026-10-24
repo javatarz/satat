@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -42,7 +43,23 @@ const (
 	defaultPoll    = time.Second
 	// maxTransient is how many API errors in a row a wait retries before it fails the launch.
 	maxTransient = 3
+	// defaultStartGrace is how long a container may keep waiting for a reason in unstartable
+	// before the launch fails. A pull error can be transient (a registry hiccup), and the kubelet
+	// retries a pull after a 10 s back-off, then 20 s: 30 s lets one retry land.
+	defaultStartGrace = 30 * time.Second
+	// podInfoTimeout bounds reading the pod once more after the launcher's deadline.
+	podInfoTimeout = 10 * time.Second
 )
+
+// unstartable are the container waiting reasons that keep a pod from ever starting. The launch
+// fails once one is seen on at least two checks in a row spanning the start grace; an invalid
+// image name never recovers, so it needs only the two checks.
+var unstartable = map[string]bool{
+	"ErrImagePull":               true,
+	"ImagePullBackOff":           true,
+	"InvalidImageName":           true,
+	"CreateContainerConfigError": true,
+}
 
 // rejected are the claim Ready=False reasons that mean the claim can never run as it stands.
 var rejected = map[string]bool{
@@ -66,6 +83,10 @@ type Launcher struct {
 	poll   time.Duration
 	// logs reads a container's log; tests replace it, since the fake clientset's pods/log body is fixed.
 	logs func(ctx context.Context, ns, pod, container string) ([]byte, error)
+	// startGrace is how long a container may wait for a reason in unstartable before the launch
+	// fails (defaultStartGrace); deadline replaces the computed launcher deadline. Tests set both.
+	startGrace time.Duration
+	deadline   time.Duration
 
 	group     singleflight.Group
 	mu        sync.Mutex
@@ -206,6 +227,9 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 	res.Adopted = adopted
 
 	deadline := lane.Timeout + deadlineGrace + launcherGrace
+	if l.deadline > 0 {
+		deadline = l.deadline
+	}
 	out, err := l.wait(ctx, ns, name, deadline)
 	if err != nil {
 		return res, err
@@ -215,6 +239,9 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 		res.Cancelled = true
 	case out.timedOut:
 		res.TimedOut = true
+		if out.pending != "" {
+			res.Stderr = fmt.Appendf(nil, "satat: the launcher deadline passed with pod %s/%s still Pending: %s\n", ns, out.pod, out.pending)
+		}
 	default:
 		if err := l.result(ctx, ns, out.pod, &res); err != nil {
 			return res, err
@@ -309,19 +336,24 @@ func ours(claim *unstructured.Unstructured, lane launcher.Lane, step launcher.St
 	return lb[labelManaged] == "true" && lb[labelLane] == lane.Name && lb[labelRun] == step.Run && lb[labelStep] == step.Name
 }
 
-// outcome is how waiting for a claim ended without an error.
+// outcome is how waiting for a claim ended without an error. pending says why the pod had not
+// started when the deadline passed, if it was still Pending.
 type outcome struct {
 	pod       string
 	cancelled bool
 	timedOut  bool
+	pending   string
 }
 
-// waiter is one wait for one claim. It counts transient API errors in a row.
+// waiter is one wait for one claim. It counts transient API errors in a row, and the checks in a
+// row that found a container waiting for an unstartable reason, since stuckSince.
 type waiter struct {
-	l        *Launcher
-	ns, name string
-	pod      string
-	fails    int
+	l          *Launcher
+	ns, name   string
+	pod        string
+	fails      int
+	stuck      int
+	stuckSince time.Time
 }
 
 // tolerate records a transient API error. It returns the error once more than maxTransient have
@@ -351,7 +383,13 @@ func (l *Launcher) wait(ctx context.Context, ns, name string, deadline time.Dura
 			return outcome{}, ctx.Err()
 		}
 		l.log.Warn("step outlived the launcher deadline", "claim", name, "namespace", ns, "deadline", deadline)
-		return outcome{pod: w.pod, timedOut: true}, nil
+		out := outcome{pod: w.pod, timedOut: true}
+		pctx, cancel := context.WithTimeout(ctx, podInfoTimeout)
+		defer cancel()
+		if p, err := l.core.CoreV1().Pods(ns).Get(pctx, w.pod, metav1.GetOptions{}); err == nil {
+			out.pending = pendingReason(p)
+		}
+		return out, nil
 	}
 	// pause paces retries and re-watches, so a failing call doesn't spin.
 	pause := func() bool {
@@ -509,7 +547,8 @@ func (w *waiter) check(ctx context.Context, claim *unstructured.Unstructured, ch
 }
 
 // podFinished reports whether the step's pod is terminal. A missing pod is not; an API error
-// counts against the transient budget.
+// counts against the transient budget. A pod that can't start is an error naming the container
+// and the reason, once seen on two checks in a row spanning the start grace.
 func (w *waiter) podFinished(ctx context.Context) (bool, error) {
 	p, err := w.l.core.CoreV1().Pods(w.ns).Get(ctx, w.pod, metav1.GetOptions{})
 	if err != nil {
@@ -519,7 +558,72 @@ func (w *waiter) podFinished(ctx context.Context) (bool, error) {
 		return false, w.tolerate("get pod", err)
 	}
 	w.fails = 0
-	return terminal(p), nil
+	if terminal(p) {
+		return true, nil
+	}
+	why, reason := cannotStart(p)
+	if why == "" {
+		w.stuck = 0
+		return false, nil
+	}
+	now := time.Now()
+	if w.stuck == 0 {
+		w.stuckSince = now
+	}
+	w.stuck++
+	grace := w.l.startGrace
+	if grace <= 0 {
+		grace = defaultStartGrace
+	}
+	if reason == "InvalidImageName" {
+		grace = 0
+	}
+	if w.stuck >= 2 && now.Sub(w.stuckSince) >= grace {
+		return false, fmt.Errorf("pod %s/%s can't start: %s", w.ns, w.pod, why)
+	}
+	return false, nil
+}
+
+// cannotStart describes the first container, init containers first, that waits for a reason in
+// unstartable, and returns that reason; both are empty when there is none.
+func cannotStart(p *corev1.Pod) (why, reason string) {
+	for _, cs := range append(slices.Clone(p.Status.InitContainerStatuses), p.Status.ContainerStatuses...) {
+		if wt := cs.State.Waiting; wt != nil && unstartable[wt.Reason] {
+			return waitingText(cs.Name, wt), wt.Reason
+		}
+	}
+	return "", ""
+}
+
+// pendingReason says why a Pending pod has not started: each waiting container's reason and
+// message, else why it is unscheduled. It is empty for a pod past Pending.
+func pendingReason(p *corev1.Pod) string {
+	if p.Status.Phase != corev1.PodPending {
+		return ""
+	}
+	var parts []string
+	for _, cs := range append(slices.Clone(p.Status.InitContainerStatuses), p.Status.ContainerStatuses...) {
+		if wt := cs.State.Waiting; wt != nil && wt.Reason != "" {
+			parts = append(parts, waitingText(cs.Name, wt))
+		}
+	}
+	if len(parts) > 0 {
+		return strings.Join(parts, "; ")
+	}
+	for _, c := range p.Status.Conditions {
+		if c.Type == corev1.PodScheduled && c.Status == corev1.ConditionFalse {
+			return "not scheduled: " + c.Reason + ": " + c.Message
+		}
+	}
+	return "no container has started"
+}
+
+func waitingText(container string, wt *corev1.ContainerStateWaiting) string {
+	s := "container " + container + " waiting: " + wt.Reason
+	if wt.Message != "" {
+		s += ": " + wt.Message
+	}
+	return s
 }
 
 func terminal(p *corev1.Pod) bool {
