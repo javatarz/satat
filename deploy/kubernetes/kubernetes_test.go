@@ -216,13 +216,7 @@ func TestUpOrder(t *testing.T) {
 	}
 
 	// The password is generated here: find it, to check it never reaches argv either.
-	var pw struct {
-		StringData map[string]string `yaml:"stringData"`
-	}
-	if err := yaml.Unmarshal(run.find("kubectl create -f - Secret/satat/satat-postgres").stdin, &pw); err != nil {
-		t.Fatal(err)
-	}
-	password := pw.StringData["POSTGRES_PASSWORD"]
+	password := secretData(t, run.find("kubectl create -f - Secret/satat/satat-postgres").stdin)["POSTGRES_PASSWORD"]
 	if len(password) < 32 {
 		t.Fatalf("password secret has a %d-character POSTGRES_PASSWORD", len(password))
 	}
@@ -279,17 +273,12 @@ func TestUpOrder(t *testing.T) {
 		serverSide + " Secret/satat/satat-worker-secrets":         {"SATAT_PUSH_TOKEN": pushValue},
 		serverSide + " Secret/satat/satat-hatchet-token":          {"HATCHET_CLIENT_TOKEN": token},
 	} {
-		var s struct {
-			StringData map[string]string `yaml:"stringData"`
-		}
-		if err := yaml.Unmarshal(run.find(summary).stdin, &s); err != nil {
-			t.Fatal(err)
-		}
-		if len(s.StringData) != len(want) {
-			t.Errorf("%s: %d keys, want %d", summary, len(s.StringData), len(want))
+		got := secretData(t, run.find(summary).stdin)
+		if len(got) != len(want) {
+			t.Errorf("%s: %d keys, want %d", summary, len(got), len(want))
 		}
 		for k, v := range want {
-			if s.StringData[k] != v {
+			if got[k] != v {
 				t.Errorf("%s: %s is not the resolved value", summary, k)
 			}
 		}
@@ -313,6 +302,32 @@ func TestUpOrder(t *testing.T) {
 	if v, ok, _ := deploy.ReadKey(filepath.Join(target.Dir, ".env"), "HATCHET_CLIENT_TOKEN"); !ok || v != token {
 		t.Error("the minted token is not in the env file")
 	}
+}
+
+// secretData decodes a Secret manifest's data. Secrets carry base64 data, never stringData: the
+// API server turns stringData into data, so server-side apply's field manager never owns a
+// data key and a key dropped from the manifest would stay in the Secret.
+func secretData(t *testing.T, manifest []byte) map[string]string {
+	t.Helper()
+	var s struct {
+		StringData map[string]string `yaml:"stringData"`
+		Data       map[string]string `yaml:"data"`
+	}
+	if err := yaml.Unmarshal(manifest, &s); err != nil {
+		t.Fatal(err)
+	}
+	if s.StringData != nil {
+		t.Errorf("Secret manifest has stringData")
+	}
+	out := map[string]string{}
+	for k, v := range s.Data {
+		b, err := base64.StdEncoding.DecodeString(v)
+		if err != nil {
+			t.Fatalf("data %s is not base64", k)
+		}
+		out[k] = string(b)
+	}
+	return out
 }
 
 func hasPair(args []string, flag, value string) bool {

@@ -291,7 +291,6 @@ func podSpec(l launcher.Lane, o LaneOptions) (corev1.PodSpec, error) {
 		corev1.ResourceCPU:    resource.MustParse("100m"),
 	}
 	deadline := int64(math.Ceil((l.Timeout + deadlineGrace).Seconds()))
-	secretsOptional := len(l.PassEnv) == 0
 
 	spec := corev1.PodSpec{
 		AutomountServiceAccountToken: ptr(false),
@@ -328,7 +327,6 @@ func podSpec(l launcher.Lane, o LaneOptions) (corev1.PodSpec, error) {
 			Resources:       corev1.ResourceRequirements{Requests: stepResources, Limits: stepResources.DeepCopy()},
 			VolumeMounts: []corev1.VolumeMount{
 				{Name: "podinfo", MountPath: podinfoDir, ReadOnly: true},
-				{Name: "secrets", MountPath: secretsDir, ReadOnly: true},
 				{Name: "satat", MountPath: entryDir, ReadOnly: true},
 				{Name: "input", MountPath: inputDir},
 				{Name: "workspace", MountPath: workspace},
@@ -343,15 +341,25 @@ func podSpec(l launcher.Lane, o LaneOptions) (corev1.PodSpec, error) {
 					annotationFile("input", annotationInput),
 				},
 			}}},
-			{Name: "secrets", VolumeSource: corev1.VolumeSource{Secret: &corev1.SecretVolumeSource{
-				SecretName: laneSecret,
-				Optional:   &secretsOptional,
-			}}},
 			memoryDir("satat", entryBytes),
 			memoryDir("input", inputBytes),
 			memoryDir("workspace", l.WorkspaceBytes),
 			memoryDir("tmp", tmpBytes),
 		},
+	}
+	if len(l.PassEnv) > 0 {
+		// Only the pass_env keys, so a key left in the Secret is never visible. Optional, so a
+		// missing key or Secret reaches satat-entry, which fails the step with 125 and names it;
+		// otherwise the kubelet fails the mount and the pod never starts.
+		items := make([]corev1.KeyToPath, len(l.PassEnv))
+		for i, n := range l.PassEnv {
+			items[i] = corev1.KeyToPath{Key: n, Path: n}
+		}
+		spec.Containers[0].VolumeMounts = append(spec.Containers[0].VolumeMounts,
+			corev1.VolumeMount{Name: "secrets", MountPath: secretsDir, ReadOnly: true})
+		spec.Volumes = append(spec.Volumes, corev1.Volume{Name: "secrets", VolumeSource: corev1.VolumeSource{
+			Secret: &corev1.SecretVolumeSource{SecretName: laneSecret, Items: items, Optional: ptr(true)},
+		}})
 	}
 	if l.Runtime != "" {
 		spec.RuntimeClassName = ptr(l.Runtime)
@@ -637,10 +645,48 @@ func validatePod(pod corev1.PodSpec, bad func(string, ...any)) {
 			if v.Secret.SecretName != laneSecret {
 				bad(f+" (%s): only Secret %s may be mounted", v.Name, laneSecret)
 			}
+			validateSecretItems(v.Secret.Items, passEnv(pod), f+" ("+v.Name+")", bad)
 		default:
 			bad(f+" (%s): volume type is not allowed", v.Name)
 		}
 	}
+}
+
+// validateSecretItems checks that a Secret volume mounts exactly the step's --pass-env keys, each
+// at its own name, and never the whole Secret.
+func validateSecretItems(items []corev1.KeyToPath, passEnv []string, f string, bad func(string, ...any)) {
+	if len(items) == 0 {
+		bad(f + ": secrets must list the pass_env keys as items, not mount the whole Secret")
+		return
+	}
+	want := map[string]bool{}
+	for _, n := range passEnv {
+		want[n] = true
+	}
+	for _, it := range items {
+		if !want[it.Key] {
+			bad(f+": key %s is not passed with --pass-env", it.Key)
+		}
+		if it.Path != it.Key {
+			bad(f+": key %s is mounted at path %q, must be its own name", it.Key, it.Path)
+		}
+	}
+}
+
+// passEnv returns the --pass-env names of the step container's wrapper command.
+func passEnv(pod corev1.PodSpec) []string {
+	if len(pod.Containers) == 0 {
+		return nil
+	}
+	var names []string
+	cmd := pod.Containers[0].Command
+	for i := 0; i+1 < len(cmd) && cmd[i] != "--"; i++ {
+		if cmd[i] == "--pass-env" {
+			names = append(names, cmd[i+1])
+			i++
+		}
+	}
+	return names
 }
 
 func validateContainer(c corev1.Container, f string, bad func(string, ...any)) {

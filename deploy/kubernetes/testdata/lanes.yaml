@@ -71,9 +71,6 @@ spec:
             - mountPath: /etc/podinfo
               name: podinfo
               readOnly: true
-            - mountPath: /run/satat/secrets
-              name: secrets
-              readOnly: true
             - mountPath: /satat
               name: satat
               readOnly: true
@@ -129,10 +126,6 @@ spec:
                   fieldPath: metadata.annotations['satat.dev/input']
                 path: input
           name: podinfo
-        - name: secrets
-          secret:
-            optional: true
-            secretName: satat-lane-secrets
         - emptyDir:
             medium: Memory
             sizeLimit: 32Mi
@@ -282,9 +275,6 @@ spec:
             - mountPath: /etc/podinfo
               name: podinfo
               readOnly: true
-            - mountPath: /run/satat/secrets
-              name: secrets
-              readOnly: true
             - mountPath: /satat
               name: satat
               readOnly: true
@@ -294,6 +284,9 @@ spec:
               name: workspace
             - mountPath: /tmp
               name: tmp
+            - mountPath: /run/satat/secrets
+              name: secrets
+              readOnly: true
           workingDir: /workspace
       dnsPolicy: ClusterFirst
       initContainers:
@@ -340,10 +333,6 @@ spec:
                   fieldPath: metadata.annotations['satat.dev/input']
                 path: input
           name: podinfo
-        - name: secrets
-          secret:
-            optional: false
-            secretName: satat-lane-secrets
         - emptyDir:
             medium: Memory
             sizeLimit: 32Mi
@@ -360,6 +349,13 @@ spec:
             medium: Memory
             sizeLimit: 64Mi
           name: tmp
+        - name: secrets
+          secret:
+            items:
+              - key: FOO
+                path: FOO
+            optional: true
+            secretName: satat-lane-secrets
 ---
 apiVersion: extensions.agents.x-k8s.io/v1beta1
 kind: SandboxWarmPool

@@ -288,8 +288,17 @@ func TestTemplateHardening(t *testing.T) {
 	if sec == nil || sec.SecretName != "satat-lane-secrets" {
 		t.Fatalf("secrets volume = %+v", vols["secrets"])
 	}
-	if sec.Optional != nil && *sec.Optional {
-		t.Error("secrets must not be optional when the lane passes env")
+	// Optional, so a key missing from the Secret reaches satat-entry, which fails the step with 125,
+	// instead of the kubelet failing the mount and the pod never starting.
+	if sec.Optional == nil || !*sec.Optional {
+		t.Error("secrets must be optional")
+	}
+	wantItems := []corev1.KeyToPath{
+		{Key: "CLAUDE_CODE_OAUTH_TOKEN", Path: "CLAUDE_CODE_OAUTH_TOKEN"},
+		{Key: "GH_TOKEN", Path: "GH_TOKEN"},
+	}
+	if !reflect.DeepEqual(sec.Items, wantItems) {
+		t.Errorf("secrets items = %+v, want only the pass_env keys %+v", sec.Items, wantItems)
 	}
 	wantSizes := map[string]string{"satat": "32Mi", "input": "16Mi", "workspace": "256Mi", "tmp": "64Mi"}
 	for name, size := range wantSizes {
@@ -300,19 +309,22 @@ func TestTemplateHardening(t *testing.T) {
 	}
 }
 
-func TestSecretsOptionalWithoutPassEnv(t *testing.T) {
+// TestNoSecretsWithoutPassEnv checks that a lane that passes nothing mounts no Secret, so a stray
+// satat-lane-secrets left from an older config is never visible to its steps.
+func TestNoSecretsWithoutPassEnv(t *testing.T) {
 	l := testLane()
 	l.PassEnv = nil
 	spec := podSpecOf(t, find(t, objectsFor(t, l), "SandboxTemplate"))
 	for _, v := range spec.Volumes {
-		if v.Name == "secrets" {
-			if v.Secret == nil || v.Secret.Optional == nil || !*v.Secret.Optional {
-				t.Errorf("secrets volume must be optional without pass_env: %+v", v.Secret)
-			}
-			return
+		if v.Secret != nil {
+			t.Errorf("volume %s mounts Secret %s", v.Name, v.Secret.SecretName)
 		}
 	}
-	t.Error("no secrets volume")
+	for _, m := range spec.Containers[0].VolumeMounts {
+		if m.MountPath == "/run/satat/secrets" {
+			t.Errorf("step mounts %s", m.MountPath)
+		}
+	}
 }
 
 func TestLaneDefaults(t *testing.T) {
@@ -459,6 +471,22 @@ func TestValidateTemplateRejects(t *testing.T) {
 		{"env policy allowed", func(o map[string]interface{}) {
 			_ = unstructured.SetNestedField(o, "Allowed", "spec", "envVarsInjectionPolicy")
 		}, "envVarsInjectionPolicy"},
+		{"whole Secret mounted", func(o map[string]interface{}) {
+			setSecretItems(o, nil)
+		}, "secrets"},
+		{"key not passed", func(o map[string]interface{}) {
+			setSecretItems(o, []interface{}{
+				map[string]interface{}{"key": "CLAUDE_CODE_OAUTH_TOKEN", "path": "CLAUDE_CODE_OAUTH_TOKEN"},
+				map[string]interface{}{"key": "GH_TOKEN", "path": "GH_TOKEN"},
+				map[string]interface{}{"key": "OTHER", "path": "OTHER"},
+			})
+		}, "OTHER"},
+		{"key at another path", func(o map[string]interface{}) {
+			setSecretItems(o, []interface{}{
+				map[string]interface{}{"key": "CLAUDE_CODE_OAUTH_TOKEN", "path": "GH_TOKEN"},
+				map[string]interface{}{"key": "GH_TOKEN", "path": "CLAUDE_CODE_OAUTH_TOKEN"},
+			})
+		}, "path"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -473,6 +501,25 @@ func TestValidateTemplateRejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+// setSecretItems replaces the items of the template's Secret volume; nil removes them.
+func setSecretItems(o map[string]interface{}, items []interface{}) {
+	path := []string{"spec", "podTemplate", "spec", "volumes"}
+	vols, _, _ := unstructured.NestedSlice(o, path...)
+	for i, v := range vols {
+		m := v.(map[string]interface{})
+		if _, ok := m["secret"]; !ok {
+			continue
+		}
+		if items == nil {
+			unstructured.RemoveNestedField(m, "secret", "items")
+		} else {
+			_ = unstructured.SetNestedSlice(m, items, "secret", "items")
+		}
+		vols[i] = m
+	}
+	_ = unstructured.SetNestedSlice(o, vols, path...)
 }
 
 func TestValidateTemplateJoinsViolations(t *testing.T) {
