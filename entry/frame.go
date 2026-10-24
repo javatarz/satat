@@ -2,14 +2,15 @@
 // back through pods/log. The satat-entry wrapper writes one frame as the pod's only stdout; the
 // launcher takes the last complete frame in the log.
 //
-// A frame is three lines: Begin, the standard base64 of the JSON Result, End. Base64 keeps the
-// step's own output, binary or not, from ever looking like a frame boundary.
+// A frame is three lines: Begin, the JSON Result on one line, End. JSON escapes newlines, and the
+// step's own output and files are base64 inside it, so nothing a step writes can look like a
+// frame boundary. The JSON is not base64-encoded again: at the caps that would take a frame past
+// kubelet's 10 MiB log rotation size.
 package entry
 
 import (
 	"archive/tar"
 	"bytes"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,7 +55,7 @@ func Write(w io.Writer, r Result) error {
 	if err != nil {
 		return fmt.Errorf("encode result: %w", err)
 	}
-	_, err = fmt.Fprintf(w, "%s\n%s\n%s\n", Begin, base64.StdEncoding.EncodeToString(b), End)
+	_, err = fmt.Fprintf(w, "%s\n%s\n%s\n", Begin, b, End)
 	return err
 }
 
@@ -74,11 +75,7 @@ func Parse(log []byte) (r Result, ok bool, err error) {
 	if !ok {
 		return Result{}, false, nil
 	}
-	b, err := base64.StdEncoding.DecodeString(payload)
-	if err != nil {
-		return Result{}, false, fmt.Errorf("decode result frame: %w", err)
-	}
-	if err := json.Unmarshal(b, &r); err != nil {
+	if err := json.Unmarshal([]byte(payload), &r); err != nil {
 		return Result{}, false, fmt.Errorf("decode result frame: %w", err)
 	}
 	return r, true, nil

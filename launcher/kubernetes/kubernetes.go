@@ -40,6 +40,8 @@ const (
 
 	cleanupTimeout = 60 * time.Second
 	defaultPoll    = time.Second
+	// maxTransient is how many API errors in a row a wait retries before it fails the launch.
+	maxTransient = 3
 )
 
 // rejected are the claim Ready=False reasons that mean the claim can never run as it stands.
@@ -68,6 +70,8 @@ type Launcher struct {
 	group     singleflight.Group
 	mu        sync.Mutex
 	cancelled map[string]bool
+	// cancelMu orders Cancel's check-and-mark against a run settling its flag after cleanup.
+	cancelMu sync.Mutex
 }
 
 // Option adjusts a Launcher.
@@ -167,24 +171,35 @@ func (l *Launcher) Launch(ctx context.Context, step launcher.Step) (launcher.Res
 	return res, err
 }
 
-func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.Step, ns, name string) (launcher.Result, error) {
-	var res launcher.Result
+func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.Step, ns, name string) (res launcher.Result, err error) {
 	key := claimKey(ns, name)
 
-	// Delete the claim on every exit path, even when ctx is already done, but only a claim this
-	// call created or adopted.
-	owned := false
+	// On every exit path, even when ctx is already done, delete the claim this call created or
+	// adopted, or one a failed create may still have stored. Only then settle the cancel flag:
+	// once the claim is gone a late Cancel finds nothing to mark, so no flag outlives this run.
+	var owned, maybeStored bool
 	defer func() {
-		if !owned {
-			return
-		}
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
-		l.cleanup(cctx, ns, name)
+		switch {
+		case owned:
+			l.cleanup(cctx, ns, name)
+		case maybeStored:
+			l.cleanupIfOurs(cctx, lane, step, ns, name)
+		}
+		l.cancelMu.Lock()
+		defer l.cancelMu.Unlock()
+		l.mu.Lock()
+		defer l.mu.Unlock()
+		if err == nil && l.cancelled[key] {
+			res.Cancelled = true
+		}
+		delete(l.cancelled, key)
 	}()
 
-	adopted, err := l.createOrAdopt(ctx, lane, step, ns, name)
+	adopted, uncertain, err := l.createOrAdopt(ctx, lane, step, ns, name)
 	if err != nil {
+		maybeStored = uncertain
 		return res, err
 	}
 	owned = true
@@ -205,14 +220,8 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 			return res, err
 		}
 	}
-
-	l.mu.Lock()
-	res.Cancelled = res.Cancelled || l.cancelled[key]
-	delete(l.cancelled, key)
-	l.mu.Unlock()
 	return res, nil
 }
-
 func (l *Launcher) claimObject(lane launcher.Lane, step launcher.Step, ns, name string) *unstructured.Unstructured {
 	return &unstructured.Unstructured{Object: map[string]interface{}{
 		"apiVersion": sandboxAPIVersion,
@@ -246,23 +255,24 @@ func (l *Launcher) claimObject(lane launcher.Lane, step launcher.Step, ns, name 
 
 // createOrAdopt creates the step's claim. A claim of that name an earlier attempt left is adopted
 // if its labels say it is this step's; one still being deleted is waited out and replaced, so a
-// rerun after cleanup is a fresh execution.
-func (l *Launcher) createOrAdopt(ctx context.Context, lane launcher.Lane, step launcher.Step, ns, name string) (bool, error) {
+// rerun after cleanup is a fresh execution. uncertain is set when a create failed in a way that
+// may still have stored the claim.
+func (l *Launcher) createOrAdopt(ctx context.Context, lane launcher.Lane, step launcher.Step, ns, name string) (adopted, uncertain bool, err error) {
 	obj := l.claimObject(lane, step, ns, name)
 	for attempt := 0; attempt < 3; attempt++ {
 		_, err := l.claims(ns).Create(ctx, obj, metav1.CreateOptions{})
 		if err == nil {
-			return false, nil
+			return false, false, nil
 		}
 		if !apierrors.IsAlreadyExists(err) {
-			return false, fmt.Errorf("create claim %s/%s: %w", ns, name, err)
+			return false, createUncertain(ctx, err), fmt.Errorf("create claim %s/%s: %w", ns, name, err)
 		}
 		found, err := l.claims(ns).Get(ctx, name, metav1.GetOptions{})
 		if apierrors.IsNotFound(err) {
 			continue
 		}
 		if err != nil {
-			return false, fmt.Errorf("adopt claim %s/%s: %w", ns, name, err)
+			return false, false, fmt.Errorf("adopt claim %s/%s: %w", ns, name, err)
 		}
 		if found.GetDeletionTimestamp() != nil {
 			l.log.Info("waiting for a deleted claim to go", "claim", name, "namespace", ns)
@@ -271,20 +281,32 @@ func (l *Launcher) createOrAdopt(ctx context.Context, lane launcher.Lane, step l
 			cancel()
 			if err != nil {
 				if ctx.Err() != nil {
-					return false, ctx.Err()
+					return false, false, ctx.Err()
 				}
-				return false, fmt.Errorf("claim %s/%s is still being deleted: %w", ns, name, err)
+				return false, false, fmt.Errorf("claim %s/%s is still being deleted: %w", ns, name, err)
 			}
 			continue
 		}
-		lb := found.GetLabels()
-		if lb[labelManaged] != "true" || lb[labelLane] != lane.Name || lb[labelRun] != step.Run || lb[labelStep] != step.Name {
-			return false, fmt.Errorf("claim %s/%s exists and is not this Satat step's claim", ns, name)
+		if !ours(found, lane, step) {
+			return false, false, fmt.Errorf("claim %s/%s exists and is not this Satat step's claim", ns, name)
 		}
 		l.log.Info("adopted existing claim", "claim", name, "namespace", ns)
-		return true, nil
+		return true, false, nil
 	}
-	return false, fmt.Errorf("create claim %s/%s: it kept reappearing", ns, name)
+	return false, false, fmt.Errorf("create claim %s/%s: it kept reappearing", ns, name)
+}
+
+// createUncertain reports whether a failed create may still have stored the claim: the request
+// got no API answer (the context ended, or a transport error), or the answer was a timeout.
+func createUncertain(ctx context.Context, err error) bool {
+	var st apierrors.APIStatus
+	return ctx.Err() != nil || !errors.As(err, &st) || apierrors.IsTimeout(err) || apierrors.IsServerTimeout(err)
+}
+
+// ours reports whether claim carries this step's labels.
+func ours(claim *unstructured.Unstructured, lane launcher.Lane, step launcher.Step) bool {
+	lb := claim.GetLabels()
+	return lb[labelManaged] == "true" && lb[labelLane] == lane.Name && lb[labelRun] == step.Run && lb[labelStep] == step.Name
 }
 
 // outcome is how waiting for a claim ended without an error.
@@ -294,23 +316,51 @@ type outcome struct {
 	timedOut  bool
 }
 
+// waiter is one wait for one claim. It counts transient API errors in a row.
+type waiter struct {
+	l        *Launcher
+	ns, name string
+	pod      string
+	fails    int
+}
+
+// tolerate records a transient API error. It returns the error once more than maxTransient have
+// come in a row; until then the wait goes on.
+func (w *waiter) tolerate(what string, err error) error {
+	w.fails++
+	if w.fails > maxTransient {
+		return fmt.Errorf("%s %s/%s: %w", what, w.ns, w.name, err)
+	}
+	w.l.log.Warn("api error while waiting, retrying", "op", what, "claim", w.name, "namespace", w.ns, "err", err)
+	return nil
+}
+
 // wait blocks until the claim's pod is finished, the step is cancelled, or the launcher's
 // deadline passes. It watches the one claim from a Get's resourceVersion and re-establishes the
 // watch when it closes. The pod is also polled: the claim's Finished condition can lag it, and
-// the worker can get pods but not watch them.
+// the worker can get pods but not watch them. Up to maxTransient API errors in a row are retried.
 func (l *Launcher) wait(ctx context.Context, ns, name string, deadline time.Duration) (outcome, error) {
 	dctx, cancel := context.WithTimeout(ctx, deadline)
 	defer cancel()
 	tick := time.NewTicker(l.poll)
 	defer tick.Stop()
-	pod := name
+	w := &waiter{l: l, ns: ns, name: name, pod: name}
 
 	ended := func() (outcome, error) {
 		if ctx.Err() != nil {
 			return outcome{}, ctx.Err()
 		}
 		l.log.Warn("step outlived the launcher deadline", "claim", name, "namespace", ns, "deadline", deadline)
-		return outcome{pod: pod, timedOut: true}, nil
+		return outcome{pod: w.pod, timedOut: true}, nil
+	}
+	// pause paces retries and re-watches, so a failing call doesn't spin.
+	pause := func() bool {
+		select {
+		case <-dctx.Done():
+			return false
+		case <-tick.C:
+			return true
+		}
 	}
 
 	for {
@@ -318,16 +368,23 @@ func (l *Launcher) wait(ctx context.Context, ns, name string, deadline time.Dura
 		if dctx.Err() != nil {
 			return ended()
 		}
-		if err != nil {
-			if apierrors.IsNotFound(err) {
-				return l.gone(ns, name)
-			}
-			return outcome{}, fmt.Errorf("get claim %s/%s: %w", ns, name, err)
+		if apierrors.IsNotFound(err) {
+			return l.gone(ns, name)
 		}
-		if out, done, err := l.check(dctx, ns, claim, &pod, true); done || err != nil {
+		if err != nil {
+			if err := w.tolerate("get claim", err); err != nil {
+				return outcome{}, err
+			}
+			if !pause() {
+				return ended()
+			}
+			continue
+		}
+		w.fails = 0
+		if out, done, err := w.check(dctx, claim, true); done || err != nil {
 			return out, err
 		}
-		w, err := l.claims(ns).Watch(dctx, metav1.ListOptions{
+		wi, err := l.claims(ns).Watch(dctx, metav1.ListOptions{
 			FieldSelector:   "metadata.name=" + name,
 			ResourceVersion: claim.GetResourceVersion(),
 		})
@@ -335,67 +392,66 @@ func (l *Launcher) wait(ctx context.Context, ns, name string, deadline time.Dura
 			return ended()
 		}
 		if err != nil {
-			if apierrors.IsResourceExpired(err) || apierrors.IsGone(err) {
-				continue
+			if !apierrors.IsResourceExpired(err) && !apierrors.IsGone(err) {
+				if err := w.tolerate("watch claim", err); err != nil {
+					return outcome{}, err
+				}
 			}
-			return outcome{}, fmt.Errorf("watch claim %s/%s: %w", ns, name, err)
+			if !pause() {
+				return ended()
+			}
+			continue
 		}
-		out, done, err := l.watch(dctx, ns, name, w, tick.C, &pod)
-		w.Stop()
-		if dctx.Err() != nil && !done && err == nil {
-			return ended()
-		}
+		out, done, err := w.watch(dctx, wi, tick.C)
+		wi.Stop()
 		if done || err != nil {
 			return out, err
 		}
-		// Pace re-watching, so a watch that keeps failing doesn't spin.
-		select {
-		case <-dctx.Done():
+		if !pause() {
 			return ended()
-		case <-tick.C:
 		}
 	}
 }
 
 // watch handles one watch until it closes (done false), or the wait is over.
-func (l *Launcher) watch(ctx context.Context, ns, name string, w watch.Interface, tick <-chan time.Time, pod *string) (outcome, bool, error) {
+func (w *waiter) watch(ctx context.Context, wi watch.Interface, tick <-chan time.Time) (outcome, bool, error) {
 	for {
 		select {
 		case <-ctx.Done():
 			return outcome{}, false, nil
 		case <-tick:
-			if l.isCancelled(claimKey(ns, name)) {
-				return outcome{pod: *pod, cancelled: true}, true, nil
+			if w.l.isCancelled(claimKey(w.ns, w.name)) {
+				return outcome{pod: w.pod, cancelled: true}, true, nil
 			}
-			finished, err := l.podFinished(ctx, ns, *pod)
+			finished, err := w.podFinished(ctx)
 			if err != nil {
 				return outcome{}, true, err
 			}
 			if finished {
-				return outcome{pod: *pod}, true, nil
+				return outcome{pod: w.pod}, true, nil
 			}
-		case ev, ok := <-w.ResultChan():
+		case ev, ok := <-wi.ResultChan():
 			if !ok {
 				return outcome{}, false, nil
 			}
 			switch ev.Type {
 			case watch.Error:
 				// Too old a resourceVersion, or any other watch error: Get and watch again.
-				l.log.Info("claim watch error, re-watching", "claim", name, "err", apierrors.FromObject(ev.Object))
+				w.l.log.Info("claim watch error, re-watching", "claim", w.name, "err", apierrors.FromObject(ev.Object))
 				return outcome{}, false, nil
 			case watch.Deleted:
-				if u, ok := ev.Object.(*unstructured.Unstructured); ok && u.GetName() != name {
+				if u, ok := ev.Object.(*unstructured.Unstructured); ok && u.GetName() != w.name {
 					continue
 				}
-				out, err := l.gone(ns, name)
+				out, err := w.l.gone(w.ns, w.name)
 				return out, true, err
 			case watch.Added, watch.Modified:
 				u, ok := ev.Object.(*unstructured.Unstructured)
-				if !ok || u.GetName() != name {
+				if !ok || u.GetName() != w.name {
 					continue
 				}
-				if out, done, err := l.check(ctx, ns, u, pod, false); done || err != nil {
-					return out, done || err != nil, err
+				if out, done, err := w.check(ctx, u, false); done || err != nil {
+					return out, true, err
 				}
 			}
 		}
@@ -413,14 +469,13 @@ func (l *Launcher) gone(ns, name string) (outcome, error) {
 // check reads one state of the claim. It reports done when the step's pod has finished or the
 // step was cancelled, and an error when the claim was rejected. The pod is checked once the
 // claim names its sandbox, or always when checkPod is set.
-func (l *Launcher) check(ctx context.Context, ns string, claim *unstructured.Unstructured, pod *string, checkPod bool) (outcome, bool, error) {
-	name := claim.GetName()
+func (w *waiter) check(ctx context.Context, claim *unstructured.Unstructured, checkPod bool) (outcome, bool, error) {
 	if claim.GetDeletionTimestamp() != nil {
-		out, err := l.gone(ns, name)
+		out, err := w.l.gone(w.ns, w.name)
 		return out, true, err
 	}
-	if sb, _, _ := unstructured.NestedString(claim.Object, "status", "sandbox", "name"); sb != "" {
-		*pod = sb
+	if sb := sandboxName(claim); sb != "" {
+		w.pod = sb
 		checkPod = true
 	}
 	conds, _, _ := unstructured.NestedSlice(claim.Object, "status", "conditions")
@@ -435,33 +490,46 @@ func (l *Launcher) check(ctx context.Context, ns string, claim *unstructured.Uns
 		msg, _ := m["message"].(string)
 		switch {
 		case typ == "Finished" && status == string(metav1.ConditionTrue):
-			return outcome{pod: *pod}, true, nil
+			return outcome{pod: w.pod}, true, nil
 		case typ == "Ready" && status == string(metav1.ConditionFalse) && rejected[reason]:
-			return outcome{}, true, fmt.Errorf("claim %s/%s was rejected: %s: %s", ns, name, reason, msg)
+			return outcome{}, true, fmt.Errorf("claim %s/%s was rejected: %s: %s", w.ns, w.name, reason, msg)
 		}
 	}
 	if !checkPod {
 		return outcome{}, false, nil
 	}
-	finished, err := l.podFinished(ctx, ns, *pod)
+	finished, err := w.podFinished(ctx)
 	if err != nil {
 		return outcome{}, true, err
 	}
 	if finished {
-		return outcome{pod: *pod}, true, nil
+		return outcome{pod: w.pod}, true, nil
 	}
 	return outcome{}, false, nil
 }
 
-func (l *Launcher) podFinished(ctx context.Context, ns, name string) (bool, error) {
-	p, err := l.core.CoreV1().Pods(ns).Get(ctx, name, metav1.GetOptions{})
+// podFinished reports whether the step's pod is terminal. A missing pod is not; an API error
+// counts against the transient budget.
+func (w *waiter) podFinished(ctx context.Context) (bool, error) {
+	p, err := w.l.core.CoreV1().Pods(w.ns).Get(ctx, w.pod, metav1.GetOptions{})
 	if err != nil {
 		if apierrors.IsNotFound(err) || ctx.Err() != nil {
 			return false, nil
 		}
-		return false, fmt.Errorf("get pod %s/%s: %w", ns, name, err)
+		return false, w.tolerate("get pod", err)
 	}
-	return p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed, nil
+	w.fails = 0
+	return terminal(p), nil
+}
+
+func terminal(p *corev1.Pod) bool {
+	return p.Status.Phase == corev1.PodSucceeded || p.Status.Phase == corev1.PodFailed
+}
+
+// sandboxName is the claim's status.sandbox.name, which names its pod.
+func sandboxName(claim *unstructured.Unstructured) string {
+	sb, _, _ := unstructured.NestedString(claim.Object, "status", "sandbox", "name")
+	return sb
 }
 
 func (l *Launcher) isCancelled(key string) bool {
@@ -532,6 +600,21 @@ func (l *Launcher) cleanup(ctx context.Context, ns, name string) {
 	}
 }
 
+// cleanupIfOurs is cleanup for a claim a failed create may have stored: it deletes the claim only
+// if it carries this step's labels.
+func (l *Launcher) cleanupIfOurs(ctx context.Context, lane launcher.Lane, step launcher.Step, ns, name string) {
+	claim, err := l.claims(ns).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		if !apierrors.IsNotFound(err) {
+			l.log.Warn("get claim after a failed create", "claim", name, "namespace", ns, "err", err)
+		}
+		return
+	}
+	if ours(claim, lane, step) {
+		l.cleanup(ctx, ns, name)
+	}
+}
+
 func (l *Launcher) deleteClaim(ctx context.Context, ns, name string) error {
 	fg := metav1.DeletePropagationForeground
 	err := l.claims(ns).Delete(ctx, name, metav1.DeleteOptions{PropagationPolicy: &fg})
@@ -565,33 +648,60 @@ func (l *Launcher) waitGone(ctx context.Context, ns, name string) error {
 }
 
 // Cancel implements launcher.Launcher. It marks the step cancelled and deletes its claim; Launch
-// then returns Cancelled. A step with no claim, or whose claim has finished, is not running.
+// then returns Cancelled. A step with no claim, or whose claim or pod has finished, is not
+// running.
 func (l *Launcher) Cancel(ctx context.Context, run, name string) error {
 	cname := claimName(run, name)
 	for _, lane := range l.lanes {
 		ns := Namespace(l.prefix, lane.Name)
-		claim, err := l.claims(ns).Get(ctx, cname, metav1.GetOptions{})
-		if apierrors.IsNotFound(err) {
-			continue
-		}
+		marked, err := l.markCancelled(ctx, ns, cname)
 		if err != nil {
 			return fmt.Errorf("cancel %s/%s: %w", ns, cname, err)
 		}
-		if claim.GetLabels()[labelManaged] != "true" {
-			return fmt.Errorf("claim %s/%s is not a Satat step claim", ns, cname)
-		}
-		if claim.GetDeletionTimestamp() != nil || finished(claim) {
+		if !marked {
 			continue
 		}
-		key := claimKey(ns, cname)
-		l.mu.Lock()
-		l.cancelled[key] = true
-		l.mu.Unlock()
 		if err := l.deleteClaim(ctx, ns, cname); err != nil {
 			return fmt.Errorf("cancel %s/%s: %w", ns, cname, err)
 		}
 	}
 	return nil
+}
+
+// markCancelled sets the cancel flag when the claim exists and its step is still running. It
+// holds cancelMu from the check to the mark, so a run that has deleted its claim and settled its
+// flag can't be marked afterwards.
+func (l *Launcher) markCancelled(ctx context.Context, ns, cname string) (bool, error) {
+	l.cancelMu.Lock()
+	defer l.cancelMu.Unlock()
+	claim, err := l.claims(ns).Get(ctx, cname, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if claim.GetLabels()[labelManaged] != "true" {
+		return false, errors.New("the claim is not a Satat step claim")
+	}
+	if claim.GetDeletionTimestamp() != nil || finished(claim) {
+		return false, nil
+	}
+	pod := sandboxName(claim)
+	if pod == "" {
+		pod = cname
+	}
+	p, err := l.core.CoreV1().Pods(ns).Get(ctx, pod, metav1.GetOptions{})
+	switch {
+	case err == nil && terminal(p):
+		return false, nil
+	case err != nil && !apierrors.IsNotFound(err):
+		return false, err
+	}
+	l.mu.Lock()
+	l.cancelled[claimKey(ns, cname)] = true
+	l.mu.Unlock()
+	return true, nil
 }
 
 func finished(claim *unstructured.Unstructured) bool {
