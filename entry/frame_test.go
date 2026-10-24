@@ -40,6 +40,37 @@ func TestFrameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestFrameIsOneJSONLine(t *testing.T) {
+	b := frame(t, Result{ExitCode: 1, Stdout: []byte("a\nb\n")})
+	lines := bytes.Split(bytes.TrimSuffix(b, []byte("\n")), []byte("\n"))
+	if len(lines) != 3 || string(lines[0]) != Begin || string(lines[2]) != End {
+		t.Fatalf("frame is not three lines: %q", b)
+	}
+	if !bytes.HasPrefix(lines[1], []byte(`{"exit_code":1,`)) {
+		t.Fatalf("frame body is not the raw JSON result: %q", lines[1])
+	}
+}
+
+// A result at every cap must fit well inside kubelet's 10 MiB log rotation size.
+func TestMaxFrameFitsTheLog(t *testing.T) {
+	b := frame(t, Result{
+		ExitCode: 1,
+		Stdout:   bytes.Repeat([]byte{0xff}, MaxStream),
+		Stderr:   bytes.Repeat([]byte{0xff}, MaxStream),
+		Output:   bytes.Repeat([]byte{0xff}, MaxOutput),
+	})
+	if len(b) >= 9<<20 {
+		t.Fatalf("a max-cap frame is %d bytes, want under 9 MiB", len(b))
+	}
+}
+
+func TestParseRejectsCorruptFrame(t *testing.T) {
+	log := []byte(Begin + "\n{not json\n" + End + "\n")
+	if _, ok, err := Parse(log); ok || err == nil {
+		t.Fatalf("ok=%v err=%v, want a decode error", ok, err)
+	}
+}
+
 func TestParseTakesLastFrame(t *testing.T) {
 	log := append(frame(t, Result{ExitCode: 1}), frame(t, Result{ExitCode: 2})...)
 	got, ok, err := Parse(log)

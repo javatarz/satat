@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -51,18 +52,31 @@ type harness struct {
 
 	mu  sync.Mutex
 	log []byte
+
+	// done closes when the test ends; helper goroutines stop then, and the test waits for them.
+	done chan struct{}
+	wg   sync.WaitGroup
 }
 
 func newHarness(t *testing.T, existing ...runtime.Object) *harness {
 	t.Helper()
+	return newHarnessWith(t, nil, existing...)
+}
+
+func newHarnessWith(t *testing.T, opts []Option, existing ...runtime.Object) *harness {
+	t.Helper()
 	dyn := dynamicfake.NewSimpleDynamicClientWithCustomListKinds(runtime.NewScheme(),
 		map[schema.GroupVersionResource]string{ClaimGVR: "SandboxClaimList"}, existing...)
 	core := k8sfake.NewClientset()
-	l, err := New(dyn, core, []launcher.Lane{laneXDef()}, WithPoll(10*time.Millisecond))
+	l, err := New(dyn, core, []launcher.Lane{laneXDef()}, append([]Option{WithPoll(10 * time.Millisecond)}, opts...)...)
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	h := &harness{l: l, dyn: dyn, core: core}
+	h := &harness{l: l, dyn: dyn, core: core, done: make(chan struct{})}
+	t.Cleanup(func() {
+		close(h.done)
+		h.wg.Wait()
+	})
 	l.logs = func(ctx context.Context, ns, pod, container string) ([]byte, error) {
 		if container != stepContainer {
 			return nil, errors.New("wrong container " + container)
@@ -78,6 +92,25 @@ func newHarness(t *testing.T, existing ...runtime.Object) *harness {
 	return h
 }
 
+// goroutine runs f alongside the test; the test does not end until f returns.
+func (h *harness) goroutine(f func()) {
+	h.wg.Add(1)
+	go func() {
+		defer h.wg.Done()
+		f()
+	}()
+}
+
+// sleep waits d, or until the test ends; it reports whether the test is still running.
+func (h *harness) sleep(d time.Duration) bool {
+	select {
+	case <-h.done:
+		return false
+	case <-time.After(d):
+		return true
+	}
+}
+
 func (h *harness) setLog(b []byte) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -91,16 +124,19 @@ func (h *harness) claims() interface {
 	return h.dyn.Resource(ClaimGVR).Namespace(testNS)
 }
 
-// waitClaim waits for a claim without a deletionTimestamp to appear and returns it.
+// waitClaim waits for a claim without a deletionTimestamp to appear and returns it. It returns
+// nil if the test ends first.
 func (h *harness) waitClaim(t *testing.T) *unstructured.Unstructured {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		c, err := h.claims().Get(context.Background(), testName, metav1.GetOptions{})
-		if err == nil && c.GetDeletionTimestamp() == nil {
-			return c
+		c, err := h.dyn.Tracker().Get(ClaimGVR, testNS, testName)
+		if u, ok := c.(*unstructured.Unstructured); err == nil && ok && u.GetDeletionTimestamp() == nil {
+			return u.DeepCopy()
 		}
-		time.Sleep(5 * time.Millisecond)
+		if !h.sleep(5 * time.Millisecond) {
+			return nil
+		}
 	}
 	t.Error("claim never appeared")
 	return nil
@@ -117,7 +153,7 @@ type podEnd struct {
 // named after it, then names the sandbox in the claim's status (and sets Finished, if asked).
 func (h *harness) controller(t *testing.T, end podEnd) {
 	t.Helper()
-	go func() {
+	h.goroutine(func() {
 		c := h.waitClaim(t)
 		if c == nil {
 			return
@@ -155,7 +191,7 @@ func (h *harness) controller(t *testing.T, end podEnd) {
 		if _, err := h.claims().UpdateStatus(context.Background(), c, metav1.UpdateOptions{}); err != nil {
 			t.Errorf("update claim status: %v", err)
 		}
-	}()
+	})
 }
 
 func (h *harness) launch(ctx context.Context, input []byte) (launcher.Result, error) {
@@ -301,7 +337,7 @@ func TestLaunchNoFrameUsesPodStatus(t *testing.T) {
 
 func TestLaunchRejectedClaim(t *testing.T) {
 	h := newHarness(t)
-	go func() {
+	h.goroutine(func() {
 		c := h.waitClaim(t)
 		if c == nil {
 			return
@@ -312,7 +348,7 @@ func TestLaunchRejectedClaim(t *testing.T) {
 		if _, err := h.claims().UpdateStatus(context.Background(), c, metav1.UpdateOptions{}); err != nil {
 			t.Errorf("update status: %v", err)
 		}
-	}()
+	})
 	_, err := h.launch(ctxT(t), nil)
 	if err == nil || !strings.Contains(err.Error(), "EnvVarsInjectionRejected") {
 		t.Fatalf("Launch err = %v, want the rejection reason", err)
@@ -352,12 +388,14 @@ func TestLaunchWaitsOutTerminatingClaim(t *testing.T) {
 	h := newHarness(t, existingClaim(ourLabels(), true))
 	h.setLog(frame(t, entry.Result{Stdout: []byte("fresh\n")}))
 	// The old claim goes once its pod and sandbox would have; then the new one runs.
-	go func() {
-		time.Sleep(100 * time.Millisecond)
+	h.goroutine(func() {
+		if !h.sleep(100 * time.Millisecond) {
+			return
+		}
 		if err := h.dyn.Tracker().Delete(ClaimGVR, testNS, testName); err != nil {
 			t.Errorf("delete old claim: %v", err)
 		}
-	}()
+	})
 	h.controller(t, podEnd{finished: true})
 	res, err := h.launch(ctxT(t), nil)
 	if err != nil {
@@ -379,11 +417,12 @@ func TestCancel(t *testing.T) {
 	}
 	done := make(chan launcher.Result, 1)
 	errc := make(chan error, 1)
-	go func() {
-		res, err := h.launch(ctxT(t), nil)
+	ctx := ctxT(t)
+	h.goroutine(func() {
+		res, err := h.launch(ctx, nil)
 		done <- res
 		errc <- err
-	}()
+	})
 	h.waitClaim(t)
 	if err := h.l.Cancel(context.Background(), testRun, testStep); err != nil {
 		t.Fatalf("Cancel: %v", err)
@@ -444,4 +483,116 @@ func TestNewRejectsLaneWithoutCommand(t *testing.T) {
 	if _, err := New(nil, nil, []launcher.Lane{lane}); err == nil {
 		t.Fatal("New accepted a lane without a command")
 	}
+}
+
+// A Cancel whose claim outlives the run (here its delete is lost and the caller's context ends
+// first) must not leave a flag that cancels the step's next launch.
+func TestCancelDoesNotLeakIntoNextLaunch(t *testing.T) {
+	// A long poll: only the context can end the first launch.
+	h := newHarnessWith(t, []Option{WithPoll(time.Hour)})
+	var deletes atomic.Int32
+	h.dyn.PrependReactor("delete", "sandboxclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
+		// Swallow Cancel's delete; let the launch's own cleanup through.
+		return deletes.Add(1) == 1, nil, nil
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	errc := make(chan error, 1)
+	h.goroutine(func() {
+		_, err := h.launch(ctx, nil)
+		errc <- err
+	})
+	if h.waitClaim(t) == nil {
+		return
+	}
+	if err := h.l.Cancel(context.Background(), testRun, testStep); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	cancel()
+	if err := <-errc; !errors.Is(err, context.Canceled) {
+		t.Fatalf("first Launch err = %v, want context.Canceled", err)
+	}
+	h.assertGone(t)
+
+	h.setLog(frame(t, entry.Result{Stdout: []byte("second\n")}))
+	h.controller(t, podEnd{finished: true})
+	res, err := h.launch(ctxT(t), nil)
+	if err != nil {
+		t.Fatalf("second Launch: %v", err)
+	}
+	if res.Cancelled || string(res.Stdout) != "second\n" {
+		t.Errorf("second launch = %+v, want a normal run, not Cancelled", res)
+	}
+}
+
+func TestCancelSkipsTerminalPod(t *testing.T) {
+	h := newHarness(t, existingClaim(ourLabels(), false))
+	pod := &corev1.Pod{
+		ObjectMeta: metav1.ObjectMeta{Name: testName, Namespace: testNS},
+		Status:     corev1.PodStatus{Phase: corev1.PodSucceeded},
+	}
+	if _, err := h.core.CoreV1().Pods(testNS).Create(context.Background(), pod, metav1.CreateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.l.Cancel(context.Background(), testRun, testStep); err != nil {
+		t.Fatalf("Cancel: %v", err)
+	}
+	if n := len(h.actions("delete")); n != 0 {
+		t.Errorf("Cancel deleted the claim of a finished pod")
+	}
+	if h.l.isCancelled(claimKey(testNS, testName)) {
+		t.Error("Cancel marked a finished step cancelled")
+	}
+}
+
+// failGets makes the next n claim Gets fail with a server error.
+func (h *harness) failGets(n int32) {
+	var left atomic.Int32
+	left.Store(n)
+	h.dyn.PrependReactor("get", "sandboxclaims", func(k8stesting.Action) (bool, runtime.Object, error) {
+		if left.Add(-1) >= 0 {
+			return true, nil, apierrors.NewInternalError(errors.New("etcd hiccup"))
+		}
+		return false, nil, nil
+	})
+}
+
+func TestLaunchRetriesTransientErrors(t *testing.T) {
+	h := newHarness(t)
+	h.failGets(maxTransient)
+	h.setLog(frame(t, entry.Result{Stdout: []byte("ok\n")}))
+	h.controller(t, podEnd{finished: true})
+	res, err := h.launch(ctxT(t), nil)
+	if err != nil {
+		t.Fatalf("Launch after %d transient errors: %v", maxTransient, err)
+	}
+	if string(res.Stdout) != "ok\n" {
+		t.Errorf("result = %+v", res)
+	}
+}
+
+func TestLaunchFailsOnPersistentErrors(t *testing.T) {
+	h := newHarness(t)
+	h.failGets(maxTransient + 1)
+	_, err := h.launch(ctxT(t), nil)
+	if err == nil || !strings.Contains(err.Error(), "etcd hiccup") {
+		t.Fatalf("Launch err = %v, want the API error after %d retries", err, maxTransient)
+	}
+	h.assertGone(t)
+}
+
+// A create that stored the claim but got no answer still has its claim deleted.
+func TestUncertainCreateIsCleanedUp(t *testing.T) {
+	h := newHarness(t)
+	h.dyn.PrependReactor("create", "sandboxclaims", func(a k8stesting.Action) (bool, runtime.Object, error) {
+		obj := a.(k8stesting.CreateAction).GetObject()
+		if err := h.dyn.Tracker().Create(ClaimGVR, obj, testNS); err != nil {
+			t.Errorf("store claim: %v", err)
+		}
+		return true, nil, errors.New("connection reset by peer")
+	})
+	if _, err := h.launch(ctxT(t), nil); err == nil {
+		t.Fatal("Launch succeeded after a failed create")
+	}
+	h.assertGone(t)
 }
