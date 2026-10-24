@@ -1,0 +1,28 @@
+# Defaults for the Satat chart. `satat deploy up` passes satat.k8s/values.yaml (rendered from
+# satat.yaml), then image.ref, worker.replicas and config on the command line.
+
+# The platform image (worker and satat-entry), by digest. Required; deploy up pushes it.
+image:
+  ref: ""
+
+# The image digests must equal deploy/images.go (TestValuesMatchDeployImages).
+postgres:
+  image: postgres:15.6@sha256:1ebd963e5c598f944a4e9ba27de4c95289d663dcc73731025aa53c5254094d8f
+  storage: 2Gi
+
+hatchet:
+  image: ghcr.io/hatchet-dev/hatchet/hatchet-lite:v0.110.5@sha256:cc81f078a5285d7d2051ec4a4fa459d033e1face4ca5983d82612b00da6e3fa3  # yamllint disable-line rule:line-length
+  # k3d maps these to 127.0.0.1:7077 and 127.0.0.1:8888 (scripts/k3d-up.sh).
+  nodePorts:
+    grpc: 30077
+    rest: 30888
+
+worker:
+  # Zero until the Hatchet token Secret exists; deploy up mints it, then sets 1.
+  replicas: 1
+  # The worker's own secrets, each a key of Secret satat-worker-secrets.
+  secretNames:
+    - SATAT_PUSH_TOKEN
+
+# satat.yaml, as text (--set-file config=satat.yaml).
+config: ""

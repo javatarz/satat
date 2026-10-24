@@ -347,7 +347,8 @@ func newHatchetAPI(cfg config.Config, configPath string) (hatchetAPI, error) {
 }
 
 // composeClientEnv is how a CLI on the host reaches a Compose stack: the ports compose.yaml
-// publishes on 127.0.0.1, without TLS. The worker uses the in-network names instead.
+// publishes on 127.0.0.1, without TLS. A kubernetes target on k3d maps the same ports. The worker
+// uses the in-network names instead.
 var composeClientEnv = map[string]string{
 	"HATCHET_CLIENT_HOST_PORT":    "localhost:7077",
 	"HATCHET_CLIENT_TLS_STRATEGY": "none",
@@ -355,7 +356,8 @@ var composeClientEnv = map[string]string{
 }
 
 // hatchetEnv returns the Hatchet client variables to set because lookup has none: the token from
-// the env file deploy up writes next to the config, and for a Compose target the local endpoints.
+// the env file deploy up writes next to the config, and for a Compose or kubernetes target the local
+// endpoints.
 // A variable already set always wins. The values are secrets and are never printed.
 func hatchetEnv(cfg config.Config, configPath string, lookup func(string) (string, bool)) (map[string]string, error) {
 	out := map[string]string{}
@@ -368,7 +370,7 @@ func hatchetEnv(cfg config.Config, configPath string, lookup func(string) (strin
 			out["HATCHET_CLIENT_TOKEN"] = token
 		}
 	}
-	if cfg.Deploy.Target == "compose" {
+	if cfg.Deploy.Target == config.TargetCompose || cfg.Deploy.Target == config.TargetKubernetes {
 		for k, v := range composeClientEnv {
 			if _, ok := lookup(k); !ok {
 				out[k] = v
