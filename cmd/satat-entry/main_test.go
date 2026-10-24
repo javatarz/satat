@@ -166,6 +166,24 @@ func TestMissingSecretFails(t *testing.T) {
 	}
 }
 
+// TestEmptySecretFails matches Docker, which refuses a pass_env variable that is set but empty.
+func TestEmptySecretFails(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "ran")
+	o := setup(t, "touch", marker)
+	o.passEnv = []string{"EMPTY"}
+	writeFile(t, filepath.Join(secretsDir, "EMPTY"), "")
+	code, r := runFrame(t, o)
+	if code != 125 || r.ExitCode != 125 {
+		t.Fatalf("code=%d frame=%d, want 125", code, r.ExitCode)
+	}
+	if !strings.Contains(string(r.Stderr), "EMPTY") {
+		t.Fatalf("stderr %q does not name EMPTY", r.Stderr)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("the command ran: %v", err)
+	}
+}
+
 func TestEnvAndInput(t *testing.T) {
 	o := setup(t, "sh", "-c", `echo "$SATAT_RUN $SATAT_STEP"; cat "$SATAT_INPUT"; echo hi > "$SATAT_OUTPUT/f.txt"`)
 	code, r := runFrame(t, o)
