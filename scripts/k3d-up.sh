@@ -29,28 +29,31 @@ CONTEXT=k3d-$CLUSTER
 BIN_DIR=docs/scratch/bin
 K3D="$BIN_DIR/k3d"
 
+dl_tmp=""
+cleanup() { if [ -n "$dl_tmp" ]; then rm -rf "$dl_tmp"; fi; }
+trap cleanup EXIT
+
 log() { printf '==> %s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 
 install_k3d() {
   if [ -x "$K3D" ] && [ "$("$K3D" version | awk 'NR==1{print $3}')" = "$K3D_VERSION" ]; then return; fi
-  local os arch asset base tmp
+  local os arch asset base
   case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) die "unsupported OS $(uname -s)" ;; esac
   case "$(uname -m)" in arm64 | aarch64) arch=arm64 ;; x86_64 | amd64) arch=amd64 ;; *) die "unsupported arch $(uname -m)" ;; esac
   asset="k3d-$os-$arch"
   base="https://github.com/k3d-io/k3d/releases/download/$K3D_VERSION"
   log "installing k3d $K3D_VERSION ($asset) into $BIN_DIR"
   mkdir -p "$BIN_DIR"
-  tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' EXIT
-  curl -fsSL -o "$tmp/$asset" "$base/$asset"
-  curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
+  dl_tmp="$(mktemp -d)"
+  curl -fsSL -o "$dl_tmp/$asset" "$base/$asset"
+  curl -fsSL -o "$dl_tmp/checksums.txt" "$base/checksums.txt"
   local want got
-  want="$(awk -v a="_dist/$asset" '$2 == a {print $1}' "$tmp/checksums.txt")"
+  want="$(awk -v a="_dist/$asset" '$2 == a {print $1}' "$dl_tmp/checksums.txt")"
   [ -n "$want" ] || die "no checksum for $asset in checksums.txt"
-  got="$(shasum -a 256 "$tmp/$asset" | awk '{print $1}')"
+  got="$(shasum -a 256 "$dl_tmp/$asset" | awk '{print $1}')"
   [ "$want" = "$got" ] || die "checksum mismatch for $asset"
-  install -m 0755 "$tmp/$asset" "$K3D"
+  install -m 0755 "$dl_tmp/$asset" "$K3D"
 }
 
 check_port_free() {
