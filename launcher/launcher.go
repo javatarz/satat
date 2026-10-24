@@ -22,7 +22,8 @@ type Lane struct {
 	Image string
 	// User is a numeric uid:gid, never root. Defaults to 10001:10001.
 	User string
-	// Command replaces the image's command. Empty keeps the image default.
+	// Command replaces the image's entrypoint (and its default arguments) on every backend. Empty
+	// keeps the image defaults.
 	Command []string
 	// PassEnv names environment variables copied from the launcher's own environment into the
 	// step (for example CLAUDE_CODE_OAUTH_TOKEN). A name that is unset fails the launch.
