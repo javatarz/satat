@@ -169,6 +169,9 @@ func TestTemplateHardening(t *testing.T) {
 	if spec.DNSPolicy != corev1.DNSClusterFirst {
 		t.Errorf("dnsPolicy = %q", spec.DNSPolicy)
 	}
+	if spec.EnableServiceLinks == nil || *spec.EnableServiceLinks {
+		t.Error("enableServiceLinks must be false")
+	}
 	if spec.ActiveDeadlineSeconds == nil || *spec.ActiveDeadlineSeconds != 20*60+90 {
 		t.Errorf("activeDeadlineSeconds = %v", spec.ActiveDeadlineSeconds)
 	}
@@ -471,6 +474,9 @@ func TestValidateTemplateRejects(t *testing.T) {
 		{"env policy allowed", func(o map[string]interface{}) {
 			_ = unstructured.SetNestedField(o, "Allowed", "spec", "envVarsInjectionPolicy")
 		}, "envVarsInjectionPolicy"},
+		{"service links", func(o map[string]interface{}) {
+			unstructured.RemoveNestedField(o, append(podPath, "enableServiceLinks")...)
+		}, "enableServiceLinks"},
 		{"whole Secret mounted", func(o map[string]interface{}) {
 			setSecretItems(o, nil)
 		}, "secrets"},

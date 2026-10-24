@@ -296,7 +296,9 @@ func podSpec(l launcher.Lane, o LaneOptions) (corev1.PodSpec, error) {
 		AutomountServiceAccountToken: ptr(false),
 		RestartPolicy:                corev1.RestartPolicyNever,
 		// Explicit, or the controller points the pod at public resolvers.
-		DNSPolicy:             corev1.DNSClusterFirst,
+		DNSPolicy: corev1.DNSClusterFirst,
+		// No *_SERVICE_HOST/_PORT variables: they would name in-cluster services in the step's env.
+		EnableServiceLinks:    ptr(false),
 		ActiveDeadlineSeconds: &deadline,
 		SecurityContext: &corev1.PodSecurityContext{
 			RunAsNonRoot:   ptr(true),
@@ -555,6 +557,9 @@ func validatePod(pod corev1.PodSpec, bad func(string, ...any)) {
 	}
 	if pod.DNSPolicy != corev1.DNSClusterFirst {
 		bad(p+"dnsPolicy is %q, must be ClusterFirst", pod.DNSPolicy)
+	}
+	if pod.EnableServiceLinks == nil || *pod.EnableServiceLinks {
+		bad(p + "enableServiceLinks must be false")
 	}
 	if pod.DNSConfig != nil || len(pod.HostAliases) != 0 {
 		bad(p + "dnsConfig and hostAliases are not allowed")

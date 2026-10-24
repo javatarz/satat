@@ -82,6 +82,7 @@ spec:
               name: tmp
           workingDir: /workspace
       dnsPolicy: ClusterFirst
+      enableServiceLinks: false
       initContainers:
         - command:
             - cp
@@ -289,6 +290,7 @@ spec:
               readOnly: true
           workingDir: /workspace
       dnsPolicy: ClusterFirst
+      enableServiceLinks: false
       initContainers:
         - command:
             - cp

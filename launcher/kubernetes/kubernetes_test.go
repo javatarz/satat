@@ -730,3 +730,10 @@ func TestTimeoutOnPendingPodSaysWhy(t *testing.T) {
 		})
 	}
 }
+
+func TestLogReadIsBounded(t *testing.T) {
+	o := logOptions(stepContainer)
+	if o.Container != stepContainer || o.LimitBytes == nil || *o.LimitBytes != 12<<20 {
+		t.Errorf("log options = %+v, want container step and LimitBytes 12 MiB", o)
+	}
+}

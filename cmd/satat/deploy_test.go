@@ -39,7 +39,7 @@ func TestTargetForKubernetes(t *testing.T) {
 	}
 	configPath := filepath.Join(root, "deploy", "site", "satat.yaml")
 	cfg := config.Config{Deploy: config.Deploy{Target: config.TargetKubernetes}}
-	got, err := targetFor(cfg, configPath, kubeFlags{Context: "c", Registry: "r:1"})
+	got, err := targetFor(cfg, configPath, kubeFlags{Context: "c", Registry: "r:1"}, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,9 +52,18 @@ func TestTargetForKubernetes(t *testing.T) {
 		t.Errorf("target = %+v, want Dir %s, Root %s", k, filepath.Dir(configPath), root)
 	}
 
-	// No repo above the config: refused, naming what's missing.
-	if _, err := targetFor(cfg, filepath.Join(t.TempDir(), "satat.yaml"), kubeFlags{}); err == nil ||
+	// No repo above the config: up, which builds the image, is refused, naming what's missing.
+	outside := filepath.Join(t.TempDir(), "satat.yaml")
+	if _, err := targetFor(cfg, outside, kubeFlags{}, true); err == nil ||
 		!strings.Contains(err.Error(), "images/worker/Dockerfile") {
 		t.Errorf("err = %v, want no repo root found", err)
+	}
+	// render, down and status build nothing, so they work outside the repo tree.
+	got, err = targetFor(cfg, outside, kubeFlags{}, false)
+	if err != nil {
+		t.Fatalf("targetFor outside the repo without the root: %v", err)
+	}
+	if k := got.(*kubernetes.Target); k.Root != "" || k.Dir != filepath.Dir(outside) {
+		t.Errorf("target = %+v, want no Root and Dir %s", k, filepath.Dir(outside))
 	}
 }
