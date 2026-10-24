@@ -93,10 +93,12 @@ func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (stri
 	init := true
 	mem := l.MemoryBytes
 
+	// A lane command replaces the image's entrypoint (Kubernetes command semantics) and leaves
+	// Cmd empty; no command keeps the image's defaults.
 	cfg := &container.Config{
 		User:       l.User,
 		Env:        env,
-		Cmd:        l.Command,
+		Entrypoint: l.Command,
 		Image:      l.Image,
 		WorkingDir: workspace,
 		Labels: map[string]string{
