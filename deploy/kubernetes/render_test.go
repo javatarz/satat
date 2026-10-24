@@ -112,3 +112,46 @@ func TestRenderHasNoSecrets(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderRejectsPlaceholderImage(t *testing.T) {
+	cfg, err := config.Load("testdata/satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Lanes[0].Image = PlatformPlaceholder
+	if _, err := (&Target{}).Render(cfg); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("err = %v, want the placeholder refused as a lane image", err)
+	}
+}
+
+// Only the entry init container's image is replaced, even if another line reads the same.
+func TestWithImageReplacesOnlyEntry(t *testing.T) {
+	cfg, err := config.Load("testdata/satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	files, err := (&Target{}).Render(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lanes := string(files["satat.k8s/lanes.yaml"])
+	step := "image: " + cfg.Lanes[0].Image + "\n"
+	if strings.Count(lanes, step) != 2 {
+		t.Fatalf("want two step image lines %q", step)
+	}
+	lanes = strings.Replace(lanes, step, "image: "+PlatformPlaceholder+"\n", 1)
+	const ref = "r/satat-platform@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	got, err := withImage([]byte(lanes), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(got), "image: "+ref+"\n"); n != 2 {
+		t.Errorf("%d lines replaced, want the two entry images", n)
+	}
+	if !strings.Contains(string(got), "          image: "+PlatformPlaceholder+"\n          name: step\n") {
+		t.Error("the step container's image was replaced")
+	}
+	if _, err := withImage([]byte(strings.ReplaceAll(lanes, "name: entry", "name: other")), ref); err == nil {
+		t.Error("withImage succeeded with no entry container")
+	}
+}

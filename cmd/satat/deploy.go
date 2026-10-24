@@ -61,15 +61,41 @@ func kubeDefaults(k kubeFlags, lookup func(string) (string, bool)) kubeFlags {
 	return k
 }
 
-// targetFor returns the deploy target the config names, working in dir. For kubernetes, dir is
-// also the repo root the platform image is built from.
-func targetFor(cfg config.Config, dir string, kube kubeFlags) (deploy.Target, error) {
+// repoRoot is the first directory at or above dir with go.mod and images/worker/Dockerfile: the
+// platform image's build context.
+func repoRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	for d := abs; ; d = filepath.Dir(d) {
+		_, errMod := os.Stat(filepath.Join(d, "go.mod"))
+		_, errDocker := os.Stat(filepath.Join(d, "images", "worker", "Dockerfile"))
+		if errMod == nil && errDocker == nil {
+			return d, nil
+		}
+		if filepath.Dir(d) == d {
+			return "", fmt.Errorf("no Satat repo (go.mod and images/worker/Dockerfile) at or above %s: "+
+				"the kubernetes target builds the platform image from it", abs)
+		}
+	}
+}
+
+// targetFor returns the deploy target the config at configPath names, working in its directory.
+// The kubernetes target also needs the repo root, which it builds the platform image from.
+func targetFor(cfg config.Config, configPath string, kube kubeFlags) (deploy.Target, error) {
+	dir := filepath.Dir(configPath)
 	switch cfg.Deploy.Target {
 	case config.TargetKubernetes:
+		root, err := repoRoot(dir)
+		if err != nil {
+			return nil, err
+		}
 		kube = kubeDefaults(kube, os.LookupEnv)
 		return &kubernetes.Target{
 			Dir:      dir,
-			Root:     dir,
+			Root:     root,
+			Config:   configPath,
 			Context:  kube.Context,
 			Registry: kube.Registry,
 			Run:      kubernetes.ExecRunner{},
@@ -128,7 +154,7 @@ func runRender(args []string) error {
 		return err
 	}
 	dir := filepath.Dir(*path)
-	target, err := targetFor(cfg, dir, kubeFlags{})
+	target, err := targetFor(cfg, *path, kubeFlags{})
 	if err != nil {
 		return err
 	}
@@ -191,11 +217,11 @@ func loadTarget(name string, args []string, extra func(*flag.FlagSet)) (config.C
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	dir, err := filepath.Abs(filepath.Dir(*path))
+	abs, err := filepath.Abs(*path)
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	target, err := targetFor(cfg, dir, kube)
+	target, err := targetFor(cfg, abs, kube)
 	return cfg, target, err
 }
 
