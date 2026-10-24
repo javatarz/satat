@@ -4,7 +4,9 @@
 
 Accepted (2026-10-16). Deferred by [ADR 0026](0026-docker-first-runtime.md) (2026-10-18): Docker
 is the first runtime and this is the second launcher backend, built when Kubernetes is the next
-step. The decision below stands for that step. Settles the runtime proposal left open in
+step. The decision below stands for that step. Built for k3d by
+[ADR 0031](0031-kubernetes-adapter-and-launcher.md) (2026-10-24), without gVisor; the worker RBAC
+line below holds as written, checked with `kubectl auth can-i`. Settles the runtime proposal left open in
 [ADR 0021](0021-adopt-platform-plumbing.md) and
 [ADR 0022](0022-v2-platform-requirement-decisions.md) (NN1). Based on the agent-sandbox spike
 (#103, [findings](../research/v2/agent-sandbox-spike.md)) and the platform RAM spike (#104,

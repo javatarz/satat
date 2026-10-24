@@ -1,7 +1,9 @@
 # Kubernetes adapter and launcher, k3d first
 
 Design for deploying the Satat platform to Kubernetes, starting with k3d on a laptop, and for
-running one-shot agents there as `SandboxClaim`s. Status: **approved in outline (2026-10-23)**.
+running one-shot agents there as `SandboxClaim`s. Status: **built (2026-10-24)**, recorded in
+[ADR 0031](../../adr/0031-kubernetes-adapter-and-launcher.md). Approved in outline 2026-10-23.
+Where the build differs from this design, the text below says so under _Built:_.
 It builds on the Compose adapter of [deploy-targets.md](deploy-targets.md) (PR #129) and follows
 its "Later: k3d" section, [ADR 0024](../../adr/0024-kubernetes-agent-sandbox-runtime.md) and the
 [agent-sandbox spike](agent-sandbox-spike.md). Calls marked _(my call)_ weren't decided by the
@@ -85,7 +87,9 @@ ServiceAccount. The chart holds no `ClusterRole` at all.
 
 - `values.yaml`: the chart values that follow from `satat.yaml` (the lane namespace list and the
   worker's settings). The raw `satat.yaml` goes into the `ConfigMap` at install time
-  (`--set-file`), not into the values file.
+  (`--set-file`), not into the values file. _Built:_ it carries only `worker.secretNames`. No
+  chart template needs the lane namespace list, so it was left out; add it back if the chart ever
+  holds per-lane objects.
 - `lanes.yaml`: every lane object of decision 3 except Secrets.
 
 As on Compose, they're checked in when the config targets Kubernetes, `render --check` fails on a
@@ -151,9 +155,14 @@ A static Go binary, `cmd/satat-entry`, the step container's PID 1:
 
    ```text
    ---SATAT-RESULT-BEGIN v1---
-   <base64 of JSON: exit_code, oom_killed, timed_out, stdout, stderr, logs_truncated, output (tar), files_truncated>
+   <JSON on one line: exit_code, oom_killed, timed_out, stdout, stderr, logs_truncated, output (tar), files_truncated>
    ---SATAT-RESULT-END v1---
    ```
+
+   _Built:_ the JSON is raw, not base64 of JSON as first designed. Its byte fields (stdout,
+   stderr, the tar) are already base64 inside it, and JSON escapes newlines, so no step output
+   can look like a boundary. Encoding it again took a frame at the caps to about 10.7 MiB, over
+   kubelet's 10 MiB log rotation.
 
    It exits with the child's code (128+signal for a signal).
 
@@ -188,7 +197,7 @@ by TTL, every launch deletes its own claim, and `deploy down` removes the rest.
 
 ### 8. Smaller caps on Kubernetes _(agreed)_
 
-kubelet rotates a container log at 10 MiB, and the frame is base64. So the wrapper caps stdout and
+kubelet rotates a container log at 10 MiB, and the frame's byte fields are base64. So the wrapper caps stdout and
 stderr at 1 MiB each and the output tar at 4 MiB, at most 64 files, and sets the truncated flags.
 Docker keeps its 4 MiB and 64 MiB caps. The conformance suite stays far below either.
 
@@ -284,11 +293,23 @@ and `127.0.0.1:8888`, so the `satat agent` CLI's existing localhost defaults wor
 - **ADR 0024**: status gains "Built for k3d by ADR 0031", and its RBAC line is met as written.
 - **ADR 0028**: status notes the second adapter exists; revisit condition met.
 
+## Verified on k3d (2026-10-24)
+
+Measurements and the full list are in [ADR 0031](../../adr/0031-kubernetes-adapter-and-launcher.md#verified).
+
+- The agent-sandbox v1.0.7 field names read from source (claim → warm pool → template in one
+  namespace, `status.sandbox.name`, `Finished`) work on a cluster: the launcher passes all 13
+  conformance subtests on k3d while impersonating a ServiceAccount bound by the rendered `Role`.
+- The NodePort mapping and the registry mirror work on colima: `deploy up` pulled the platform
+  image from `localhost:5111`, and `satat agent run smoke --wait` reached Hatchet on
+  `localhost:7077` and printed `ok`.
+- Every acceptance item above: `deploy up` cold in 4 min 00 s and warm in 4.3 s with the worker
+  pod unchanged, no claim left after a run, `auth can-i` no on pods, templates and secrets, and no
+  placeholder secret value in the render, the helm release or the Secret annotations.
+
 ## Not verified yet
 
-- The agent-sandbox v1.0.7 field names were read from its source at the tag (claim → warm pool →
-  template in one namespace; claim, Sandbox and pod share one name; `status.sandbox.name`;
-  `Finished` with `PodSucceeded`/`PodFailed`). Not yet run on a cluster.
 - Whether kubelet on k3s 1.34 sets `memory.oom.group` (decides which OOM path fires). Both are
   handled.
-- That the NodePort mapping and registry mirror work on colima as described.
+- `deploy down --volumes` on a live cluster (unit-tested only), the `claude` lane on Kubernetes,
+  and `op://` secrets on the kubernetes target.
