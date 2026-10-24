@@ -408,10 +408,12 @@ func (t *Target) createToken(ctx context.Context) error {
 }
 
 // restoreToken copies the token Secret into the env file when the file has none (a fresh checkout,
-// say), for the satat agent CLI. The value is read from kubectl's stdout only and never printed.
+// say) or a different one (a recreated cluster), for the satat agent CLI. The value is read from
+// kubectl's stdout only and neither value is ever printed.
 func (t *Target) restoreToken(ctx context.Context) error {
 	envFile := t.envFile()
-	if v, ok, err := deploy.ReadKey(envFile, tokenKey); err != nil || (ok && v != "") {
+	have, _, err := deploy.ReadKey(envFile, tokenKey)
+	if err != nil {
 		return err
 	}
 	out, err := t.kubectl(ctx, nil, "get", "secret", tokenSecret, "-n", Namespace,
@@ -425,13 +427,20 @@ func (t *Target) restoreToken(ctx context.Context) error {
 		return fmt.Errorf("the token Secret %s/%s has no readable %s", Namespace, tokenSecret, tokenKey)
 	}
 	token := string(raw)
-	if _, err := deploy.RemoveKey(envFile, tokenKey); err != nil { // an empty line
+	if have == token {
+		return nil
+	}
+	if _, err := deploy.RemoveKey(envFile, tokenKey); err != nil { // an empty or stale line
 		return err
 	}
 	if _, err := deploy.EnsureKey(envFile, tokenKey, func() (string, error) { return token, nil }); err != nil {
 		return err
 	}
-	t.say("restored %s in %s from Secret %s/%s", tokenKey, envFile, Namespace, tokenSecret)
+	if have != "" {
+		t.say("replaced %s in %s: it differed from Secret %s/%s", tokenKey, envFile, Namespace, tokenSecret)
+	} else {
+		t.say("restored %s in %s from Secret %s/%s", tokenKey, envFile, Namespace, tokenSecret)
+	}
 	return nil
 }
 
@@ -617,8 +626,11 @@ func or(d, def time.Duration) time.Duration {
 	return def
 }
 
+// namespaceManifest is the platform namespace. It enforces Pod Security baseline, not restricted
+// as the lane namespaces do: Postgres and hatchet-lite need writable root filesystems.
 func namespaceManifest(name string) []byte {
-	return []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: " + name + "\n")
+	return []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: " + name + "\n" +
+		"  labels:\n    pod-security.kubernetes.io/enforce: baseline\n")
 }
 
 // secretManifest is a Secret with base64 data, for kubectl's stdin only. Not stringData: the API

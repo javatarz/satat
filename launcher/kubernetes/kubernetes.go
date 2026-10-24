@@ -47,6 +47,9 @@ const (
 	// before the launch fails. A pull error can be transient (a registry hiccup), and the kubelet
 	// retries a pull after a 10 s back-off, then 20 s: 30 s lets one retry land.
 	defaultStartGrace = 30 * time.Second
+	// maxLog bounds a step log read. A frame at the caps is about 8 MiB (1 + 1 + 4 MiB as base64)
+	// and kubelet rotates a container log at 10 MiB, so 12 MiB holds any whole frame.
+	maxLog = 12 << 20
 	// podInfoTimeout bounds reading the pod once more after the launcher's deadline.
 	podInfoTimeout = 10 * time.Second
 )
@@ -119,7 +122,7 @@ func New(dyn dynamic.Interface, core k8sclient.Interface, lanes []launcher.Lane,
 		cancelled: map[string]bool{},
 	}
 	l.logs = func(ctx context.Context, ns, pod, container string) ([]byte, error) {
-		return l.core.CoreV1().Pods(ns).GetLogs(pod, &corev1.PodLogOptions{Container: container}).DoRaw(ctx)
+		return l.core.CoreV1().Pods(ns).GetLogs(pod, logOptions(container)).DoRaw(ctx)
 	}
 	for _, o := range opts {
 		o(l)
@@ -640,6 +643,11 @@ func (l *Launcher) isCancelled(key string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.cancelled[key]
+}
+
+// logOptions reads one container's log, at most maxLog bytes.
+func logOptions(container string) *corev1.PodLogOptions {
+	return &corev1.PodLogOptions{Container: container, LimitBytes: ptr(int64(maxLog))}
 }
 
 // result fills res from the finished pod: its step container's status and the last result frame
