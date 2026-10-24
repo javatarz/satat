@@ -304,7 +304,7 @@ func (t *Target) ensurePassword(ctx context.Context) error {
 }
 
 // applySecrets applies each lane's Secret (its pass_env values) and the worker's own. A lane that
-// passes nothing gets none; its template mounts the Secret as optional.
+// passes nothing gets none, and its template mounts no Secret.
 func (t *Target) applySecrets(ctx context.Context, cfg config.Config, secrets deploy.Secrets) error {
 	pick := func(names []string) (map[string]string, error) {
 		data := map[string]string{}
@@ -621,13 +621,19 @@ func namespaceManifest(name string) []byte {
 	return []byte("apiVersion: v1\nkind: Namespace\nmetadata:\n  name: " + name + "\n")
 }
 
-// secretManifest is a Secret with stringData, for kubectl's stdin only.
-func secretManifest(ns, name string, data map[string]string) ([]byte, error) {
+// secretManifest is a Secret with base64 data, for kubectl's stdin only. Not stringData: the API
+// server turns it into data, so server-side apply's field manager would never own data.<KEY>, and
+// a key dropped from the manifest (a name removed from pass_env) would stay in the Secret.
+func secretManifest(ns, name string, values map[string]string) ([]byte, error) {
+	data := make(map[string]string, len(values))
+	for k, v := range values {
+		data[k] = base64.StdEncoding.EncodeToString([]byte(v))
+	}
 	return marshal(map[string]any{
 		"apiVersion": "v1",
 		"kind":       "Secret",
 		"metadata":   map[string]any{"name": name, "namespace": ns},
 		"type":       "Opaque",
-		"stringData": data,
+		"data":       data,
 	})
 }
