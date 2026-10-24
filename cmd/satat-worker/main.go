@@ -1,10 +1,15 @@
-// Command satat-worker is the Hatchet worker: it holds the Docker API (through the socket proxy,
-// ADR 0027) and the GitHub write token, and runs the issue workflow.
+// Command satat-worker is the Hatchet worker: it holds the GitHub write token and the means to
+// launch steps, and runs the issue workflow. deploy.target picks the launcher: on compose it holds
+// the Docker API (through the socket proxy, ADR 0027); on kubernetes it uses the in-cluster
+// config to create sandboxes, with no Docker client, reaper or Docker ping.
 //
 // Environment: the Hatchet client settings (HATCHET_CLIENT_TOKEN, HATCHET_CLIENT_HOST_PORT,
-// HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST, SATAT_PUSH_TOKEN, and every name a lane lists in
-// pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_HEALTH_ADDR (default
-// 127.0.0.1:8001) is where /livez and /readyz are served. The server starts before lane setup, so
+// HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST (compose only), SATAT_PUSH_TOKEN, and on compose every
+// name a lane lists in pass_env (on kubernetes lane secrets are not in the worker env). SATAT_CONFIG
+// overrides the path of satat.yaml. SATAT_HEALTH_ADDR (default 127.0.0.1:8001; the Helm chart sets
+// 0.0.0.0:8001 on kubernetes so the kubelet can probe) is where /livez and /readyz are served. The
+// readiness checks are the lanes, the Hatchet worker record, and the Docker ping (compose) or the
+// Kubernetes API (kubernetes). The server starts before lane setup, so
 // a setup failure is reported by /readyz (the lanes check) for the start grace before the worker
 // exits non-zero.
 //
@@ -22,14 +27,19 @@ import (
 	"os"
 	"time"
 
-	"github.com/hatchet-dev/hatchet/pkg/client/rest"
+	hatchetrest "github.com/hatchet-dev/hatchet/pkg/client/rest"
 	"github.com/hatchet-dev/hatchet/pkg/cmdutils"
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
 	"github.com/moby/moby/client"
+	"k8s.io/client-go/dynamic"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
 
 	"github.com/javatarz/satat/config"
 	"github.com/javatarz/satat/health"
+	"github.com/javatarz/satat/launcher"
 	"github.com/javatarz/satat/launcher/docker"
+	k8slauncher "github.com/javatarz/satat/launcher/kubernetes"
 	"github.com/javatarz/satat/pusher"
 	"github.com/javatarz/satat/workflows"
 )
@@ -101,15 +111,11 @@ func run() error {
 		return fmt.Errorf("SATAT_PUSH_TOKEN is not set: the worker publishes the PR, so it needs the write token")
 	}
 
-	api, err := client.New(client.FromEnv)
+	l, apiCheck, reap, closeLauncher, err := newLauncher(cfg, log)
 	if err != nil {
 		return err
 	}
-	defer api.Close()
-	l, err := docker.New(api, cfg.Lanes, docker.WithLogger(log))
-	if err != nil {
-		return err
-	}
+	defer closeLauncher()
 	ctx, cancel := cmdutils.NewInterruptContext()
 	defer cancel()
 
@@ -130,7 +136,7 @@ func run() error {
 	var lanes health.LaneSetup
 	checker := health.New(healthInterval,
 		lanes.Check(),
-		health.HatchetWorker(func(ctx context.Context) ([]rest.Worker, error) {
+		health.HatchetWorker(func(ctx context.Context) ([]hatchetrest.Worker, error) {
 			list, err := hc.Workers().List(ctx)
 			if err != nil {
 				return nil, err
@@ -140,10 +146,7 @@ func run() error {
 			}
 			return *list.Rows, nil
 		}, name, heartbeatMaxAge, time.Now),
-		health.DockerPing(func(ctx context.Context) error {
-			_, err := api.Ping(ctx, client.PingOptions{})
-			return err
-		}),
+		apiCheck,
 	)
 	srv := &http.Server{Addr: healthAddr(), Handler: checker.Handler(), ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -176,7 +179,9 @@ func run() error {
 	if longest == 0 {
 		longest = 30 * time.Minute
 	}
-	go l.RunReaper(ctx, 5*time.Minute, 2*longest+time.Hour)
+	if reap != nil {
+		go reap(ctx, 5*time.Minute, 2*longest+time.Hour)
+	}
 
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
 	wf, err := workflows.Register(hc, spec, workflows.Handler{Launcher: l, Pusher: &pusher.Pusher{Token: token}, Secrets: secretValues(cfg)})
@@ -199,6 +204,50 @@ func run() error {
 	}
 	log.Info("worker ready")
 	return <-done
+}
+
+// stepLauncher is what the worker needs of either launcher.
+type stepLauncher interface {
+	launcher.Launcher
+	Setup(ctx context.Context) error
+}
+
+// newLauncher builds the launcher for deploy.target with its API readiness check. reap is nil
+// where there is no reaper (kubernetes); closeLauncher releases the launcher's client.
+func newLauncher(cfg config.Config, log *slog.Logger) (l stepLauncher, apiCheck health.Check, reap func(ctx context.Context, interval, maxAge time.Duration), closeLauncher func(), err error) {
+	if cfg.Deploy.Target == config.TargetKubernetes {
+		rc, err := rest.InClusterConfig()
+		if err != nil {
+			return nil, health.Check{}, nil, nil, fmt.Errorf("in-cluster config: %w", err)
+		}
+		dyn, err := dynamic.NewForConfig(rc)
+		if err != nil {
+			return nil, health.Check{}, nil, nil, fmt.Errorf("dynamic client: %w", err)
+		}
+		core, err := kubernetes.NewForConfig(rc)
+		if err != nil {
+			return nil, health.Check{}, nil, nil, fmt.Errorf("kubernetes client: %w", err)
+		}
+		kl, err := k8slauncher.New(dyn, core, cfg.Lanes, k8slauncher.WithLogger(log))
+		if err != nil {
+			return nil, health.Check{}, nil, nil, err
+		}
+		return kl, health.KubeAPI(kl.Ping), nil, func() {}, nil
+	}
+	api, err := client.New(client.FromEnv)
+	if err != nil {
+		return nil, health.Check{}, nil, nil, err
+	}
+	dl, err := docker.New(api, cfg.Lanes, docker.WithLogger(log))
+	if err != nil {
+		api.Close()
+		return nil, health.Check{}, nil, nil, err
+	}
+	ping := health.DockerPing(func(ctx context.Context) error {
+		_, err := api.Ping(ctx, client.PingOptions{})
+		return err
+	})
+	return dl, ping, dl.RunReaper, func() { api.Close() }, nil
 }
 
 // secretValues are the non-empty values, from this process's environment, of every secret name in

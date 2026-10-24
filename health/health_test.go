@@ -108,6 +108,17 @@ func TestDockerPingNamesItself(t *testing.T) {
 	}
 }
 
+func TestKubeAPICheck(t *testing.T) {
+	c := KubeAPI(func(context.Context) error { return errors.New("refused") })
+	err := c.Run(context.Background())
+	if c.Name != "kubernetes" || err == nil || !strings.Contains(err.Error(), "refused") {
+		t.Fatalf("KubeAPI = %q, %v; want a failing check named kubernetes carrying the message", c.Name, err)
+	}
+	if err := KubeAPI(func(context.Context) error { return nil }).Run(context.Background()); err != nil {
+		t.Fatalf("KubeAPI with a healthy ping = %v, want nil", err)
+	}
+}
+
 func TestWaitReadyFailsAfterGrace(t *testing.T) {
 	c := New(10*time.Millisecond, down())
 	ctx, cancel := context.WithCancel(context.Background())
