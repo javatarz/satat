@@ -1,0 +1,27 @@
+# The kubernetes deploy target's golden input (TestRenderGolden).
+limits: {global: 1, per_repo: 1, per_account: 1}
+deploy:
+  target: kubernetes
+  secrets:
+    FOO: env
+    SATAT_GITHUB_TOKEN: env
+    SATAT_PUSH_TOKEN: env
+lanes:
+  open:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "echo ok"]
+    memory: 256MiB
+    cpus: 0.5
+    pids: 64
+    workspace: 64MiB
+    timeout: 1m
+    pass_env: [FOO]
+  closed:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["true"]
+    memory: 256MiB
+    cpus: 0.25
+    pids: 32
+    workspace: 32MiB
+    timeout: 30s
+    internal: true

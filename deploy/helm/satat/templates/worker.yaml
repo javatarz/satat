@@ -1,0 +1,124 @@
+# The Satat worker: runs the workflow and creates SandboxClaims in the lane namespaces, through
+# the per-lane Role that deploy up applies with the lane objects. The chart grants it nothing.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: satat-config
+  labels:
+    {{- include "satat.labels" (dict "name" "worker" "root" .) | nindent 4 }}
+data:
+  satat.yaml: {{ required "config is required (--set-file config=satat.yaml)" .Values.config | toJson }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: satat-worker
+  labels:
+    {{- include "satat.labels" (dict "name" "worker" "root" .) | nindent 4 }}
+# The worker talks to the Kubernetes API with this account's token.
+automountServiceAccountToken: true
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: satat-worker
+  labels:
+    {{- include "satat.labels" (dict "name" "worker" "root" .) | nindent 4 }}
+spec:
+  replicas: {{ .Values.worker.replicas }}
+  # Never two workers at once.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "satat.selector" (dict "name" "worker" "root" .) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "satat.labels" (dict "name" "worker" "root" .) | nindent 8 }}
+      annotations:
+        # A changed satat.yaml rolls the worker, which reads it once at start.
+        checksum/config: {{ .Values.config | sha256sum }}
+    spec:
+      serviceAccountName: satat-worker
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10002
+        runAsGroup: 10002
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: worker
+          image: {{ required "image.ref is required (the pushed platform image)" .Values.image.ref }}
+          env:
+            - name: HATCHET_CLIENT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: satat-hatchet-token
+                  key: HATCHET_CLIENT_TOKEN
+            - name: HATCHET_CLIENT_HOST_PORT
+              value: hatchet-lite:7077
+            - name: HATCHET_CLIENT_TLS_STRATEGY
+              value: none
+            # The REST client (worker health) would otherwise use the token's server URL, localhost:8888.
+            - name: HATCHET_CLIENT_SERVER_URL
+              value: http://hatchet-lite:8888
+            - name: SATAT_CONFIG
+              value: /etc/satat/satat.yaml
+            # Where the kubelet probes /livez and /readyz.
+            - name: SATAT_HEALTH_ADDR
+              value: 0.0.0.0:8001
+            - name: HOME
+              value: /tmp
+            # The worker's own secrets. No lane secret reaches the worker.
+            {{- range .Values.worker.secretNames }}
+            - name: {{ . }}
+              valueFrom:
+                secretKeyRef:
+                  name: satat-worker-secrets
+                  key: {{ . }}
+            {{- end }}
+          ports:
+            - name: health
+              containerPort: 8001
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          # Ready means Hatchet lists this worker as ACTIVE, the Kubernetes API answers and the
+          # lanes loaded.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 10
+            timeoutSeconds: 5
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 512Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          volumeMounts:
+            - name: config
+              mountPath: /etc/satat
+              readOnly: true
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: config
+          configMap:
+            name: satat-config
+        - name: tmp
+          emptyDir:
+            medium: Memory
+            sizeLimit: 512Mi

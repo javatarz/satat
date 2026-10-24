@@ -318,6 +318,26 @@ func TestHatchetEnvDefaults(t *testing.T) {
 		}
 	})
 
+	t.Run("kubernetes gets the same local endpoints", func(t *testing.T) {
+		k8s := config.Config{Deploy: config.Deploy{Target: config.TargetKubernetes}}
+		got, err := hatchetEnv(k8s, configPath, none)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want, err := hatchetEnv(compose, configPath, none)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(got) != 4 || len(got) != len(want) {
+			t.Fatalf("got %d keys, want the token and three endpoints", len(got))
+		}
+		for k, v := range want {
+			if got[k] != v {
+				t.Errorf("%s differs from the compose default", k)
+			}
+		}
+	})
+
 	t.Run("other target gets only the token", func(t *testing.T) {
 		got, err := hatchetEnv(config.Config{}, configPath, none)
 		if err != nil {

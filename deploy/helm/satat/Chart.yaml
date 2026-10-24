@@ -1,0 +1,8 @@
+apiVersion: v2
+name: satat
+description: >-
+  The Satat platform on Kubernetes: Postgres, hatchet-lite and the worker. Lane objects and
+  Secrets are applied by `satat deploy up`, not by this chart.
+type: application
+version: 0.1.0
+appVersion: "0.2"
