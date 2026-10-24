@@ -8,6 +8,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY config ./config
+COPY entry ./entry
 COPY health ./health
 COPY launcher ./launcher
 COPY pipeline ./pipeline
@@ -15,7 +16,10 @@ COPY pusher ./pusher
 COPY runner ./runner
 COPY workflows ./workflows
 COPY cmd/satat-worker ./cmd/satat-worker
+COPY cmd/satat-entry ./cmd/satat-entry
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/satat-worker ./cmd/satat-worker
+# The step pod's wrapper: static, so it runs from any lane image.
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/satat-entry ./cmd/satat-entry
 # The pusher refuses to publish unscanned changes, so the scanner ships with it.
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/zricethezav/gitleaks/v8@v8.30.1
 
@@ -23,7 +27,7 @@ FROM ${BASE_IMAGE}
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
   && rm -rf /var/lib/apt/lists/*
-COPY --from=build /out/satat-worker /out/gitleaks /usr/local/bin/
+COPY --from=build /out/satat-worker /out/satat-entry /out/gitleaks /usr/local/bin/
 RUN groupadd --gid 10002 satat && useradd --uid 10002 --gid 10002 --no-create-home --shell /usr/sbin/nologin satat
 USER 10002:10002
 ENTRYPOINT ["/usr/local/bin/satat-worker"]
