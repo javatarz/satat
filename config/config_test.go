@@ -337,10 +337,32 @@ func TestDeployDefaultsWhenAbsent(t *testing.T) {
 	}
 }
 
-func TestDeployRefusesUnknownTarget(t *testing.T) {
-	msg := parseErr(t, lane("")+"deploy:\n  target: kubernetes\n  secrets:\n    SATAT_GITHUB_TOKEN: env\n    SATAT_PUSH_TOKEN: env\n")
-	if !strings.Contains(msg, "target") {
-		t.Fatalf("error should name target: %s", msg)
+func TestDeployTargetUnknown(t *testing.T) {
+	msg := parseErr(t, lane("")+"deploy:\n  target: nomad\n  secrets:\n    SATAT_GITHUB_TOKEN: env\n    SATAT_PUSH_TOKEN: env\n")
+	if !strings.Contains(msg, `"compose" or "kubernetes"`) {
+		t.Fatalf("error should name the valid targets: %s", msg)
+	}
+}
+
+func kubernetesYAML(laneExtra string) string {
+	return strings.Replace(lane(laneExtra), "  a:\n", "  x:\n", 1) +
+		"deploy:\n  target: kubernetes\n  secrets:\n    SATAT_GITHUB_TOKEN: env\n    SATAT_PUSH_TOKEN: env\n"
+}
+
+func TestDeployTargetKubernetes(t *testing.T) {
+	c, err := Parse(strings.NewReader(kubernetesYAML("    command: [\"sh\", \"-c\", \"true\"]\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Deploy.Target != TargetKubernetes {
+		t.Fatalf("target = %q, want kubernetes", c.Deploy.Target)
+	}
+}
+
+func TestKubernetesNeedsLaneCommand(t *testing.T) {
+	msg := parseErr(t, kubernetesYAML(""))
+	if !strings.Contains(msg, `lane "x"`) || !strings.Contains(msg, "command") {
+		t.Fatalf("error should name the lane and command: %s", msg)
 	}
 }
 

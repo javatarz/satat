@@ -55,7 +55,9 @@ lanes:
   # Docker that built it can run this lane; repin it from a registry when one is set up.
   claude:
     image: satat-claude@sha256:5d0a2935e81590e39b09bb3ad74298e05281080f9871c2f359a048389062f0c9
-    # The image's entrypoint is the Satat runner; no command override.
+    # The Satat runner, the image's entrypoint (images/claude/Dockerfile). Stated explicitly because
+    # the kubernetes target needs a command on every lane.
+    command: ["/usr/local/bin/satat-runner"]
     memory: 3GiB
     cpus: 2
     pids: 512
