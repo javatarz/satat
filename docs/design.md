@@ -104,9 +104,11 @@ Ports bind to `127.0.0.1`. All images are pinned by digest.
 
 A `Step` carries the run, step name, lane and non-secret input (placed at
 `/etc/satat/input.json`). A `Result` carries exit code, logs and the files from `$SATAT_OUTPUT`.
-Workflows and the runner never see which backend is behind it. Docker is the only backend. A
-Kubernetes backend is planned and must pass `launcher/conformance`
-([ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md)).
+Workflows and the runner never see which backend is behind it. Docker is the default backend. A
+Kubernetes backend (`launcher/kubernetes`) runs each step as a one-shot agent-sandbox
+`SandboxClaim` on k3d and passes the same `launcher/conformance` suite
+([ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md)). The rest of this section describes
+Docker.
 
 **Lanes.** A lane is the fixed shape a step runs in: image, user, limits, network, timeout and
 the names of the environment variables it may receive. Lanes come from `satat.yaml` only. Issue
@@ -248,19 +250,58 @@ go test -p 1 ./...          # needs Docker
 go test -short -p 1 ./...   # skips the tests that start containers
 ```
 
-**The platform.** Needs Docker (colima and Docker Desktop are what the docs cover), `gh`, and
-1Password CLI for `scripts/compose-up.sh`. The steps below follow the scripts' own comments; the
-[prototype notes](research/v2/docker-prototype.md) record runs of them.
+**The platform.** `satat deploy up` brings it up on Compose
+([ADR 0028](adr/0028-infrastructure-adapter-compose-first.md)). It needs Docker with the `compose`
+plugin (colima and Docker Desktop are what the docs cover) and one source for the secrets: the
+1Password CLI `op`, signed in, for the `op://` references in `satat.yaml`'s `deploy.secrets`, or
+`env` references that read the variable from your shell. The [prototype notes](research/v2/docker-prototype.md)
+record runs of it.
 
-1. Copy `.env.example` to `.env` and set `POSTGRES_PASSWORD`.
-2. Build the Claude lane image with `scripts/build-claude-image.sh`. It prints a digest-pinned
-   reference; put it in the `claude` lane's `image` in `satat.yaml`.
-3. Start Hatchet, then run `scripts/hatchet-token.sh` once. It writes `HATCHET_CLIENT_TOKEN` to
-   `.env` without printing it.
-4. Start everything with `scripts/compose-up.sh`. It takes the Claude, read and write tokens from
-   1Password and never writes them to disk.
-5. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
+1. Build the Claude lane image and push it with `SATAT_REGISTRY=<registry> scripts/build-claude-image.sh`.
+   It prints a reference pinned by manifest digest; put it in the `claude` lane's `image` in
+   `satat.yaml`.
+2. Run `go run ./cmd/satat deploy up`. It creates `POSTGRES_PASSWORD` and the Hatchet token in
+   `.env` if they're absent, resolves the other secrets into the child process only, starts the
+   stack and waits until the worker reports ready. Running it again changes nothing that is already
+   healthy. `satat deploy status` shows each service and the worker's readiness; `satat deploy down`
+   stops it and removes any agent containers left behind. `deploy down --volumes` also deletes
+   the platform's data and the Hatchet token in `.env`, which is dead without that data.
+
+   `deploy up` always runs the worker's `compose up`, so a changed worker is recreated, and agents
+   running at that moment are orphaned: `agent rm` then reports them cancelled while their
+   containers keep running, with their tokens, until they exit, the reaper removes them or
+   `deploy down`. `deploy up` warns when agents are running; run it when none are.
+3. Check it with `go run ./cmd/satat agent run smoke --wait`. It starts a one-shot agent on the
+   `smoke` lane through Hatchet and prints the result ([ADR 0030](adr/0030-on-demand-agent-runs.md)).
+   `agent ls` lists queued and running runs, and `agent rm <run>` cancels one. The agent commands
+   use the Hatchet SDK's `HATCHET_CLIENT_*` variables and fill in any that are unset: the token
+   from the `.env` beside `--config`, and for `deploy.target: compose` or `kubernetes` the ports the
+   stack publishes on this machine (`localhost:7077`, TLS `none`, `http://localhost:8888`). A variable
+   you set wins. The token is never printed.
+4. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.
+
+`scripts/hatchet-token.sh` and `scripts/compose-up.sh` still work but duplicate `deploy up`.
+
+### Run it on k3d
+
+The same platform runs on a local k3d cluster, with every agent as a one-shot `SandboxClaim`
+([ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md)). It needs Docker, `kubectl` and `helm`.
+
+1. Run `scripts/k3d-up.sh`. It downloads a pinned k3d into `docs/scratch/bin`, creates the cluster
+   `satat` (kube context `k3d-satat`) with a registry on `localhost:5111` and agent-sandbox, and
+   prints `SATAT_REGISTRY=localhost:5111`. Running it again changes nothing.
+2. Set `deploy.target: kubernetes` in a copy of `satat.yaml` inside the repo (under `docs/scratch/`,
+   say: `deploy up` builds the platform image from the repo above it). Every lane needs a `command`.
+3. Run `go run ./cmd/satat deploy render --config <copy>`. It writes `satat.k8s/values.yaml` and
+   `satat.k8s/lanes.yaml` next to the copy.
+4. Run `SATAT_REGISTRY=localhost:5111 go run ./cmd/satat deploy up --config <copy>`. It builds and
+   pushes the platform image, applies the lane objects and Secrets, installs the chart in
+   `deploy/helm/satat/` and waits for the worker. It acts on the context `k3d-satat` unless
+   `--context` or `SATAT_KUBE_CONTEXT` names another, never on the shell's current one.
+5. Check it with `go run ./cmd/satat agent run smoke --wait --config <copy>`.
+
+`deploy status` and `deploy down [--volumes]` work as on Compose.
 
 Never put token values in the repo ([AGENTS.md](../AGENTS.md#secrets)).
 
@@ -272,12 +313,12 @@ Do not read these as features. They are decided or planned, not present:
 |---|---|
 | Webhook intake that starts a run when an issue is labelled (slice 6). Today a human runs `satat-enqueue`. | [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. | #120 |
-| Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
+| Kubernetes beyond k3d: real k3s on a VM, a managed cluster, gVisor and per-cloud provisioning | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md), [AGENTS.md](../AGENTS.md) |
 | Egress proxy with a hostname allowlist and credential injection, so a step holds no token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
 | GitHub App identity, token broker and signed commits. Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
 | LiteLLM in the stack. The Claude lane talks to Anthropic directly; the `gateway/` directory is a config template carried from v0.1. | [ADR 0026](adr/0026-docker-first-runtime.md), [ADR 0002](adr/0002-litellm-model-routing.md) |
-| The full `satat.yaml` spec. Only `limits` and `lanes` exist. | #108 |
-| Publishing the Claude lane image to GHCR. It is built locally. | [ADR 0026](adr/0026-docker-first-runtime.md) |
+| The full `satat.yaml` spec. Only `limits`, `lanes` and `deploy` exist. | #108 |
+| Publishing the Claude lane image to GHCR. The build script pushes to the registry you name; the `satat.yaml` pin has not been moved to one yet. | [ADR 0026](adr/0026-docker-first-runtime.md) |
 | Back-off on Claude rate limits, and a restart test of adoption on the real stack | [docker-prototype.md](research/v2/docker-prototype.md) |
 | Inner loops (lint, judge, reviewer) before the draft PR | [inner loop](roadmap/inner-loop.md) |
 | Trusting agent PRs without human approval | #124, [CONTRIBUTING.md](../CONTRIBUTING.md) |

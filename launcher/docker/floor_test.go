@@ -181,8 +181,29 @@ func TestInputNeverReachesTheRequest(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(strings.Join(r.config.Env, "\n")+strings.Join(r.config.Cmd, " ")+string(r.host.NetworkMode), "SECRET-MARKER") {
+	if strings.Contains(strings.Join(r.config.Env, "\n")+strings.Join(r.config.Entrypoint, " ")+strings.Join(r.config.Cmd, " ")+string(r.host.NetworkMode), "SECRET-MARKER") {
 		t.Error("step input leaked into the create request")
+	}
+}
+
+func TestLaneCommandReplacesTheEntrypoint(t *testing.T) {
+	l := testLane()
+	l.Command = []string{"sh", "-c", "id"}
+	lane, err := normalizeLane(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := buildRequest(lane, launcher.Step{Run: "r", Name: "s", Lane: "t"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(r.config.Entrypoint, " ") != "sh -c id" || len(r.config.Cmd) != 0 {
+		t.Fatalf("entrypoint = %v, cmd = %v", r.config.Entrypoint, r.config.Cmd)
+	}
+	lane, _ = normalizeLane(testLane())
+	r, _ = buildRequest(lane, launcher.Step{Run: "r", Name: "s", Lane: "t"}, nil)
+	if len(r.config.Entrypoint) != 0 || len(r.config.Cmd) != 0 {
+		t.Fatalf("no lane command must keep image defaults: %v %v", r.config.Entrypoint, r.config.Cmd)
 	}
 }
 
@@ -199,5 +220,18 @@ func TestPassEnvMustBeSet(t *testing.T) {
 	}
 	if err != nil && strings.Contains(err.Error(), "value") {
 		t.Error("the error must not carry secret values")
+	}
+}
+
+// Compose treats anything labelled com.docker.compose.* as its own and would prune or recreate it.
+func TestCreateRequestHasNoComposeLabels(t *testing.T) {
+	r := okRequest(t)
+	for k := range r.config.Labels {
+		if strings.HasPrefix(k, "com.docker.compose.") {
+			t.Errorf("compose label %q", k)
+		}
+	}
+	if r.config.Labels[labelManaged] != "true" || labelManaged != "satat.managed" {
+		t.Errorf("labels: %v (managed key %q)", r.config.Labels, labelManaged)
 	}
 }
