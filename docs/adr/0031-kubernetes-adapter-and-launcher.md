@@ -46,21 +46,26 @@ change.
   | Cluster `satat`, registry `satat-registry` on `127.0.0.1:5111`, agent-sandbox v1.0.7 | `scripts/k3d-up.sh` (pinned, idempotent, no secrets) |
   | Lane namespaces, `SandboxTemplate`s, `SandboxWarmPool`s, the worker's per-lane `Role` and `RoleBinding` | `deploy up`: `lanes.yaml` through `kubectl apply` |
   | Postgres, hatchet-lite, worker `Deployment`, `ServiceAccount` and the `satat.yaml` `ConfigMap` | `deploy up`: the chart in `deploy/helm/satat/` through `helm upgrade --install` |
-  | Lane Secrets (`satat-lane-secrets`, one per lane with `pass_env`) and the worker Secret | `deploy up`: server-side `kubectl apply` of a manifest on stdin |
+  | Lane Secrets (`satat-lane-secrets`, one per lane with `pass_env`) and the worker Secret | `deploy up`: server-side `kubectl apply` (field manager `satat`) of a manifest with base64 `data` on stdin |
   | Postgres password Secret | `deploy up`: `kubectl create` on stdin, once, never replaced |
   | Hatchet token Secret | `deploy up`: minted once with `hatchet-admin` in the hatchet-lite pod |
 
   Secret values reach `kubectl` on stdin only, never argv or disk. Server-side apply leaves no
-  last-applied annotation holding the values. The token is also written to the `.env` beside
-  `satat.yaml`, for the `satat agent` CLI. If that file has no token but the Secret exists, `up`
-  restores it from the Secret. The network policies are not separate objects: agent-sandbox
+  last-applied annotation holding the values. The manifests carry `data`, not `stringData`: the
+  API server turns `stringData` into `data`, so the field manager would never own `data.<KEY>`
+  and a key removed from `pass_env` would stay in the Secret. With `data` it is pruned. The token
+  is also written to the `.env` beside `satat.yaml`, for the `satat agent` CLI. If that file has
+  no token, or one that differs from the Secret's, `up` replaces it from the Secret, printing
+  neither. Namespace `satat` enforces Pod Security `baseline`, not `restricted`: Postgres and
+  hatchet-lite need writable root filesystems. The network policies are not separate objects: agent-sandbox
   creates them from each template. The chart has no `ClusterRole` and grants the worker nothing.
 - **A lane on Kubernetes.** Per lane `L`, in namespace `satat-lane-L`:
   - the namespace enforces Pod Security `restricted`;
   - the `SandboxTemplate` sets `envVarsInjectionPolicy: Disallowed`, `automountServiceAccountToken:
-    false`, `restartPolicy: Never`, `dnsPolicy: ClusterFirst`, `runAsNonRoot` with the lane's
-    numeric uid and gid, `fsGroup` the gid, seccomp `RuntimeDefault`, and on both containers
-    `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]`.
+    false`, `enableServiceLinks: false`, `restartPolicy: Never`, `dnsPolicy: ClusterFirst`,
+    `runAsNonRoot` with the lane's numeric uid and gid, `fsGroup` the gid, seccomp
+    `RuntimeDefault`, and on both containers `readOnlyRootFilesystem`,
+    `allowPrivilegeEscalation: false` and `capabilities.drop: [ALL]`.
     Memory and CPU requests equal limits. `/workspace`, `/tmp`, `/etc/satat` and `/satat` are
     memory-backed `emptyDir`s with size limits. `activeDeadlineSeconds` is the lane timeout plus
     90 s. `runtimeClassName` is set only when the lane says `runsc`;
@@ -73,16 +78,25 @@ change.
   - the claim's run, step and input travel as pod annotations, exposed by a `downwardAPI` volume at
     `/etc/podinfo`. The step container's own env has only `HOME`, `SATAT_INPUT` and
     `SATAT_OUTPUT`;
-  - the lane Secret is mounted read-only at `/run/satat/secrets`, one file per `pass_env` name.
+  - the lane Secret is mounted read-only at `/run/satat/secrets` with `items` for the lane's
+    `pass_env` keys only, so a stray key in the Secret is never visible. The volume is optional,
+    so a missing key or Secret reaches `satat-entry`, which fails the step with 125, rather than
+    the kubelet failing the mount and the pod never starting. A lane without `pass_env` mounts no
+    Secret.
 
   `ValidateTemplate` (`launcher/kubernetes/objects.go`) is the floor for a rendered template, the
   way `ValidateRequest` is for a Docker create request. It checks the finished object, returns
   every violation, and runs on every render.
 - **`satat-entry`** (`cmd/satat-entry`) is the step container's PID 1:
-  1. it dials the in-cluster Postgres Service, which every lane's policy denies, every 200 ms
-     until the dial is refused or times out. If it still connects after 30 s it fails closed with
-     exit 125 and a frame that says so;
-  2. it reads each `--pass-env` secret from its mounted file. A missing one fails the step;
+  1. it dials `kubernetes.default.svc.cluster.local:443`, the API server, every 200 ms until the
+     dial is refused or times out. That Service always has an endpoint; on k3d it is the node IP
+     in `172.16.0.0/12`, which every lane's policy denies. If it still connects after 30 s it
+     fails closed with exit 125 and a frame that says so. On a cluster whose API endpoint is a
+     public IP an open lane may reach it, so the probe never sees it blocked and every step fails
+     closed: the safe direction, but such a cluster needs another probe target;
+  2. it reads each `--pass-env` secret from its mounted file. A missing or empty one fails the
+     step with exit 125 and a frame whose stderr names the variable, before the command runs, as
+     Docker refuses an unset or empty `pass_env` variable;
   3. it copies the input to `/etc/satat/input.json`, creates `$SATAT_OUTPUT`, and sets `SATAT_RUN`
      and `SATAT_STEP` from the annotations;
   4. it runs the command with stdout and stderr captured separately, forwards SIGTERM, and at
@@ -109,8 +123,13 @@ change.
   its labels match, and refuses otherwise. Calls for one step share one execution in-process. It
   watches the one claim and polls its pod until the pod is terminal, the step is cancelled or the
   launcher's deadline passes (lane timeout + 90 s + 30 s). It reads the exit code and `OOMKilled`
-  from the pod and the frame from `pods/log`, and on every exit path deletes the claim with
-  foreground propagation and waits until it's gone. `Cancel` marks the step and deletes its claim.
+  from the pod and the frame from `pods/log` (at most 12 MiB), and on every exit path deletes the
+  claim with foreground propagation and waits until it's gone. `Cancel` marks the step and deletes
+  its claim. A step or init container waiting with `ErrImagePull`, `ImagePullBackOff`,
+  `InvalidImageName` or `CreateContainerConfigError` fails the launch with the container, reason
+  and message once seen on two checks in a row spanning 30 s (one kubelet pull retry, since a pull
+  error can be transient; `InvalidImageName` needs only the two checks). When the deadline passes
+  on a pod still `Pending`, the `TimedOut` result's stderr says why it never started.
 - **Worker RBAC, exactly.** In each lane namespace the worker's ServiceAccount
   `satat:satat-worker` may `create`, `get`, `watch` and `delete` `sandboxclaims`, and `get` `pods`
   and `pods/log`. Nothing else, nothing cluster-wide, and no `list`. So there is no reaper sweep
@@ -150,6 +169,16 @@ change.
 - A step's output is capped lower on Kubernetes than on Docker. The conformance suite stays far
   below either.
 - The launcher's deadline starts at claim creation, so image pull and cold start count against it.
+- Rotating a worker Secret value doesn't roll the worker: `deploy up` applies the Secret, but the
+  pod spec is unchanged, so the worker keeps the old value until
+  `kubectl --context k3d-satat -n satat rollout restart deploy/satat-worker`. Lane Secrets are
+  read by each new step pod, so they take effect on the next step.
+- A lane Secret applied with `stringData` before this change has unowned keys; the first
+  `deploy up` that applies `data` with every key takes them over, after which dropped keys are
+  pruned. A key dropped before that first apply stays, but is never mounted.
+- `scripts/k3d-up.sh` gaps: with a custom registry config it still creates `satat-registry` and
+  prints `localhost:5111`; it has no `sha256sum` fallback (`shasum -a 256`); and it fetches the
+  agent-sandbox manifest without checking a checksum.
 
 ## Verified
 
@@ -185,6 +214,16 @@ On k3d (`rancher/k3s:v1.34.12-k3s1`, k3d v5.9.0, agent-sandbox v1.0.7) in colima
 - The agent-sandbox v1.0.7 field names the design read from source (claim to warm pool to
   template in one namespace, `status.sandbox.name`, the `Finished` condition) work on a cluster.
 - The NodePort mapping and the registry mirror work on colima.
+- After the final review fixes: a Secret applied server-side with `stringData` keys `A` and `B`,
+  then with only `A`, kept `B`; with `data` the second apply removed `B`. A Secret first applied
+  with `stringData` and then with `data` holding both keys was taken over, and dropping `B`
+  afterwards removed it.
+- After the final review fixes, the conformance suite (13 subtests), the RBAC test and the
+  `pass_env` test (`***` in stdout with a stray key in the lane Secret, and exit 125 naming the
+  variable once the key is gone) pass on k3d with the API-server probe, in 86 s. `deploy up` and
+  `satat agent run smoke --wait` (status `ok`) pass too, and a server dry-run of the `restricted`
+  label on namespace `satat` reports no violating pods, so the chart's pods are admitted under
+  `baseline`.
 
 ## Not verified
 
@@ -192,6 +231,9 @@ On k3d (`rancher/k3s:v1.34.12-k3s1`, k3d v5.9.0, agent-sandbox v1.0.7) in colima
 - The `claude` lane on Kubernetes, including the entrypoint override on the real `claude` image.
 - 1Password `op://` secrets on the kubernetes target.
 - gVisor (`runsc`) on k3d or anywhere for this adapter, and real k3s on a VM.
+- The probe on a cluster whose API endpoint is a public IP (every step would fail closed), or
+  whose CNI exempts traffic to the node from network policy.
+- Rotating a worker Secret and restarting the worker by hand.
 - Network plugins that drop blocked packets or answer `EHOSTUNREACH` rather than refusing. The
   probe treats a refusal or a dial timeout as blocked and keeps waiting on any other error, so
   such a plugin would fail every step closed after 30 s.
