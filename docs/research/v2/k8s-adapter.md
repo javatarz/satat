@@ -136,7 +136,8 @@ Docker create request: it checks the finished object, not the lane, and returns 
 A static Go binary, `cmd/satat-entry`, the step container's PID 1:
 
 1. **Waits out the network-policy gap, fail closed.** It dials a probe address that every lane's
-   policy denies (the in-cluster Postgres service, `--probe`) until the connection is refused,
+   policy denies (the API server, `kubernetes.default.svc.cluster.local:443`, `--probe`; ADR 0031
+   moved it off the in-cluster Postgres service) until the connection is refused,
    every 200 ms for up to 30 s. If it still connects at the deadline it exits 125 with a framed
    result whose stderr says so. Blocked connections are refused (spike finding 2), so a refusal
    is the signal.
