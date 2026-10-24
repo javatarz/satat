@@ -5,6 +5,17 @@
 # Env:   SATAT_K3D_REGISTRY_CONFIG  path to a registries.yaml to use instead of the generated one
 # Takes no secrets.
 set -euo pipefail
+
+# Resolve the optional registries.yaml before changing directory.
+registry_config_file=""
+if [ -n "${SATAT_K3D_REGISTRY_CONFIG:-}" ]; then
+  [ -f "$SATAT_K3D_REGISTRY_CONFIG" ] || {
+    printf 'error: SATAT_K3D_REGISTRY_CONFIG file not found: %s\n' "$SATAT_K3D_REGISTRY_CONFIG" >&2
+    exit 1
+  }
+  registry_config_file="$(cd "$(dirname "$SATAT_K3D_REGISTRY_CONFIG")" && pwd)/$(basename "$SATAT_K3D_REGISTRY_CONFIG")"
+fi
+
 cd "$(dirname "$0")/.."
 
 K3D_VERSION=v5.9.0
@@ -13,6 +24,7 @@ AGENT_SANDBOX_URL=https://github.com/kubernetes-sigs/agent-sandbox/releases/down
 CLUSTER=satat
 REGISTRY=satat-registry
 REGISTRY_PORT=5111
+API_PORT=6550
 CONTEXT=k3d-$CLUSTER
 BIN_DIR=docs/scratch/bin
 K3D="$BIN_DIR/k3d"
@@ -30,7 +42,7 @@ install_k3d() {
   log "installing k3d $K3D_VERSION ($asset) into $BIN_DIR"
   mkdir -p "$BIN_DIR"
   tmp="$(mktemp -d)"
-  trap 'rm -rf "$tmp"' RETURN
+  trap 'rm -rf "$tmp"' EXIT
   curl -fsSL -o "$tmp/$asset" "$base/$asset"
   curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
   local want got
@@ -48,12 +60,30 @@ check_port_free() {
   if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then die "host port $port is already in use"; fi
 }
 
-registry_exists() { "$K3D" registry list 2>/dev/null | awk '{print $1}' | grep -qx "k3d-$REGISTRY"; }
-cluster_exists() { "$K3D" cluster list 2>/dev/null | awk '{print $1}' | grep -qx "$CLUSTER"; }
+registry_exists() {
+  local out
+  out="$("$K3D" registry list --no-headers 2>/dev/null || true)"
+  [[ $'\n'"$out" == *$'\n'"k3d-$REGISTRY "* ]]
+}
+
+# cluster_state prints "absent", "running" or "stopped".
+cluster_state() {
+  local out line servers fields
+  out="$("$K3D" cluster list --no-headers 2>/dev/null || true)"
+  while read -r line; do
+    read -ra fields <<<"$line"
+    if [ "${fields[0]:-}" = "$CLUSTER" ]; then
+      servers="${fields[1]:-0/0}"
+      if [ "${servers%/*}" = "${servers#*/}" ] && [ "${servers%/*}" != 0 ]; then echo running; else echo stopped; fi
+      return
+    fi
+  done <<<"$out"
+  echo absent
+}
 
 registry_config() {
-  if [ -n "${SATAT_K3D_REGISTRY_CONFIG:-}" ]; then
-    printf '%s\n' "$SATAT_K3D_REGISTRY_CONFIG"
+  if [ -n "$registry_config_file" ]; then
+    printf '%s\n' "$registry_config_file"
     return
   fi
   mkdir -p docs/scratch/k3d
@@ -72,9 +102,11 @@ docker info >/dev/null 2>&1 || die "docker is not reachable"
 
 # Only the objects about to be created need their host ports free.
 if ! registry_exists; then check_port_free "$REGISTRY_PORT"; fi
-if ! cluster_exists; then
+state="$(cluster_state)"
+if [ "$state" = absent ]; then
   check_port_free 7077
   check_port_free 8888
+  check_port_free "$API_PORT"
 fi
 
 if registry_exists; then
@@ -84,12 +116,17 @@ else
   "$K3D" registry create "$REGISTRY" --port "127.0.0.1:$REGISTRY_PORT"
 fi
 
-if cluster_exists; then
+if [ "$state" = running ]; then
   log "cluster $CLUSTER exists, skipping"
+elif [ "$state" = stopped ]; then
+  log "starting stopped cluster $CLUSTER"
+  "$K3D" cluster start "$CLUSTER" --wait
 else
   log "creating cluster $CLUSTER"
   "$K3D" cluster create "$CLUSTER" \
     --image "$K3S_IMAGE" \
+    --api-port "127.0.0.1:$API_PORT" \
+    --kubeconfig-switch-context=false \
     -p "127.0.0.1:7077:30077@server:0" \
     -p "127.0.0.1:8888:30888@server:0" \
     --registry-use "k3d-$REGISTRY:$REGISTRY_PORT" \
