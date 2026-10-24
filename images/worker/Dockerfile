@@ -8,6 +8,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY config ./config
+COPY health ./health
 COPY launcher ./launcher
 COPY pipeline ./pipeline
 COPY pusher ./pusher

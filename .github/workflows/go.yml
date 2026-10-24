@@ -2,10 +2,26 @@ name: Go
 
 on:
   pull_request:
-    paths: ["**.go", "go.mod", "go.sum", "compose.yaml", "scripts/check-compose-socket.sh", ".github/workflows/go.yml"]
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - compose.yaml
+      - satat.yaml
+      - "deploy/**"
+      - scripts/check-compose-socket.sh
+      - .github/workflows/go.yml
   push:
     branches: [main]
-    paths: ["**.go", "go.mod", "go.sum", "compose.yaml", "scripts/check-compose-socket.sh", ".github/workflows/go.yml"]
+    paths:
+      - "**.go"
+      - go.mod
+      - go.sum
+      - compose.yaml
+      - satat.yaml
+      - "deploy/**"
+      - scripts/check-compose-socket.sh
+      - .github/workflows/go.yml
 
 permissions:
   contents: read
@@ -25,6 +41,8 @@ jobs:
         run: test -z "$(gofmt -l .)"
 
       - run: go vet ./...
+
+      - run: go run ./cmd/satat deploy render --check
 
       # Includes the launcher conformance suite, which starts real containers on the runner's Docker.
       # -p 1: the Docker-backed tests of several packages share one daemon and reap by label, so

@@ -133,3 +133,43 @@ runs the same pipeline as the hand trigger, started by an event (`satat-enqueue`
 - **Not done:** the webhook intake (slice 6), retries (set to 0 because the launcher adopts a re-delivered step),
   the Claude-lane back-off, and a restart test (kill the worker mid-step and watch the next attempt adopt it) on
   the real stack.
+
+## Deploy adapter (2026-10-23)
+
+`satat deploy up`, the worker health endpoints and `satat agent run|ls|rm`
+([ADR 0028](../../adr/0028-infrastructure-adapter-compose-first.md),
+[0029](../../adr/0029-worker-health.md), [0030](../../adr/0030-on-demand-agent-runs.md)) were run on
+the Compose stack on colima. These runs used a scratch copy of `satat.yaml` **without the `claude`
+lane** (its image is a local-only digest, so the worker can't pull it on a clean daemon) and
+**placeholder secrets** supplied as `env` references. Only the `smoke` and `sleep` lanes ran. No real
+token, 1Password item or GitHub call was involved, so nothing below says anything about the `claude`
+lane.
+
+| Measurement | Result |
+|---|---|
+| Cold `deploy up` (no containers or volumes, includes the worker image build) | 3 min 32 s, all services healthy |
+| Warm `deploy up` (before the always-roll-out change; see the notes) | 0.3 s: only `ps`, no new Hatchet token, no container restarted |
+| Time to unready after stopping hatchet-lite | about 8 s (still ready at 4 s, which is inside the 12 s heartbeat age) |
+| Recovery after starting hatchet-lite again | about 15 s while the worker record went INACTIVE, then ACTIVE. Restart count stayed 0 |
+| `agent rm` on a running `sleep` agent | container gone within 4 s |
+| Global cap of 2, three `sleep` agents | two RUNNING, one QUEUED |
+| `docker compose up --remove-orphans` with two agents running | both agent containers left running |
+| Warm `deploy up` with the worker already running | worker container ID and `StartedAt` unchanged |
+
+Notes:
+
+- The 0.3 s warm run was taken before `Up` was changed to always run `compose up -d --build worker`.
+  The worker ID and `StartedAt` check in the last row was taken after that change, so together they
+  cover the final behaviour.
+- The global-cap run used a scratch config with `per_repo`, `per_account` and lane `max_runs` raised
+  to 3. Agent runs share the repo key `adhoc`, so the shipped defaults (all 1) allow only one
+  on-demand agent at a time ([ADR 0030](../../adr/0030-on-demand-agent-runs.md)).
+- Agents that were running when the worker container was recreated were orphaned from the new
+  worker. Cancelling them in Hatchet did not stop their containers; `deploy down` reaped them
+  ("removed 2 agent containers"). By design (`cmd/satat-worker`), the reaper removes agent containers older than twice the longest lane timeout plus an hour; that wait was not measured.
+- **Idle RAM with the health server was not measured.** The health server is one goroutine and one
+  REST call every 5 s, but there is no number to record here.
+- Not run: the `claude` lane and issue runs with real secrets, a failed agent run whose output
+  Hatchet dropped (`agent run --wait` then prints the run's error and exits 1; unit-tested only),
+  paging of `agent ls` and run lookup against a busy tenant (unit-tested against a fake), and the
+  worker heartbeat while an agent uses most of the VM's memory.

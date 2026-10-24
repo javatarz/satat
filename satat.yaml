@@ -13,10 +13,25 @@ limits:
   per_repo: 1
   per_account: 1
 
+# Where Satat is deployed and where each secret comes from. Every name a lane passes (pass_env) and
+# every secret the worker uses must be listed, so a missing one fails at load, not at the first
+# run. Values are references, never secrets: "op://..." is a 1Password item resolved when
+# `satat deploy up` runs, and "env" takes the variable from the caller's environment. Resolved
+# values go into the child process environment only, never to the repo or the host's working
+# tree (dockerd keeps the worker's container environment inside the Docker VM).
+deploy:
+  target: compose
+  secrets:
+    CLAUDE_CODE_OAUTH_TOKEN: op://Satat Harness/claude-code-oauth-token
+    SATAT_GITHUB_TOKEN: op://Satat Harness/satat-sandbox-read
+    # The worker's push token (SATAT_PUSH_TOKEN), write access to the sandbox repo. No lane gets it.
+    SATAT_PUSH_TOKEN: op://Satat Harness/satat-sandbox-write
+
 lanes:
-  # Claude Code on the subscription token (slice 4). The image is built locally:
-  #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
-  # Publishing it to GHCR comes later. Run it with: go run ./cmd/satat-step --repo ... --issue N
+  # Claude Code on the subscription token (slice 4). Build and push the image to a registry:
+  #   SATAT_REGISTRY=localhost:5000 scripts/build-claude-image.sh
+  # It prints `image: <registry>/satat-claude@sha256:...` (the registry's manifest digest); paste
+  # that reference below. Run it with: go run ./cmd/satat-step --repo ... --issue N
   claude:
     image: satat-claude@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12
     # The image's entrypoint is the Satat runner; no command override.
@@ -55,6 +70,19 @@ lanes:
     # when the egress proxy exists and the lane's network should have no route out except to
     # containers attached to it.
     internal: false
+
+  # Idle lane for exercising on-demand agent runs (`satat agent`): sleeps until cancelled or timed
+  # out. No pass_env and no network.
+  sleep:
+    image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
+    command: ["sh", "-c", "sleep 600"]
+    # 128MiB, not 64: the floor needs workspace plus the 64MiB /tmp to fit under the limit.
+    memory: 128MiB
+    cpus: 0.25
+    pids: 16
+    workspace: 8MiB
+    timeout: 15m
+    internal: true
 
   # Runs a command over a set of files with no network. Used by the eval harness to run held-out
   # tests; the step input is {"files": {path: base64}, "command": [...]}.

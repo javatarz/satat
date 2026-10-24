@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -29,6 +30,46 @@ type Config struct {
 	Accounts map[string]string
 	// LaneMaxRuns is each lane's own cap (lane.max_runs), by lane name.
 	LaneMaxRuns map[string]int
+	// Deploy says where Satat is deployed and where each secret comes from.
+	Deploy Deploy
+}
+
+// Deploy is the optional deploy section. Secrets is nil when the section is absent, so a caller
+// that needs the map can tell "not configured" from "configured empty".
+type Deploy struct {
+	Target string
+	// Secrets maps a secret name to where its value comes from: SecretFromEnv, or an op://
+	// reference. Values are references, never secrets.
+	Secrets map[string]string
+}
+
+// SecretFromEnv says a secret's value is already in the caller's environment.
+const SecretFromEnv = "env"
+
+// WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps.
+var WorkerSecrets = []string{"SATAT_PUSH_TOKEN"}
+
+// WorkerEnv is the worker's own static environment in compose.yaml. A lane may not pass any of
+// these to its step: that would hand an agent the Hatchet token or the worker's Docker and config
+// settings, and duplicate the key in the worker's compose environment.
+var WorkerEnv = []string{
+	"HATCHET_CLIENT_TOKEN", "HATCHET_CLIENT_HOST_PORT", "HATCHET_CLIENT_TLS_STRATEGY",
+	"HATCHET_CLIENT_SERVER_URL", "DOCKER_HOST", "SATAT_CONFIG", "HOME",
+}
+
+// SecretNames is every secret the platform needs, sorted and unique: each lane's pass_env plus
+// the worker's own.
+func (c Config) SecretNames() []string {
+	seen := map[string]bool{}
+	for _, l := range c.Lanes {
+		for _, n := range l.PassEnv {
+			seen[n] = true
+		}
+	}
+	for _, n := range WorkerSecrets {
+		seen[n] = true
+	}
+	return sortedKeys(seen)
 }
 
 // Limits are the deploy-time caps the workflow enforces through Hatchet (ADR 0023). Global is the
@@ -42,6 +83,12 @@ type Limits struct {
 type file struct {
 	Limits limitsFile          `yaml:"limits"`
 	Lanes  map[string]laneFile `yaml:"lanes"`
+	Deploy *deployFile         `yaml:"deploy"`
+}
+
+type deployFile struct {
+	Target  string            `yaml:"target"`
+	Secrets map[string]string `yaml:"secrets"`
 }
 
 type limitsFile struct {
@@ -98,6 +145,7 @@ func Parse(r io.Reader) (Config, error) {
 		Limits:      Limits{Global: f.Limits.Global, PerRepo: f.Limits.PerRepo, PerAccount: f.Limits.PerAccount},
 		Accounts:    map[string]string{},
 		LaneMaxRuns: map[string]int{},
+		Deploy:      Deploy{Target: "compose"},
 	}
 	var errs []error
 	if c.Limits.Global <= 0 || c.Limits.PerRepo <= 0 || c.Limits.PerAccount <= 0 {
@@ -113,6 +161,11 @@ func Parse(r io.Reader) (Config, error) {
 		if lf.MaxRuns < 0 {
 			errs = append(errs, fmt.Errorf("lane %q: max_runs must not be negative", name))
 		}
+		for _, n := range l.PassEnv {
+			if slices.Contains(WorkerEnv, n) {
+				errs = append(errs, fmt.Errorf("lane %q: pass_env must not list %s, which is the worker's own environment", name, n))
+			}
+		}
 		c.Lanes = append(c.Lanes, l)
 		c.Accounts[name] = lf.Account
 		if c.Accounts[name] == "" {
@@ -123,10 +176,50 @@ func Parse(r io.Reader) (Config, error) {
 			c.LaneMaxRuns[name] = 1
 		}
 	}
+	if f.Deploy != nil {
+		c.Deploy.Target = f.Deploy.Target
+		c.Deploy.Secrets = f.Deploy.Secrets
+		errs = append(errs, c.checkDeploy()...)
+	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+// checkDeploy validates a present deploy section. Messages name variables and lanes, never the
+// configured values.
+func (c Config) checkDeploy() []error {
+	var errs []error
+	if c.Deploy.Target != "compose" {
+		errs = append(errs, fmt.Errorf("deploy: target must be %q", "compose"))
+	}
+	for _, name := range sortedKeys(c.Deploy.Secrets) {
+		if ref := c.Deploy.Secrets[name]; ref != SecretFromEnv && !strings.HasPrefix(ref, "op://") {
+			errs = append(errs, fmt.Errorf("deploy: secrets.%s must be %q or an op:// reference", name, SecretFromEnv))
+		}
+	}
+	used := map[string]bool{}
+	for _, l := range c.Lanes {
+		for _, n := range l.PassEnv {
+			used[n] = true
+			if _, ok := c.Deploy.Secrets[n]; !ok {
+				errs = append(errs, fmt.Errorf("deploy: secrets has no entry for %s, which lane %q passes", n, l.Name))
+			}
+		}
+	}
+	for _, n := range WorkerSecrets {
+		used[n] = true
+		if _, ok := c.Deploy.Secrets[n]; !ok {
+			errs = append(errs, fmt.Errorf("deploy: secrets has no entry for %s, which the worker uses", n))
+		}
+	}
+	for _, name := range sortedKeys(c.Deploy.Secrets) {
+		if !used[name] {
+			errs = append(errs, fmt.Errorf("deploy: secrets.%s is not used by any lane or the worker", name))
+		}
+	}
+	return errs
 }
 
 func (lf laneFile) lane(name string) (launcher.Lane, error) {

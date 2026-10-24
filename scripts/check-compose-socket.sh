@@ -9,9 +9,17 @@ set -euo pipefail
 file="${1:-compose.yaml}"
 command -v docker >/dev/null || { echo "error: docker is required" >&2; exit 1; }
 
-# Dummy values for the variables compose.yaml requires; only the shape of the config is checked.
-POSTGRES_PASSWORD=unused HATCHET_CLIENT_TOKEN=unused CLAUDE_CODE_OAUTH_TOKEN=unused \
-  SATAT_GITHUB_TOKEN=unused SATAT_PUSH_TOKEN=unused docker compose -f "$file" config --format json | python3 -c '
+[[ -f "$file" ]] || { echo "error: $file not found" >&2; exit 1; }
+
+# Dummy values for every variable compose.yaml requires (${NAME:?...} or ${NAME?...}, the pattern
+# satat deploy uses for its placeholders), so a new lane pass_env name needs no change here; only
+# the shape of the config is checked.
+placeholders=()
+while IFS= read -r name; do
+  placeholders+=("$name=unused")
+done < <(grep -oE '\$\{[A-Za-z_][A-Za-z0-9_]*:?\?' "$file" | sed -E 's/^\$\{//; s/:?\?$//' | sort -u)
+
+env ${placeholders[@]+"${placeholders[@]}"} docker compose -f "$file" config --format json | python3 -c '
 import json, sys
 
 allowed = {"docker-proxy"}

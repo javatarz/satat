@@ -201,3 +201,16 @@ func TestPassEnvMustBeSet(t *testing.T) {
 		t.Error("the error must not carry secret values")
 	}
 }
+
+// Compose treats anything labelled com.docker.compose.* as its own and would prune or recreate it.
+func TestCreateRequestHasNoComposeLabels(t *testing.T) {
+	r := okRequest(t)
+	for k := range r.config.Labels {
+		if strings.HasPrefix(k, "com.docker.compose.") {
+			t.Errorf("compose label %q", k)
+		}
+	}
+	if r.config.Labels[labelManaged] != "true" || labelManaged != "satat.managed" {
+		t.Errorf("labels: %v (managed key %q)", r.config.Labels, labelManaged)
+	}
+}
