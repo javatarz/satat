@@ -193,13 +193,16 @@ func blocked(err error) bool {
 }
 
 // loadSecrets reads each named secret from its file. It returns the values, for scrubbing, and
-// the NAME=value entries for the command's environment. A missing secret is an error that names
-// it and never shows a value.
+// the NAME=value entries for the command's environment. A missing or empty secret is an error
+// that names it and never shows a value, as Docker refuses an unset or empty pass_env variable.
 func loadSecrets(names []string) (values, env []string, err error) {
 	for _, n := range names {
 		b, err := os.ReadFile(filepath.Join(secretsDir, n))
 		if err != nil {
 			return nil, nil, fmt.Errorf("secret %s: not readable from %s", n, secretsDir)
+		}
+		if len(b) == 0 {
+			return nil, nil, fmt.Errorf("secret %s: empty in %s", n, secretsDir)
 		}
 		values = append(values, string(b))
 		env = append(env, n+"="+string(b))
