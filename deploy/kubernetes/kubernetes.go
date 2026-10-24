@@ -6,6 +6,7 @@ package kubernetes
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -61,11 +62,13 @@ func (ExecRunner) Run(ctx context.Context, stdin []byte, name string, args ...st
 // DefaultContext is the kube context scripts/k3d-up.sh creates.
 const DefaultContext = "k3d-satat"
 
-// Target deploys onto the cluster of kube context Context. Dir holds satat.yaml, its render
+// Target deploys onto the cluster of kube context Context. Config is the satat.yaml installed as
+// the worker's config (default Dir/satat.yaml). Dir holds satat.yaml, its render
 // (satat.k8s/) and the env file; Root is the repo root, the platform image's build context.
 // Registry is where the platform image is pushed, and where the cluster pulls it from.
 type Target struct {
 	Dir, Root, Context, Registry string
+	Config                       string
 	Run                          Runner
 	Out                          io.Writer
 
@@ -77,6 +80,8 @@ var _ deploy.Target = (*Target)(nil)
 
 const (
 	release = "satat"
+	// fieldManager owns the Secrets deploy up applies server-side.
+	fieldManager = "satat"
 
 	passwordSecret = "satat-postgres"
 	passwordKey    = "POSTGRES_PASSWORD"
@@ -176,7 +181,11 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	if err != nil {
 		return err
 	}
-	if !haveToken {
+	if haveToken {
+		if err := t.restoreToken(ctx); err != nil {
+			return err
+		}
+	} else {
 		// The worker can't start without the token, and the token needs a running Hatchet.
 		t.say("installing the platform without the worker")
 		if err := t.install(ctx, chartDir, ref, 0); err != nil {
@@ -334,7 +343,8 @@ func (t *Target) applySecret(ctx context.Context, ns, name string, data map[stri
 	if err != nil {
 		return err
 	}
-	if _, err := t.kubectl(ctx, manifest, "apply", "-f", "-"); err != nil {
+	// Server-side: a client-side apply would copy the values into the last-applied annotation.
+	if _, err := t.kubectl(ctx, manifest, "apply", "--server-side", "--field-manager="+fieldManager, "-f", "-"); err != nil {
 		return fmt.Errorf("applying Secret %s/%s: %w", ns, name, err)
 	}
 	return nil
@@ -353,7 +363,7 @@ func (t *Target) install(ctx context.Context, chartDir, ref string, replicas int
 	_, err := t.helm(ctx, "upgrade", "--install", release, chartDir,
 		"--namespace", Namespace,
 		"--values", filepath.Join(t.Dir, valuesFile),
-		"--set-file", "config="+filepath.Join(t.Dir, "satat.yaml"),
+		"--set-file", "config="+t.configFile(),
 		"--set", "image.ref="+ref,
 		"--set", fmt.Sprintf("worker.replicas=%d", replicas),
 		"--wait", "--timeout", helmTimeout)
@@ -394,6 +404,34 @@ func (t *Target) createToken(ctx context.Context) error {
 		return err
 	}
 	t.say("created %s (Secret %s/%s and %s)", tokenKey, Namespace, tokenSecret, envFile)
+	return nil
+}
+
+// restoreToken copies the token Secret into the env file when the file has none (a fresh checkout,
+// say), for the satat agent CLI. The value is read from kubectl's stdout only and never printed.
+func (t *Target) restoreToken(ctx context.Context) error {
+	envFile := t.envFile()
+	if v, ok, err := deploy.ReadKey(envFile, tokenKey); err != nil || (ok && v != "") {
+		return err
+	}
+	out, err := t.kubectl(ctx, nil, "get", "secret", tokenSecret, "-n", Namespace,
+		"-o", "jsonpath={.data."+tokenKey+"}")
+	if err != nil {
+		return fmt.Errorf("reading Secret %s: %w", tokenSecret, err)
+	}
+	raw, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	if err != nil || len(raw) == 0 {
+		// The decode error names an offset only, but say nothing of the content anyway.
+		return fmt.Errorf("the token Secret %s/%s has no readable %s", Namespace, tokenSecret, tokenKey)
+	}
+	token := string(raw)
+	if _, err := deploy.RemoveKey(envFile, tokenKey); err != nil { // an empty line
+		return err
+	}
+	if _, err := deploy.EnsureKey(envFile, tokenKey, func() (string, error) { return token, nil }); err != nil {
+		return err
+	}
+	t.say("restored %s in %s from Secret %s/%s", tokenKey, envFile, Namespace, tokenSecret)
 	return nil
 }
 
@@ -558,6 +596,13 @@ func (t *Target) kubeContext() string {
 }
 
 func (t *Target) envFile() string { return filepath.Join(t.Dir, ".env") }
+
+func (t *Target) configFile() string {
+	if t.Config != "" {
+		return t.Config
+	}
+	return filepath.Join(t.Dir, "satat.yaml")
+}
 
 func (t *Target) say(format string, args ...any) {
 	if t.Out != nil {
