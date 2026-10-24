@@ -5,7 +5,9 @@
 Proposed (2026-10-23). Based on the [infrastructure adapter design](../research/v2/deploy-targets.md).
 Amends [ADR 0026](0026-docker-first-runtime.md): "Kubernetes later" now means a second
 infrastructure adapter plus a second launcher, not a rewrite. Keeps [ADR 0027](0027-docker-api-access.md)
-as written.
+as written. The second adapter and launcher exist: [ADR 0031](0031-kubernetes-adapter-and-launcher.md)
+(2026-10-24) adds Kubernetes behind the same `deploy.Target` and `launcher.Launcher`, with no change
+to either interface.
 
 ## Context
 
@@ -97,5 +99,8 @@ Measured on colima with a scratch config, no `claude` lane and placeholder secre
 - The build script's manifest digest against a registry. The script was written and shellchecked,
   and nobody has run it against one yet.
 
-Revisit this ADR when a second adapter is built, or if `deploy.secrets` needs a source other than
-1Password or the shell.
+Revisit this ADR if `deploy.secrets` needs a source other than 1Password or the shell. (The
+earlier condition, a second adapter, was met by [ADR 0031](0031-kubernetes-adapter-and-launcher.md).
+The `Target` interface didn't change. What changed around it: `deploy.target` gained
+`kubernetes`, a lane `command` became required on that target and now replaces the image
+entrypoint on Docker too, and `deploy` gained `--context` and `--registry` for that target.)

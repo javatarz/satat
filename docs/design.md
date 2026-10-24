@@ -232,9 +232,11 @@ The other ways of marking a lane that were considered are in
 
 A `Step` carries the run, step name, lane and non-secret input (placed at
 `/etc/satat/input.json`). A `Result` carries exit code, logs and the files from `$SATAT_OUTPUT`.
-Workflows and the runner never see which backend is behind it. Docker is the only backend. A
-Kubernetes backend is planned and must pass `launcher/conformance`
-([ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md)).
+Workflows and the runner never see which backend is behind it. Docker is the default backend. A
+Kubernetes backend (`launcher/kubernetes`) runs each step as a one-shot agent-sandbox
+`SandboxClaim` on k3d and passes the same `launcher/conformance` suite
+([ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md)). The rest of this section describes
+Docker.
 
 **Lanes.** A lane is the fixed shape a step runs in: image, user, limits, network, timeout and
 the names of the environment variables it may receive. Lanes come from `satat.yaml` only. Issue
@@ -513,8 +515,8 @@ record runs of it.
    `smoke` lane through Hatchet and prints the result ([ADR 0030](adr/0030-on-demand-agent-runs.md)).
    `agent ls` lists queued and running runs, and `agent rm <run>` cancels one. The agent commands
    use the Hatchet SDK's `HATCHET_CLIENT_*` variables and fill in any that are unset: the token
-   from the `.env` beside `--config`, and for `deploy.target: compose` the ports the stack
-   publishes on this machine (`localhost:7077`, TLS `none`, `http://localhost:8888`). A variable
+   from the `.env` beside `--config`, and for `deploy.target: compose` or `kubernetes` the ports the
+   stack publishes on this machine (`localhost:7077`, TLS `none`, `http://localhost:8888`). A variable
    you set wins. The token is never printed.
 4. Label the issue `ready-for-agent` (the worker skips it otherwise), queue it with
    `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
@@ -523,6 +525,26 @@ record runs of it.
 `scripts/hatchet-token.sh` and `scripts/compose-up.sh` still work but duplicate `deploy up`.
 `just setup` (writes `.env` with a random `POSTGRES_PASSWORD`) and `just run` (the two scripts,
 after `just doctor` has checked the prerequisites) still drive that older path.
+
+### Run it on k3d
+
+The same platform runs on a local k3d cluster, with every agent as a one-shot `SandboxClaim`
+([ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md)). It needs Docker, `kubectl` and `helm`.
+
+1. Run `scripts/k3d-up.sh`. It downloads a pinned k3d into `docs/scratch/bin`, creates the cluster
+   `satat` (kube context `k3d-satat`) with a registry on `localhost:5111` and agent-sandbox, and
+   prints `SATAT_REGISTRY=localhost:5111`. Running it again changes nothing.
+2. Set `deploy.target: kubernetes` in a copy of `satat.yaml` inside the repo (under `docs/scratch/`,
+   say: `deploy up` builds the platform image from the repo above it). Every lane needs a `command`.
+3. Run `go run ./cmd/satat deploy render --config <copy>`. It writes `satat.k8s/values.yaml` and
+   `satat.k8s/lanes.yaml` next to the copy.
+4. Run `SATAT_REGISTRY=localhost:5111 go run ./cmd/satat deploy up --config <copy>`. It builds and
+   pushes the platform image, applies the lane objects and Secrets, installs the chart in
+   `deploy/helm/satat/` and waits for the worker. It acts on the context `k3d-satat` unless
+   `--context` or `SATAT_KUBE_CONTEXT` names another, never on the shell's current one.
+5. Check it with `go run ./cmd/satat agent run smoke --wait --config <copy>`.
+
+`deploy status` and `deploy down [--volumes]` work as on Compose.
 
 Never put token values in the repo ([AGENTS.md](../AGENTS.md#secrets)).
 
@@ -534,8 +556,7 @@ Do not read these as features. They are decided or planned, not present:
 |---|---|
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
-| k3d adapter and Kubernetes launcher: a second `deploy.Target` with Helm, and a launcher that runs agents as pods | [deploy-targets.md](research/v2/deploy-targets.md), [ADR 0028](adr/0028-infrastructure-adapter-compose-first.md) |
-| Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
+| Kubernetes beyond k3d: real k3s on a VM, a managed cluster, gVisor and per-cloud provisioning | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0031](adr/0031-kubernetes-adapter-and-launcher.md), [AGENTS.md](../AGENTS.md) |
 | Egress proxy with a hostname allowlist and no secrets, and a worker-side clone, so a step holds no GitHub token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
 | GitHub App identity, per-push tokens and signed commits (later; v0.2 uses a machine-user token and no broker). Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
 | LiteLLM in the stack. The Claude lane talks to Anthropic directly; the `gateway/` directory is a config template carried from v0.1. | [ADR 0026](adr/0026-docker-first-runtime.md), [ADR 0002](adr/0002-litellm-model-routing.md) |
