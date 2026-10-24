@@ -6,13 +6,11 @@ import (
 	"testing"
 	"time"
 
-	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/dynamic"
 	k8sclient "k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
@@ -32,8 +30,9 @@ const (
 	confNamespace = "satat-conf"
 	confPrefix    = "satat-conf-"
 	confWorker    = "satat-conf-worker"
-	confProbe     = "probe." + confNamespace + ".svc.cluster.local:5432"
-	fieldManager  = "satat-conformance"
+	// confProbe is the probe deploy render sets: the API server, which every lane policy blocks.
+	confProbe    = "kubernetes.default.svc.cluster.local:443"
+	fieldManager = "satat-conformance"
 )
 
 // e2eEnv is the admin connection to the test cluster and what the lanes need.
@@ -44,8 +43,8 @@ type e2eEnv struct {
 	platformImage string
 }
 
-// e2e connects to the k3d-satat cluster and sets up the shared namespace, worker
-// ServiceAccount and probe, or skips without SATAT_K8S_E2E=1.
+// e2e connects to the k3d-satat cluster and sets up the shared namespace and worker
+// ServiceAccount, or skips without SATAT_K8S_E2E=1.
 func e2e(t *testing.T) *e2eEnv {
 	t.Helper()
 	if os.Getenv("SATAT_K8S_E2E") != "1" {
@@ -73,8 +72,8 @@ func e2e(t *testing.T) *e2eEnv {
 	return env
 }
 
-// setup creates the satat-conf namespace with the worker ServiceAccount and the probe, and
-// deletes the namespace when the test ends.
+// setup creates the satat-conf namespace with the worker ServiceAccount, and deletes the
+// namespace when the test ends.
 func (e *e2eEnv) setup(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
@@ -94,55 +93,6 @@ func (e *e2eEnv) setup(t *testing.T) {
 	}, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create service account: %v", err)
 	}
-
-	// The probe answers on 5432; every lane's network policy blocks it.
-	labels := map[string]string{"app": "probe"}
-	uid := int64(10001)
-	if _, err := e.core.AppsV1().Deployments(confNamespace).Create(ctx, &appsv1.Deployment{
-		ObjectMeta: metav1.ObjectMeta{Name: "probe"},
-		Spec: appsv1.DeploymentSpec{
-			Replicas: ptr(int32(1)),
-			Selector: &metav1.LabelSelector{MatchLabels: labels},
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{Labels: labels},
-				Spec: corev1.PodSpec{
-					AutomountServiceAccountToken: ptr(false),
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: ptr(true), RunAsUser: &uid, RunAsGroup: &uid,
-						SeccompProfile: &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeRuntimeDefault},
-					},
-					Containers: []corev1.Container{{
-						Name:            "httpd",
-						Image:           e2eImage,
-						Command:         []string{"httpd", "-f", "-p", "5432", "-h", "/tmp"},
-						Ports:           []corev1.ContainerPort{{ContainerPort: 5432}},
-						SecurityContext: containerSecurity(),
-						ReadinessProbe: &corev1.Probe{ProbeHandler: corev1.ProbeHandler{
-							TCPSocket: &corev1.TCPSocketAction{Port: intstr.FromInt32(5432)},
-						}, PeriodSeconds: 1},
-					}},
-				},
-			},
-		},
-	}, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("create probe deployment: %v", err)
-	}
-	if _, err := core.Services(confNamespace).Create(ctx, &corev1.Service{
-		ObjectMeta: metav1.ObjectMeta{Name: "probe"},
-		Spec: corev1.ServiceSpec{
-			Selector: labels,
-			Ports:    []corev1.ServicePort{{Port: 5432, TargetPort: intstr.FromInt32(5432)}},
-		},
-	}, metav1.CreateOptions{}); err != nil {
-		t.Fatalf("create probe service: %v", err)
-	}
-	poll(t, ctx, "probe deployment ready", func() (bool, error) {
-		d, err := e.core.AppsV1().Deployments(confNamespace).Get(ctx, "probe", metav1.GetOptions{})
-		if err != nil {
-			return false, err
-		}
-		return d.Status.ReadyReplicas == 1, nil
-	})
 }
 
 // applyLane applies lane's objects and waits until a claim can use them; the lane namespace is

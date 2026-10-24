@@ -40,7 +40,7 @@ spec:
         - command:
             - /satat/satat-entry
             - --probe
-            - postgres.satat.svc.cluster.local:5432
+            - kubernetes.default.svc.cluster.local:443
             - --timeout
             - 30s
             - --
@@ -240,7 +240,7 @@ spec:
         - command:
             - /satat/satat-entry
             - --probe
-            - postgres.satat.svc.cluster.local:5432
+            - kubernetes.default.svc.cluster.local:443
             - --timeout
             - 1m0s
             - --pass-env
