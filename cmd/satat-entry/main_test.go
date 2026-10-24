@@ -227,3 +227,47 @@ func TestOOMFromCgroup(t *testing.T) {
 		t.Fatalf("OOMKilled false, stderr=%q", r.Stderr)
 	}
 }
+
+// TestSecretAtStreamCap checks that a secret straddling the stream cap leaves no fragment in the
+// frame, both when it sits across MaxStream and when earlier scrubbed copies shift a secret cut at
+// the raw capture limit into the kept text.
+func TestSecretAtStreamCap(t *testing.T) {
+	const secret = "s3cretvalue"
+	pad := func(n int) string { return strings.Repeat("a", n) }
+	cases := map[string]string{
+		"across cap": pad(entry.MaxStream-3) + secret + pad(100),
+		"shifted in": strings.Repeat(secret, 10) + pad(entry.MaxStream-105) + secret + pad(100),
+	}
+	for name, payload := range cases {
+		for _, stream := range []string{"stdout", "stderr"} {
+			t.Run(name+"/"+stream, func(t *testing.T) {
+				redirect := ""
+				if stream == "stderr" {
+					redirect = " >&2"
+				}
+				o := setup(t, "sh", "-c", `cat "$PAYLOAD"`+redirect)
+				o.passEnv = []string{"TOK"}
+				writeFile(t, filepath.Join(secretsDir, "TOK"), secret)
+				file := filepath.Join(t.TempDir(), "payload")
+				writeFile(t, file, payload)
+				t.Setenv("PAYLOAD", file)
+				_, r := runFrame(t, o)
+				got := r.Stdout
+				if stream == "stderr" {
+					got = r.Stderr
+				}
+				for k := 2; k <= len(secret); k++ {
+					if bytes.Contains(got, []byte(secret[:k])) {
+						t.Fatalf("%s holds secret prefix %q", stream, secret[:k])
+					}
+				}
+				if len(got) > entry.MaxStream {
+					t.Fatalf("%s is %d bytes, over the cap", stream, len(got))
+				}
+				if !r.LogsTruncated {
+					t.Fatal("LogsTruncated false")
+				}
+			})
+		}
+	}
+}
