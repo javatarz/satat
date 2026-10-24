@@ -262,6 +262,16 @@ func TestUpOrder(t *testing.T) {
 		t.Errorf("docker build context = %q, want /repo", build[len(build)-1])
 	}
 
+	var ns struct {
+		Metadata struct{ Labels map[string]string }
+	}
+	if err := yaml.Unmarshal(run.find("kubectl apply -f - Namespace//satat").stdin, &ns); err != nil {
+		t.Fatal(err)
+	}
+	if got := ns.Metadata.Labels["pod-security.kubernetes.io/enforce"]; got != "baseline" {
+		t.Errorf("namespace satat enforces Pod Security %q, want baseline", got)
+	}
+
 	lanes := string(run.find("kubectl apply -f - lanes").stdin)
 	ref := registry + "/satat-platform@" + digest
 	if strings.Contains(lanes, "image: "+PlatformPlaceholder+"\n") || strings.Count(lanes, "image: "+ref+"\n") != 2 {
@@ -346,11 +356,12 @@ func TestUpIdempotent(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(target.Dir, ".env"), []byte("HATCHET_CLIENT_TOKEN="+token+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	run.script[readToken] = base64.StdEncoding.EncodeToString([]byte(token))
 	if err := target.Up(context.Background(), cfg, secrets); err != nil {
 		t.Fatal(err)
 	}
-	if run.find(readToken) != nil {
-		t.Error("read the token Secret although the env file has the token")
+	if v, _, _ := deploy.ReadKey(filepath.Join(target.Dir, ".env"), "HATCHET_CLIENT_TOKEN"); v != token {
+		t.Error("the env file's token changed although it matches the Secret")
 	}
 	var helm []string
 	for _, s := range run.summary() {
@@ -394,6 +405,32 @@ func TestUpRestoresToken(t *testing.T) {
 				t.Errorf("%s %q has the token on its command line", c.name, c.args)
 			}
 		}
+	}
+}
+
+// An env file token that differs from the Secret's (a recreated cluster, say) is replaced, and
+// neither value is printed.
+func TestUpReplacesStaleToken(t *testing.T) {
+	const stale = "eyJzdGFsZSJ9.old.sig"
+	target, run, out, cfg := setup(t)
+	run.script[getPassword] = "secret/satat-postgres\n"
+	run.script[getToken] = "secret/satat-hatchet-token\n"
+	run.script[readToken] = base64.StdEncoding.EncodeToString([]byte(token))
+	envFile := filepath.Join(target.Dir, ".env")
+	if err := os.WriteFile(envFile, []byte("OTHER=1\nHATCHET_CLIENT_TOKEN="+stale+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Up(context.Background(), cfg, secrets); err != nil {
+		t.Fatal(err)
+	}
+	if v, _, _ := deploy.ReadKey(envFile, "HATCHET_CLIENT_TOKEN"); v != token {
+		t.Error("the stale token was not replaced with the Secret's")
+	}
+	if v, _, _ := deploy.ReadKey(envFile, "OTHER"); v != "1" {
+		t.Error("other env file lines were lost")
+	}
+	if strings.Contains(out.String(), token) || strings.Contains(out.String(), stale) {
+		t.Error("a token was printed")
 	}
 }
 

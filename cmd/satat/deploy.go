@@ -82,14 +82,18 @@ func repoRoot(dir string) (string, error) {
 }
 
 // targetFor returns the deploy target the config at configPath names, working in its directory.
-// The kubernetes target also needs the repo root, which it builds the platform image from.
-func targetFor(cfg config.Config, configPath string, kube kubeFlags) (deploy.Target, error) {
+// With needRoot (deploy up) the kubernetes target also gets the repo root, which it builds the
+// platform image from; render, down and status build nothing, so they work outside the repo.
+func targetFor(cfg config.Config, configPath string, kube kubeFlags, needRoot bool) (deploy.Target, error) {
 	dir := filepath.Dir(configPath)
 	switch cfg.Deploy.Target {
 	case config.TargetKubernetes:
-		root, err := repoRoot(dir)
-		if err != nil {
-			return nil, err
+		var root string
+		if needRoot {
+			var err error
+			if root, err = repoRoot(dir); err != nil {
+				return nil, err
+			}
 		}
 		kube = kubeDefaults(kube, os.LookupEnv)
 		return &kubernetes.Target{
@@ -154,7 +158,7 @@ func runRender(args []string) error {
 		return err
 	}
 	dir := filepath.Dir(*path)
-	target, err := targetFor(cfg, *path, kubeFlags{})
+	target, err := targetFor(cfg, *path, kubeFlags{}, false)
 	if err != nil {
 		return err
 	}
@@ -198,7 +202,8 @@ func runRender(args []string) error {
 
 // loadTarget parses the flags common to up, down and status and returns the config and its target,
 // working in the config's directory as an absolute path so compose runs from any directory.
-func loadTarget(name string, args []string, extra func(*flag.FlagSet)) (config.Config, deploy.Target, error) {
+// needRoot is targetFor's.
+func loadTarget(name string, args []string, needRoot bool, extra func(*flag.FlagSet)) (config.Config, deploy.Target, error) {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	path := fs.String("config", "satat.yaml", "path to satat.yaml")
 	var kube kubeFlags
@@ -221,7 +226,7 @@ func loadTarget(name string, args []string, extra func(*flag.FlagSet)) (config.C
 	if err != nil {
 		return config.Config{}, nil, err
 	}
-	target, err := targetFor(cfg, abs, kube)
+	target, err := targetFor(cfg, abs, kube, needRoot)
 	return cfg, target, err
 }
 
@@ -230,7 +235,7 @@ func signalContext() (context.Context, context.CancelFunc) {
 }
 
 func runUp(args []string) error {
-	cfg, target, err := loadTarget("deploy up", args, nil)
+	cfg, target, err := loadTarget("deploy up", args, true, nil)
 	if err != nil {
 		return err
 	}
@@ -248,7 +253,7 @@ func runUp(args []string) error {
 
 func runDown(args []string) error {
 	var volumes *bool
-	_, target, err := loadTarget("deploy down", args, func(fs *flag.FlagSet) {
+	_, target, err := loadTarget("deploy down", args, false, func(fs *flag.FlagSet) {
 		volumes = fs.Bool("volumes", false, "also delete the platform's volumes (Postgres and Hatchet data) and the now-dead Hatchet token in .env")
 	})
 	if err != nil {
@@ -260,7 +265,7 @@ func runDown(args []string) error {
 }
 
 func runStatus(args []string) error {
-	_, target, err := loadTarget("deploy status", args, nil)
+	_, target, err := loadTarget("deploy status", args, false, nil)
 	if err != nil {
 		return err
 	}
