@@ -1,0 +1,6 @@
+# Lane defaults (mise global config). A repo's .mise.toml or .tool-versions overrides these.
+[tools]
+node = "lts"
+python = "3.13"
+go = "latest"
+java = "temurin-21"
