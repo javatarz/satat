@@ -20,6 +20,12 @@ import (
 // and capacity work (#109) can read install cost per run.
 type Toolchain struct {
 	Locked bool `json:"locked"` // mise.lock present, so `mise install --locked` ran
+	// Pinned is what the repo resolves on its own (tool@version), before any lane defaults.
+	Pinned []string `json:"pinned,omitempty"`
+	// Defaults is "skipped" (the repo pins tools), "applied" (it pins none, so the lane defaults
+	// file was used) or "missing" (it pins none and the defaults file is absent: a warning, and
+	// nothing is installed).
+	Defaults string `json:"defaults"`
 	// Missing is what mise had to install (tool@version), read before the install. Empty means
 	// everything came from the /cache volume.
 	Missing   []string `json:"missing,omitempty"`
@@ -34,7 +40,13 @@ const (
 	// on a cold /cache pulls hundreds of MB (a JDK, Go, Python and Node).
 	DefaultMiseTimeout = 10 * time.Minute
 	miseTimeoutVar     = "SATAT_MISE_TIMEOUT"
-	idiomaticVar       = "MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS"
+	// DefaultMiseDefaults is the lane defaults file in the image. It is deliberately not
+	// /etc/mise/config.toml, which mise always reads: defaults apply only to repos that pin
+	// nothing. SATAT_MISE_DEFAULTS overrides the path.
+	DefaultMiseDefaults = "/usr/share/satat/mise-defaults.toml"
+	defaultsVar         = "SATAT_MISE_DEFAULTS"
+	globalConfigVar     = "MISE_GLOBAL_CONFIG_FILE"
+	idiomaticVar        = "MISE_IDIOMATIC_VERSION_FILE_ENABLE_TOOLS"
 	// The languages whose idiomatic files (go.mod, .nvmrc, .python-version, .java-version, ...)
 	// the lane honours, per ADR 0033. mise ignores them unless enabled.
 	idiomaticTools = "go,node,python,java"
@@ -167,29 +179,64 @@ func miseTimeout(cfg Config, env map[string]string) (time.Duration, error) {
 	return d, nil
 }
 
-// prepareToolchain trusts the clone's mise config and installs what it pins (or the lane
-// defaults from /etc/mise/config.toml). Any failure, including the timeout, fails the step
-// before claude starts: an agent that cannot run the tests should not open a PR.
-func prepareToolchain(ctx context.Context, cfg Config, dir string, timeout time.Duration, res *Result) error {
+// prepareToolchain trusts the clone's mise config and installs what it pins. Only when the
+// repo pins nothing does it point mise at the lane defaults, through MISE_GLOBAL_CONFIG_FILE,
+// so a Go repo does not also pull a JDK, Python and Node. Any failure, including the timeout,
+// fails the step before claude starts: an agent that cannot run the tests should not open a PR.
+// It returns what claude's environment must add so the shims resolve the same versions.
+func prepareToolchain(ctx context.Context, cfg Config, dir string, timeout time.Duration, res *Result) ([]string, error) {
 	tc := &Toolchain{Cache: "unknown"}
 	res.Toolchain = tc
 	env := miseEnv(cfg.Env)
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	timedOut := func() bool { return errors.Is(ctx.Err(), context.DeadlineExceeded) }
+	fail := func(step, out string, err error) error {
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			tc.TimedOut = true
+			return fmt.Errorf("mise %s timed out after %s", step, timeout)
+		}
+		return fmt.Errorf("mise %s: %w: %s", step, err, lastLines(out, 5))
+	}
 
 	if out, err := mise(ctx, cfg, env, dir, "trust", dir); err != nil {
-		if timedOut() {
-			tc.TimedOut = true
-			return fmt.Errorf("mise trust timed out after %s", timeout)
+		return nil, fail("trust", out, err)
+	}
+
+	// Anything current before the defaults are applied comes from the clone's config or its
+	// idiomatic files (or a config the operator added), so the repo pins its own toolchain.
+	out, err := mise(ctx, cfg, env, dir, "ls", "--current", "--json")
+	if err != nil {
+		return nil, fail("ls", out, err)
+	}
+	pinned, ok := parseTools(out)
+	if !ok {
+		return nil, fmt.Errorf("mise ls: unexpected output: %s", lastLines(out, 3))
+	}
+	tc.Pinned = pinned
+	var claudeEnv []string
+	switch defaults := envMap(cfg.Env)[defaultsVar]; {
+	case len(pinned) > 0:
+		tc.Defaults = "skipped"
+	default:
+		if defaults == "" {
+			defaults = DefaultMiseDefaults
 		}
-		return fmt.Errorf("mise trust: %w: %s", err, lastLines(out, 5))
+		if _, err := os.Stat(defaults); err != nil {
+			tc.Defaults = "missing"
+			if cfg.Log != nil {
+				fmt.Fprintf(cfg.Log, "satat-runner: warning: the repo pins no tools and the lane defaults %s are missing; installing nothing\n", defaults)
+			}
+			break
+		}
+		tc.Defaults = "applied"
+		claudeEnv = []string{globalConfigVar + "=" + defaults}
+		env = append(withoutKeys(env, globalConfigVar), claudeEnv...)
 	}
 
 	// What is missing before the install says whether /cache served this run. A failure here
 	// only loses the measurement, so it does not fail the step.
 	if out, err := mise(ctx, cfg, env, dir, "ls", "--current", "--missing", "--json"); err == nil {
-		if missing, ok := parseMissing(out); ok {
+		if missing, ok := parseTools(out); ok {
 			tc.Missing = missing
 			tc.Cache = "miss"
 			if len(missing) == 0 {
@@ -198,31 +245,32 @@ func prepareToolchain(ctx context.Context, cfg Config, dir string, timeout time.
 		}
 	}
 
+	// A lockfile only covers the repo's own pins, so --locked applies only to a pinned repo.
 	args := []string{"install"}
-	if _, err := os.Stat(filepath.Join(dir, "mise.lock")); err == nil {
+	if _, err := os.Stat(filepath.Join(dir, "mise.lock")); err == nil && len(pinned) > 0 {
 		tc.Locked = true
 		args = append(args, "--locked")
 	}
 	start := time.Now()
-	out, err := mise(ctx, cfg, env, dir, args...)
+	out, err = mise(ctx, cfg, env, dir, args...)
 	tc.InstallMS = time.Since(start).Milliseconds()
 	if err == nil {
-		return nil
+		return claudeEnv, nil
 	}
-	if timedOut() {
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		tc.TimedOut = true
 		what := "the repo's tools"
 		if len(tc.Missing) > 0 {
 			what = strings.Join(tc.Missing, ", ")
 		}
-		return fmt.Errorf("mise install timed out after %s installing %s", timeout, what)
+		return nil, fmt.Errorf("mise install timed out after %s installing %s", timeout, what)
 	}
 	tc.Failed = failedTools(out)
 	what := "a tool"
 	if len(tc.Failed) > 0 {
 		what = strings.Join(tc.Failed, ", ")
 	}
-	return fmt.Errorf("mise install failed for %s: %w: %s", what, err, lastLines(out, 5))
+	return nil, fmt.Errorf("mise install failed for %s: %w: %s", what, err, lastLines(out, 5))
 }
 
 // mise runs one mise command and returns its combined output, also streamed to the log so an
@@ -245,8 +293,8 @@ func mise(ctx context.Context, cfg Config, env []string, dir string, args ...str
 	return scrub(buf.String(), cfg.Env), err
 }
 
-// parseMissing reads `mise ls --current --missing --json`: tool -> [{version}, ...].
-func parseMissing(out string) ([]string, bool) {
+// parseTools reads `mise ls --current [--missing] --json`: tool -> [{version}, ...].
+func parseTools(out string) ([]string, bool) {
 	var m map[string][]struct {
 		Version string `json:"version"`
 	}

@@ -35,7 +35,7 @@ func TestToolchainIsInstalledBeforeClaude(t *testing.T) {
 	}
 	repo := filepath.Join(e.cfg.WorkDir, "repo")
 	calls := e.read(t, filepath.Join(e.fake, "mise-calls"))
-	want := "trust " + repo + "\nls --current --missing --json\ninstall\n"
+	want := "trust " + repo + "\nls --current --json\nls --current --missing --json\ninstall\n"
 	if calls != want {
 		t.Errorf("mise calls:\n got %q\nwant %q", calls, want)
 	}
@@ -43,7 +43,7 @@ func TestToolchainIsInstalledBeforeClaude(t *testing.T) {
 		t.Errorf("mise install ran in %s, want the clone", cwd)
 	}
 	tc := e.result(t).Toolchain
-	if tc == nil || tc.Cache != "miss" || tc.Locked || tc.TimedOut || len(tc.Failed) != 0 ||
+	if tc == nil || tc.Cache != "miss" || tc.Defaults != "skipped" || strings.Join(tc.Pinned, ",") != "go@1.25.1" || tc.Locked || tc.TimedOut || len(tc.Failed) != 0 ||
 		strings.Join(tc.Missing, ",") != "go@1.25.1" || tc.InstallMS < 0 {
 		t.Fatalf("toolchain: %+v", tc)
 	}
@@ -249,5 +249,79 @@ func TestFailedTools(t *testing.T) {
 	}
 	if got := failedTools("mise ERROR something else\n"); len(got) != 0 {
 		t.Errorf("got %q", got)
+	}
+}
+
+func (e *env) unpinned(t *testing.T) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(e.fake, "mise-pins"), []byte("none"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func (e *env) defaultsFile(t *testing.T) string {
+	t.Helper()
+	p := filepath.Join(e.dir, "mise-defaults.toml")
+	if err := os.WriteFile(p, []byte("[tools]\ngo = \"latest\"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// A repo that pins its own tools gets only those: the lane defaults would add a JDK, Python and
+// Node it never asked for.
+func TestAPinnedRepoSkipsTheLaneDefaults(t *testing.T) {
+	e := setup(t, "commit")
+	e.cfg.Env = append(e.cfg.Env, "SATAT_MISE_DEFAULTS="+e.defaultsFile(t))
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if tc := e.result(t).Toolchain; tc == nil || tc.Defaults != "skipped" {
+		t.Fatalf("toolchain: %+v", tc)
+	}
+	for _, f := range []string{"mise-env", "env"} {
+		if v, set := envLines(e.read(t, filepath.Join(e.fake, f)))[globalConfigVar]; set {
+			t.Errorf("%s has %s=%s for a pinned repo", f, globalConfigVar, v)
+		}
+	}
+}
+
+func TestAnUnpinnedRepoGetsTheLaneDefaults(t *testing.T) {
+	e := setup(t, "commit")
+	e.unpinned(t)
+	defaults := e.defaultsFile(t)
+	e.cfg.Env = append(e.cfg.Env, "SATAT_MISE_DEFAULTS="+defaults)
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	tc := e.result(t).Toolchain
+	if tc == nil || tc.Defaults != "applied" || len(tc.Pinned) != 0 || strings.Join(tc.Missing, ",") != "go@1.25.1" {
+		t.Fatalf("toolchain: %+v", tc)
+	}
+	// Both the install and claude's shims must see the defaults, or `go` would not resolve.
+	for _, f := range []string{"mise-env", "env"} {
+		if got := envLines(e.read(t, filepath.Join(e.fake, f)))[globalConfigVar]; got != defaults {
+			t.Errorf("%s: %s = %q, want %q", f, globalConfigVar, got, defaults)
+		}
+	}
+}
+
+func TestMissingLaneDefaultsAreAWarningNotAFailure(t *testing.T) {
+	e := setup(t, "commit")
+	e.unpinned(t)
+	e.cfg.Env = append(e.cfg.Env, "SATAT_MISE_DEFAULTS="+filepath.Join(e.dir, "nope.toml"))
+	var log strings.Builder
+	e.cfg.Log = &log
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.result(t); r.Status != "changes" || r.Toolchain == nil || r.Toolchain.Defaults != "missing" {
+		t.Fatalf("result: %+v toolchain %+v", r, r.Toolchain)
+	}
+	if !strings.Contains(log.String(), "nope.toml are missing") {
+		t.Errorf("no warning in the log:\n%s", log.String())
+	}
+	if _, set := envLines(e.read(t, filepath.Join(e.fake, "env")))[globalConfigVar]; set {
+		t.Error("claude got a defaults file that does not exist")
 	}
 }
