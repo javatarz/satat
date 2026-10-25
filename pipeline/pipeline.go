@@ -18,6 +18,9 @@ import (
 	"github.com/javatarz/satat/runner"
 )
 
+// StepName is the name of the one step Run launches.
+const StepName = "claude"
+
 // Publisher turns a finished step's commits into a pushed branch and a draft PR.
 // *pusher.Pusher is the real one.
 type Publisher interface {
@@ -54,7 +57,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{Run: o.Run, Name: "claude", Lane: o.Lane, Input: input})
+	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{Run: o.Run, Name: StepName, Lane: o.Lane, Input: input})
 	if err != nil {
 		return rep, err
 	}

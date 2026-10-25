@@ -38,7 +38,7 @@ flowchart LR
   lanerun -. "own event, same workflow<br/>and caps" .-> queue
 
   subgraph worker["worker container (trusted)"]
-    ready{"issue still labelled<br/>ready-for-agent?<br/>(planned, #134)"}
+    ready{"issue still labelled<br/>ready-for-agent?"}
     launch["Docker launcher"]
     push["pusher<br/>(only holder of the write token)"]
   end
@@ -57,7 +57,7 @@ flowchart LR
   push -- "push satat/RUN, open draft PR<br/>body ends: Satat-Run: RUN" --> gh[(GitHub)]
 
   classDef planned fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
-  class poll,hook,lanerun,ready,skip planned
+  class poll,hook,lanerun planned
 ```
 
 1. **Ways in.** Today there is one: a person runs
@@ -71,14 +71,17 @@ flowchart LR
    (`workflows/issue.go`) starts on the worker only when all four
    [concurrency caps](#concurrency-caps) allow it. Over-cap work waits and is not dropped. The
    Hatchet run ID becomes the Satat run ID.
-3. **Readiness check (planned, #134).** When the run starts, the worker will re-read the issue's
-   labels and skip the run, recording why, unless the issue has `ready-for-agent`. It belongs in
-   the worker, not in each way in, so that every way in is gated the same way and a label removed
+3. **Readiness check.** When the run starts, the worker re-reads the issue from the GitHub API
+   with the read-only token (`SATAT_GITHUB_TOKEN`, which needs Issues: read as well as
+   Contents: read). Unless the issue is open, not a pull request, and labelled `ready-for-agent`,
+   nothing is launched and the run finishes with status `skipped` and a reason. It belongs in the
+   worker, not in each way in, so that every way in is gated the same way and a label removed
    while the run waited behind a cap is honoured. Only a human moves an issue to
-   `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). **Today nothing checks
-   labels:** `satat-enqueue` queues any issue, and whoever runs it keeps the convention in
-   [CONTRIBUTING.md](../CONTRIBUTING.md).
-4. **One step, one container.** The workflow task calls `pipeline.Run`, which launches one step
+   `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). If the issue cannot be
+   read (a fine-grained token without Issues: read gets a 404 on a private repo), nothing is
+   launched and the run fails. Either way the task cancels any container an earlier attempt of
+   the same run left running, which the reaper then removes.
+4. **One step, one container.** Otherwise the task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the
    [launcher](#the-launcher). Input is `{repo, base, issue}`. It holds no secrets.
 5. **Runner.** Inside the container the entrypoint is `satat-runner` (`runner/runner.go`). It
@@ -109,7 +112,7 @@ check.
 There is also a hand path for developers that skips Hatchet: `go run ./cmd/satat-step --repo ...
 --issue N [--push]` runs the same `pipeline.Run` directly and saves the output under
 `docs/scratch/runs/<run>`. Both use the same code, so they behave the same. It is not a way in:
-it bypasses the queue, the caps and, once it exists, the readiness check. Use it only on an issue
+it bypasses the queue, the caps and the readiness check. Use it only on an issue
 you would label `ready-for-agent` yourself.
 
 ### Pieces and where they live
@@ -174,7 +177,7 @@ as an agent lane, so the mistake shows up as a refused lane-started run, not as 
 from made-up input. The check runs in the worker at run start, like the readiness check, so
 every event is gated whoever pushed it. The CLI checks as well, but only to fail early with a
 clear message. Refusing an issue run on a lane with `agent: false` is an optional follow-up to
-the worker check in #134.
+the readiness check.
 
 What #129 should change to fit this, and the other ways of marking a lane that were considered,
 are in [lane-started runs](research/v2/lane-started-runs.md).
@@ -345,7 +348,8 @@ go test -short -p 1 ./...   # skips the tests that start containers
    `.env` without printing it.
 4. Start everything with `scripts/compose-up.sh`. It takes the Claude, read and write tokens from
    1Password and never writes them to disk.
-5. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
+5. Label the issue `ready-for-agent` (the worker skips it otherwise), queue it with
+   `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.
 
 Never put token values in the repo ([AGENTS.md](../AGENTS.md#secrets)).
@@ -356,7 +360,6 @@ Do not read these as features. They are decided or planned, not present:
 
 | Not built | Where it is tracked |
 |---|---|
-| Readiness check: the worker skips a run unless the issue has `ready-for-agent` at run start. Today nothing checks labels. | #134 |
 | Poller: a Hatchet cron that queues `ready-for-agent` issues on the repos in `satat.yaml`. Today a human runs `satat-enqueue`. | #135 |
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
