@@ -88,16 +88,20 @@ flowchart LR
    Hatchet run ID becomes the Satat run ID.
 3. **Readiness check.** When the run starts, the worker re-reads the issue from the GitHub API
    with the read-only token (`SATAT_GITHUB_TOKEN`, which needs Issues: read as well as
-   Contents: read). Unless the repo is still listed (`SATAT_INTAKE_REPOS` plus `poller.repos`; an
-   empty list allows none) and the issue is open, not a pull request, and labelled `ready-for-agent`,
-   nothing is launched and the run finishes with status `skipped` and a reason. It belongs in the
-   worker, not in each way in, so that every way in is gated the same way and a label removed
-   while the run waited behind a cap is honoured. Only a human moves an issue to
-   `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). If the issue cannot be
-   read (a fine-grained token without Issues: read gets a 404 on a private repo), nothing is
-   launched and the run fails. The step is given the title and body from this read; the text in
-   the event, whether from the poller, the webhook or a forged delivery, is ignored (#181). Either way the task cancels any container an earlier attempt of
-   the same run left running, which the reaper then removes.
+   Contents: read). Unless the repo is still listed (`SATAT_INTAKE_REPOS` plus `poller.repos`;
+   an empty list allows none) and the issue is open, not a pull request, and labelled
+   `ready-for-agent`, nothing is launched and the run finishes with status `skipped` and a
+   reason. A `satat-enqueue` run for an unlisted repo therefore shows as a skip in Hatchet. The
+   check belongs in the worker, not in each way in, so that every way in is gated the same way
+   and a label removed while the run waited behind a cap is honoured. Only a human moves an
+   issue to `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). If the issue
+   cannot be read (a fine-grained token without Issues: read gets a 404 on a private repo),
+   nothing is launched and the run fails. The step is given the title and body from this read;
+   the text in the event, whether from the poller, the webhook or a forged delivery, is ignored
+   (#181). This stops a forged delivery from supplying text. It does not stop someone with
+   write access editing the body, or an edit after labelling (#175): the step gets whatever the
+   issue says at run start. Either way the task cancels any container an earlier attempt of the
+   same run left running, which the reaper then removes.
 4. **One step, one container.** Otherwise the task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the
    [launcher](#the-launcher). Input is `{repo, base, issue}`. It holds no secrets.
