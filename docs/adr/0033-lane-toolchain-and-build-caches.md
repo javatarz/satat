@@ -1,10 +1,10 @@
-# ADR 0033: Lane toolchain: one polyglot image, build caches on disk volumes
+# ADR 0033: Lane toolchain: a lean image, mise at step start, persistent caches
 
 ## Status
 
 Accepted (2026-10-25). Decides #120. Builds on [ADR 0026](0026-docker-first-runtime.md) (lanes,
 hardening floor, the disk `/workspace` it anticipates) and [ADR 0027](0027-docker-api-access.md)
-(the floor is the access gate). Adds package registries to the egress allowlist that
+(the floor is the access gate). Adds toolchain and package hosts to the egress allowlist that
 [ADR 0025](0025-github-token-broker.md)'s proxy will enforce.
 
 ## Context
@@ -14,100 +14,125 @@ run them: `images/claude/Dockerfile` is `node:22-bookworm-slim` plus git, the `c
 the runner, with no Python or other toolchain. A draft PR the agent could not test is worth much
 less to review.
 
-The issue listed three options: one image per language, a base image plus language layers, or a
-repo-declared image. The owner's repos are mostly Go, Python, Java and TypeScript, and one image
-per language means one lane per language for the same agent.
-
-Dependencies are the second half. The step's network today is a plain bridge with no allowlist.
-Once the egress proxy exists it allows only listed hosts, so `pip install` or `go mod download`
-needs either an allowed registry or a warm cache. Caches are also where a step can leave
-something for a later step, which makes them a cross-run trust question.
+Repos pin their own versions (`.mise.toml`, `.tool-versions`, `go.mod`, `.nvmrc`,
+`.python-version`). A toolchain baked into the image serves one version per language and ignores
+those pins.
 
 The current launcher matters here:
 
-- `launcher/docker/build.go` mounts two tmpfs (`/tmp`, `/workspace`, the clone and `HOME`) and one
-  volume, the per-step input volume at `/etc/satat`.
+- `launcher/docker/build.go` mounts two tmpfs (`/tmp`, and `/workspace` for the clone and `HOME`)
+  and one volume, the per-step input volume at `/etc/satat`. The tmpfs options do not include
+  `exec`, and Docker adds `noexec` to a tmpfs unless told otherwise (checked on colima with
+  `--tmpfs`), so nothing can run from `/tmp` or `/workspace` today.
 - `launcher/docker/floor.go` (`ValidateRequest`) allows tmpfs only at `/tmp` and `/workspace`, but
   accepts any volume mount whose source starts with `satat-`, at any target, and does not look at
   `VolumeOptions` (driver config, subpath).
 - Volumes are created in `launcher/docker/docker.go` with the default driver and no check of their
   own. `Reap` removes every `satat.managed=true` volume older than one age limit.
+- `runner/runner.go` clones with `SATAT_GITHUB_TOKEN` and strips it from `claude`'s environment.
 
 ## Decision
 
-**One polyglot `claude` lane image.** It adds to the current image:
+**One lean lane image.** The Debian Node base (the `claude` CLI needs Node), git,
+ca-certificates, the runner and the `mise` binary. No Go, JDK, Maven or Python in the image.
+mise is copied from the official image pinned by digest
+(`COPY --from=ghcr.io/jdx/mise@sha256:<digest> /usr/local/bin/mise /usr/local/bin/mise`; the
+image and path are documented by mise and the digest resolves through `scripts/image-digest.sh`).
+A checksum-verified release download (`SHASUMS256.txt`, signed with minisign and GPG) is the
+fallback if the image path changes.
 
-- Go, copied from the digest-pinned `golang` image the build already uses for the runner.
-- Python 3 with a `python` alias and `venv`, from the Debian base's packages.
-- Java: JDK 21 and Maven, copied from digest-pinned official images. Gradle comes from each
-  repo's wrapper, not the image.
-- Node and TypeScript from the existing Node base, with corepack enabled at build time so
-  `pnpm` and `yarn` resolve without a run-time install.
+**mise installs toolchains at step start, into a persistent cache.** Each lane step gets a disk
+volume at `/cache`, keyed by (lane, repo), with `MISE_DATA_DIR=/cache/mise`,
+`MISE_CACHE_DIR=/cache/mise-cache` and `TMPDIR`/`MISE_TMP_DIR` under `/cache/tmp`, because the
+tmpfs mounts are `noexec`. A toolchain therefore downloads once per repo, not once per run.
 
-Every source image is pinned by digest, as the base is today. The estimated growth is about
-330 MB compressed. That is an estimate, not a measurement. Stacks outside these four get an extra
-lane whose image the repo declares, pinned by digest and built outside the run, never inside a step.
+- **Versions** come from the repo's `.mise.toml` or `.tool-versions`. The lane enables mise's
+  idiomatic files for go (`go.mod`, `.go-version`), node (`.nvmrc`, `.node-version`), python
+  (`.python-version`) and java (`.java-version`), which mise reads only when enabled. A lane-level
+  `/etc/mise/config.toml` in the image sets defaults for repos that pin nothing, and sets
+  `GOTOOLCHAIN=local` so Go does not fetch a second toolchain behind mise's back.
+- **The runner, not the agent, runs `mise install`** after the clone and before `claude`, then
+  puts the installed tools on `claude`'s `PATH`. A failed install fails the step visibly instead of
+  becoming "could not run tests" in a PR. mise runs with the same stripped environment as
+  `claude`, never the clone token. The runner marks the clone's config trusted (`mise trust`),
+  since there is no one to answer a prompt.
+- **Build caches** (Go module and build cache, pip, npm, Maven, Gradle, corepack) live on the same
+  `/cache` volume, set by env vars to paths outside `/workspace`.
 
-**Build caches live on disk volumes, never on the `/workspace` tmpfs.** One cache path each for
-Go (module and build cache), pip, npm, Maven, Gradle and corepack, set by env vars to paths
-outside `/workspace`. Rollout in two stages:
-
-1. A per-step disk volume for the caches, created and removed with the step. No cross-run risk,
-   and it takes the cache's size off the memory limit.
-2. Persistent read-write cache volumes keyed by (lane, repo), never shared across repos or
-   accounts, labelled `satat.kind=cache`, with their own reaper policy (age and size), separate
-   from the step reaper.
-
-Stage 2 is held back for three reasons. Go, Maven and pip do not re-verify cached artifacts on
-reuse, so a step that writes a bad artifact poisons later runs of that repo. A token in the step's
-env can be written into a cache file and outlive the step. Concurrent Maven writers to one local
-repository are unsafe, and `per_repo: 1` in `satat.yaml` (the per-repo cap of ADR 0023) is
-what keeps it to one writer per key.
+**Cache volumes are persistent and required.** Without them every step downloads every
+toolchain. Cache volumes are keyed by (lane, repo), never shared across repos or accounts,
+labelled `satat.kind=cache`, and have their own reaper policy (age and size). The step reaper
+skips them. `per_repo: 1` in `satat.yaml` (the per-repo cap of ADR 0023) gives one writer per key,
+which concurrent Maven writers need.
 
 **The floor narrows to declared mounts.** `ValidateRequest` must refuse a volume mount with a
-`DriverConfig` or a `Subpath`, and any volume target other than `/etc/satat`, `/workspace`
-(for a disk-backed workspace) or a cache path the lane declares. Volume creation gets its own
-check: default driver, no driver options, Satat name and labels. `node_modules`, venvs and
-`target/` live in the clone, so a lane option for a disk-backed `/workspace` is needed alongside
-the caches, as ADR 0026 anticipated. The step reaper must skip `satat.kind=cache` volumes.
+`DriverConfig` or a `Subpath`, and any volume target other than `/etc/satat`, `/cache`, or
+`/workspace` for a disk-backed workspace. Volume creation gets its own check: default driver, no
+driver options, Satat name and labels. `node_modules`, venvs and `target/` live in the clone, so a
+lane option for a disk-backed `/workspace` is needed alongside `/cache`, as ADR 0026 anticipated.
 
-**Egress.** When the proxy exists, each lane's allowlist adds the registries its toolchains need:
-`pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`,
-`sum.golang.org`, `repo.maven.apache.org`, `plugins.gradle.org`. The residual risk is stated, not
-solved: an agent steered by issue text can install a malicious package, and these hosts accept
-uploads, so a step with a token in reach can exfiltrate it through a publish. ADR 0025 limits what
-reaches the step (no GitHub token; the subscription token is still in env until its proxy exists),
-and human review of the PR stays the control for what the agent installs.
+**Egress.** When the proxy exists, the lane's allowlist must carry toolchain hosts as well as
+package registries:
 
-**Kubernetes.** Caches map to PersistentVolumeClaims later. The worker's RBAC has no PVC create
-today (ADR 0031, in review), and creating a per-repo PVC at claim time is unverified. Until both
-are settled the Kubernetes launcher uses a disk-backed `emptyDir` for caches and workspace, which
-is stage 1.
+| Purpose | Hosts | Source |
+|---|---|---|
+| mise version lists and Java catalog | `mise-versions.jdx.dev`, `mise-java.jdx.dev` | mise docs |
+| Go | `dl.google.com` | mise docs (`go.download_mirror` default) |
+| Node | `nodejs.org` | mise docs (`node.mirror_url` default) |
+| Python (python-build-standalone), Temurin JDK, other GitHub releases | `github.com`, `release-assets.githubusercontent.com`, `api.github.com` (attestations) | Temurin URL read from the mise-java catalog and its redirect; Python's GitHub host from the catalog's file names |
+| Package registries | `pypi.org`, `files.pythonhosted.org`, `registry.npmjs.org`, `proxy.golang.org`, `sum.golang.org`, `repo.maven.apache.org`, `plugins.gradle.org`, `services.gradle.org` | toolchain defaults |
+
+Allowing `github.com` for release downloads overlaps with ADR 0025's token-injected GitHub
+traffic, so the proxy must inject a token only for git and API calls to the step's repo, not for
+release downloads.
+
+**Kubernetes.** `/cache` maps to a PersistentVolumeClaim per (lane, repo) later. The worker's RBAC
+has no PVC create today (ADR 0031, in review), and creating a per-repo PVC at claim time is
+unverified. Until both are settled the Kubernetes launcher uses a disk-backed `emptyDir`, which
+works but downloads toolchains on every step.
+
+**Alternatives superseded.** A baked polyglot image (Go, Python, JDK, Maven, Node; the first
+version of this ADR) serves one version per language and costs about 330 MB (estimated). Per-language
+images multiply lanes and still ignore repo pins. A repo-declared image, digest-pinned and built
+outside the run, stays valid as an escape hatch for stacks mise cannot install.
 
 ## Consequences
 
-- The agent can run `go test`, `python -m unittest`, `mvn test`, `./gradlew test` and
-  `npm test` in the lane, which is #120's acceptance. Builds still need the registry or a warm
-  cache, so without the proxy allowlist a step's first dependency install depends on the open
-  bridge.
-- One bigger image to rebuild and re-pin when any of five toolchains moves. A CVE in any of them
-  is a CVE in the lane.
-- Disk-backed caches and workspace stop counting against `memory`, so the `workspace` limit in
-  `satat.yaml` stops being the only brake on clone size. Local volumes have no size cap, so the
-  cache reaper's size policy is the only one.
-- The floor gains mount and volume-create checks, each with a refusal test, before stage 1 ships.
-- Repos on other stacks need a second image and a lane. That is accepted until a stack is common
-  enough to join the polyglot image.
+- Repo-pinned versions work, and the image shrinks to roughly today's size plus mise.
+- The first step on a repo is slow: it downloads every toolchain the repo needs. Later steps reuse
+  `/cache`.
+- Steps run binaries fetched at run time, which is a wider supply-chain surface than a baked
+  image. Mitigations: a pinned mise version; mise's own checks (Go and Node checked against
+  published SHA-256 files, Node's checksum file GPG-verified, Python checked by GitHub attestation,
+  Java checked against the catalog's checksum when it has one); `mise.lock` with
+  `mise install --locked` for repos that commit one; and the egress allowlist. Repos without a
+  lockfile get whatever version their pin resolves to on the day.
+- The agent can write to `/cache`, so a step can tamper with a toolchain or cache that a later run
+  of the same repo executes. Keying by (lane, repo) keeps that inside one repo. A separate install
+  step that mounts `/cache` read-only into the agent is a possible later fix, not decided here.
+- A repo's `.mise.toml` can define tasks, env templates and sourced files that run code when mise
+  loads it. The step already runs agent-chosen code from that repo, so this adds no new boundary:
+  the sandbox floor of ADR 0026 is the boundary, and trusting the clone's config is accepted.
+- The registries and GitHub release hosts accept uploads, so an agent steered by issue text can
+  install a malicious package or exfiltrate through a publish. ADR 0025 limits what reaches the
+  step (no GitHub token; the subscription token is still in env until its proxy exists), and human
+  review of the PR stays the control.
+- The floor gains mount and volume-create checks, each with a refusal test, and the reaper gains a
+  cache policy. Local volumes have no size cap, so that policy is the only brake on disk use.
 
 ## Not verified
 
-- The real image size and pull time. 330 MB is an estimate.
-- Python 3.11 (Debian bookworm, the current base) or 3.13. Recommended: move the base to a
-  `trixie` Node image to get 3.13; not yet tried with the `claude` CLI.
-- How much cache reuse speeds up a step, per language.
+- First-run time per toolchain, and the speed-up from a warm `/cache`. Record real figures.
+- The full host list. `dl.google.com`, `nodejs.org` and the two `jdx.dev` hosts are from mise's
+  docs. The GitHub hosts come from one Temurin catalog URL and its redirect, and from
+  python-build-standalone file names. `services.gradle.org` and `api.github.com` are expected but
+  not observed. Confirm by running `mise install` behind the proxy and logging hosts.
+- That the lean image plus mise on Debian bookworm installs all four toolchains as uid 10001 with
+  a read-only root.
+- `mise trust` and `--locked` behaviour when run non-interactively by the runner.
 - Concurrent-writer behaviour of each cache if `per_repo` is raised above 1, or if a re-delivered
   step overlaps the original on one key.
 - Disk fill: local volumes have no size cap, and what happens to the Docker VM when one fills.
 
-Revisit when a stack outside the four is common in Satat's repos, when the egress proxy lands, or
-when stage 2 caches are switched on.
+Revisit when the egress proxy lands, when a common stack is one mise cannot install, or if a
+tampered cache is ever found.
