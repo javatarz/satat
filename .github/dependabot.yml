@@ -10,10 +10,16 @@ updates:
       docker:
         patterns: ["*"]
 
+  # Postgres majors cannot reuse the data volume, and the Hatchet server and Go SDK move together
+  # after a live re-check (#180, #189 were checked on v0.110.5): bump those by hand.
   - package-ecosystem: docker-compose
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: postgres
+        update-types: ["version-update:semver-major"]
+      - dependency-name: hatchet-dev/hatchet/hatchet-lite
     groups:
       docker-compose:
         patterns: ["*"]
@@ -30,6 +36,8 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
+    ignore:
+      - dependency-name: github.com/hatchet-dev/hatchet
     groups:
       gomod:
         patterns: ["*"]
