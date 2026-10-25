@@ -134,6 +134,26 @@ runs the same pipeline as the hand trigger, started by an event (`satat-enqueue`
   the Claude-lane back-off, and a restart test (kill the worker mid-step and watch the next attempt adopt it) on
   the real stack.
 
+## Slice 6: webhook intake (2026-10-25)
+
+Code only; **not run against a real Hatchet webhook or GitHub yet.** `workflows/intake.go` adds a second
+workflow, `satat-intake`, triggered by the event key `github:issues`. It maps GitHub's `issues.labeled` body to
+the run input (`MapWebhook`) and pushes `satat:issue`, which the existing workflow already handles. It queues
+only `labeled` + `ready-for-agent` on an open issue (not a PR) in a repo named in `SATAT_INTAKE_REPOS`; the
+list is required, so an unset variable queues nothing and the worker logs that intake is off. The worker
+still re-reads the issue's labels at run start, so a stale or forged delivery cannot launch a step.
+Unit tests cover the mapping, every skip, fail-closed config and a failed push (which fails the intake run so
+Hatchet retries it).
+
+Setup, once, in the Hatchet dashboard (Webhooks, new): source GitHub, the webhook secret from 1Password, event
+key expression `'github:issues'` (a constant: GitHub's event type is a header, and the mapper checks the
+payload's `action` and `label` itself). In GitHub, point an `Issues`-only webhook at the tunnel URL Hatchet
+shows (or `gh webhook forward --events=issues --url=...` for the laptop). Compose binds Hatchet to
+127.0.0.1, so a tunnel to port 8888 is needed.
+
+Not verified: that Hatchet delivers the raw GitHub body as the task input with this event key, the exact URL
+path, and the 3 s to 10 s GitHub gives a delivery to get a response.
+
 ## Cache volumes for #120 (2026-10-25)
 
 Checks behind the launcher's cache volumes (ADR 0033), on Docker 29.5.2 (Ubuntu 24.04 VM, overlayfs).

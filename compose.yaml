@@ -106,6 +106,8 @@ services:
       # override the defaults in the runner.
       SATAT_GIT_NAME: ${SATAT_GIT_NAME:-}
       SATAT_GIT_EMAIL: ${SATAT_GIT_EMAIL:-}
+      # Repos (owner/name, comma-separated) the webhook intake may queue. Empty turns intake off.
+      SATAT_INTAKE_REPOS: ${SATAT_INTAKE_REPOS:-}
       # Used by the pusher only; never passed to a step.
       SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?use scripts/compose-up.sh}
     volumes:

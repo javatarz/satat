@@ -1,5 +1,5 @@
 // Command satat-enqueue puts one issue on the queue by pushing the event the workflow listens
-// for. It is the hand trigger for the Hatchet path until webhook intake exists (slice 6).
+// for. It is the hand trigger for the Hatchet path and for a hand run beside the webhook intake (slice 6).
 //
 //	satat-enqueue --repo owner/name --issue 12 [--base main] [--lane claude]
 //
