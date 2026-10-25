@@ -39,7 +39,7 @@ func normalizeLane(l launcher.Lane) (launcher.Lane, error) {
 	if l.WorkspaceBytes+tmpBytes >= l.MemoryBytes {
 		return l, fmt.Errorf("lane %q: workspace and /tmp (%d bytes) must be smaller than its memory limit", l.Name, l.WorkspaceBytes+tmpBytes)
 	}
-	for _, n := range l.PassEnv {
+	for _, n := range append(append([]string{}, l.PassEnv...), l.OptionalEnv...) {
 		if !envNameRE.MatchString(n) {
 			return l, fmt.Errorf("lane %q: env name %q is not allowed", l.Name, n)
 		}
@@ -86,6 +86,11 @@ func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (stri
 			return request{}, fmt.Errorf("lane %q needs %s, which is not set", l.Name, n)
 		}
 		env = append(env, n+"="+v)
+	}
+	for _, n := range l.OptionalEnv {
+		if v, ok := lookupEnv(n); ok && v != "" {
+			env = append(env, n+"="+v)
+		}
 	}
 
 	netName := laneNetwork(l.Name)

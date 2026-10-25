@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 )
 
 // Input is the step input the worker places at $SATAT_INPUT. It holds no secrets.
@@ -152,13 +153,14 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	}
 
 	// The clone token goes to git only; claude's environment never has it.
-	// Commits the agent makes are Satat's: a fixed identity in the environment, not git config
-	// on disk, so there is nothing for the agent to rewrite.
+	// Commits the agent makes default to Satat's identity, set in the environment rather than git
+	// config on disk. It is a default: the agent can still override it with --author or its own
+	// GIT_* variables. Only the leftovers commit below is fixed.
 	identity, err := gitIdentity(env)
 	if err != nil {
 		return err
 	}
-	claudeEnv := append(withoutKeys(cfg.Env, cloneVar), identity...)
+	claudeEnv := append(withoutKeys(cfg.Env, append([]string{cloneVar, nameVar, emailVar}, identityKeys...)...), identity...)
 
 	method, err := authMethod(ctx, cfg, claudeEnv)
 	if err != nil {
@@ -346,6 +348,8 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 
 // gitIdentity is the author and committer for every commit in the run: Satat unless the
 // operator set SATAT_GIT_NAME or SATAT_GIT_EMAIL. Empty counts as unset.
+var identityKeys = []string{"GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"}
+
 func gitIdentity(env map[string]string) ([]string, error) {
 	name, email := defaultGitName, defaultGitEmail
 	for _, f := range []struct {
@@ -356,8 +360,14 @@ func gitIdentity(env map[string]string) ([]string, error) {
 		if v == "" {
 			continue
 		}
-		if strings.ContainsAny(v, "<>\n\r") {
-			return nil, fmt.Errorf("%s must not contain <, > or a line break", f.key)
+		if strings.ContainsFunc(v, func(r rune) bool { return r == '<' || r == '>' || unicode.IsControl(r) }) {
+			return nil, fmt.Errorf("%s must not contain <, > or control characters", f.key)
+		}
+		if f.key == emailVar && (!strings.Contains(v, "@") || strings.ContainsAny(v, " \t")) {
+			return nil, fmt.Errorf("%s must be an email address", f.key)
+		}
+		if f.key == nameVar && strings.Trim(v, ".,:;\"'\\ ") == "" {
+			return nil, fmt.Errorf("%s must contain a letter or digit", f.key)
 		}
 		*f.dst = v
 	}
@@ -375,7 +385,7 @@ func commitLeftovers(ctx context.Context, cfg Config, identity []string, dir str
 	if err := git(ctx, cfg, cfg.Env, dir, "add", "-A"); err != nil {
 		return err
 	}
-	return git(ctx, cfg, append(append([]string{}, cfg.Env...), identity...), dir,
+	return git(ctx, cfg, append(withoutKeys(cfg.Env, identityKeys...), identity...), dir,
 		"commit", "--quiet", "-m", fmt.Sprintf("Resolve #%d (uncommitted changes left by the agent)", in.Issue.Number))
 }
 

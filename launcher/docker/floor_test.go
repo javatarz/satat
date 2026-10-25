@@ -201,3 +201,21 @@ func TestPassEnvMustBeSet(t *testing.T) {
 		t.Error("the error must not carry secret values")
 	}
 }
+
+func TestOptionalEnvIsPassedOnlyWhenSet(t *testing.T) {
+	l := testLane()
+	l.OptionalEnv = []string{"SET_ME", "EMPTY_ME", "UNSET_ME"}
+	lane, err := normalizeLane(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	vals := map[string]string{"SET_ME": "v", "EMPTY_ME": ""}
+	req, err := buildRequest(lane, launcher.Step{Run: "r", Name: "s"}, func(n string) (string, bool) { v, ok := vals[n]; return v, ok })
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(req.cfg.Env, "\n")
+	if !strings.Contains(got, "SET_ME=v") || strings.Contains(got, "EMPTY_ME") || strings.Contains(got, "UNSET_ME") {
+		t.Errorf("optional env not handled as set-only:\n%s", got)
+	}
+}

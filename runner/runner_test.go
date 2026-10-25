@@ -244,6 +244,16 @@ func TestUncommittedWorkIsCommitted(t *testing.T) {
 	}
 }
 
+func TestUncommittedWorkUsesTheConfiguredIdentity(t *testing.T) {
+	e := setup(t, "leave", "SATAT_GIT_NAME=Ada Bot", "SATAT_GIT_EMAIL=ada@example.com")
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if p := e.read(t, filepath.Join(e.out, "changes.patch")); !strings.Contains(p, "From: Ada Bot <ada@example.com>") {
+		t.Errorf("leftover commit is not authored as the configured identity:\n%s", p)
+	}
+}
+
 func TestNoChanges(t *testing.T) {
 	e := setup(t, "nothing")
 	if err := Run(context.Background(), e.cfg); err != nil {
@@ -295,6 +305,8 @@ func TestRefusesToStart(t *testing.T) {
 		"no oauth token": {[]string{"CLAUDE_CODE_OAUTH_TOKEN="}, "CLAUDE_CODE_OAUTH_TOKEN is not set"},
 		"bad git name":   {[]string{"SATAT_GIT_NAME=Eve <eve@x>"}, "SATAT_GIT_NAME must not contain"},
 		"bad git email":  {[]string{"SATAT_GIT_EMAIL=a@b\nc"}, "SATAT_GIT_EMAIL must not contain"},
+		"email no at":    {[]string{"SATAT_GIT_EMAIL=not an email"}, "SATAT_GIT_EMAIL must be an email"},
+		"name only dot":  {[]string{"SATAT_GIT_NAME=."}, "SATAT_GIT_NAME must contain"},
 		"no clone token": {[]string{"SATAT_GITHUB_TOKEN="}, "SATAT_GITHUB_TOKEN is not set"},
 	}
 	for name, tc := range cases {
