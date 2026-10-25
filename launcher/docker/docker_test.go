@@ -6,8 +6,10 @@ import (
 	"testing"
 	"time"
 
+	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/launcher"
@@ -387,6 +389,108 @@ func TestReapRemovesOldContainersAndKeepsNewOnes(t *testing.T) {
 	if left := names(t, api); len(left) != 0 {
 		t.Errorf("left after reap: %v", left)
 	}
+}
+
+// The step reaper removes a dead step's input volume but never a cache or its use marker,
+// however old.
+func TestReapLeavesCachesAlone(t *testing.T) {
+	api := dockerAPI(t)
+	lane := shLane("reapc", "true")
+	lane.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}}
+	lane.PersistCaches = true
+	l := newLauncher(t, api, []launcher.Lane{lane})
+	ctx := context.Background()
+	if _, err := l.Launch(ctx, launcher.Step{Run: "reapc", Name: "s", Lane: "reapc", CacheScope: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.VolumeCreate(ctx, inputVolumeOptions(launcher.Step{Run: "reapc", Name: "dead"})); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := l.Reap(ctx, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.VolumeInspect(ctx, "satat-reapc-dead-in", client.VolumeInspectOptions{}); !cerrdefs.IsNotFound(err) {
+		t.Errorf("the dead step's input volume survived the reaper: %v", err)
+	}
+	vols, err := api.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelLane+"=reapc")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := map[string]int{}
+	for _, v := range vols.Items {
+		kinds[v.Labels[labelKind]]++
+	}
+	if kinds[kindCache] != 1 || kinds[kindCacheUse] != 1 {
+		t.Errorf("after Reap: %v, want the cache and its marker", kinds)
+	}
+}
+
+// The cache reaper against a real daemon: the disk usage endpoint reports the cache, a cache
+// attached to a running step survives every limit, and an idle one is evicted with its marker.
+func TestReapCachesOnTheDaemon(t *testing.T) {
+	api := dockerAPI(t)
+	lane := shLane("evict", "sleep 3")
+	lane.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}}
+	lane.PersistCaches = true
+	l := newLauncher(t, api, []launcher.Lane{lane})
+	ctx := context.Background()
+	everything := CachePolicy{MaxUnused: time.Nanosecond, MaxBytes: 1, StepAge: time.Nanosecond}
+	// Only this test's lane is visible to the reaper, so real caches on the daemon are safe.
+	reap := func() (int, error) {
+		return reapCaches(ctx, laneOnly{api, "evict"}, &l.cacheMu, l.log, time.Now(), everything)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := l.Launch(ctx, launcher.Step{Run: "evict1", Name: "s", Lane: "evict", CacheScope: "busy"})
+		done <- err
+	}()
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline); time.Sleep(100 * time.Millisecond) {
+		if len(names(t, api)) == 1 {
+			break
+		}
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if _, err := reap(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := api.VolumeInspect(ctx, "satat-cache-evict-busy-a", client.VolumeInspectOptions{}); err != nil {
+		t.Fatalf("the reaper removed a cache a running step holds: %v", err)
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+
+	n, err := reap()
+	if err != nil || n != 1 {
+		t.Fatalf("ReapCaches = %d, %v; want the idle cache evicted", n, err)
+	}
+	vols, err := api.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelLane+"=evict")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vols.Items) != 0 {
+		t.Errorf("left after eviction: %v", vols.Items)
+	}
+}
+
+// laneOnly is the real API with disk usage narrowed to one lane's volumes.
+type laneOnly struct {
+	*client.Client
+	lane string
+}
+
+func (a laneOnly) DiskUsage(ctx context.Context, o client.DiskUsageOptions) (client.DiskUsageResult, error) {
+	du, err := a.Client.DiskUsage(ctx, o)
+	var mine []volume.Volume
+	for _, v := range du.Volumes.Items {
+		if v.Labels[labelLane] == a.lane {
+			mine = append(mine, v)
+		}
+	}
+	du.Volumes.Items = mine
+	return du, err
 }
 
 func containerConfigFor(image string) *container.Config {

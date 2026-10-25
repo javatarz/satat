@@ -44,6 +44,8 @@ type Launcher struct {
 	group     singleflight.Group
 	mu        sync.Mutex
 	cancelled map[string]bool
+	// cacheMu orders cache eviction against launches; see create and reapCaches.
+	cacheMu sync.RWMutex
 }
 
 // Option adjusts a Launcher.
@@ -149,43 +151,13 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 		l.cleanup(cctx, req.name, id, volumes)
 	}()
 
-	in := inputVolumeOptions(step)
-	if err := l.createVolume(ctx, in); err != nil {
-		return res, fmt.Errorf("create input volume: %w", err)
-	}
-	volumes = append(volumes, in.Name)
-	// A persistent cache is adopted if it exists and is never removed here; the cache reaper
-	// owns it.
-	for _, cv := range cacheVolumes(lane, step) {
-		if err := l.createVolume(ctx, cv.opts); err != nil {
-			return res, fmt.Errorf("create cache volume: %w", err)
-		}
-		if !cv.persist {
-			volumes = append(volumes, cv.opts.Name)
-		}
-	}
-
-	created, err := l.api.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking,
-	})
-	switch {
-	case err == nil:
-		id = created.ID
-	case cerrdefs.IsConflict(err):
-		// An earlier attempt created it: adopt, but only if it is ours.
-		found, ierr := l.api.ContainerInspect(ctx, req.name, client.ContainerInspectOptions{})
-		if ierr != nil {
-			return res, fmt.Errorf("adopt %s: %w", req.name, ierr)
-		}
-		lb := found.Container.Config.Labels
-		if lb[labelManaged] != "true" || lb[labelRun] != step.Run || lb[labelStep] != step.Name {
-			return res, fmt.Errorf("container %s exists and is not a Satat step container", req.name)
-		}
-		id = found.Container.ID
-		res.Adopted = true
-		l.log.Info("adopted existing container", "container", req.name, "state", found.Container.State.Status)
-	default:
-		return res, fmt.Errorf("create %s: %w", req.name, err)
+	// The cache reaper removes a cache only while holding the write side of this lock, so it
+	// cannot remove one between its adoption here and the container referencing it.
+	l.cacheMu.RLock()
+	id, err := l.create(ctx, lane, step, req, &volumes, &res)
+	l.cacheMu.RUnlock()
+	if err != nil {
+		return res, err
 	}
 
 	insp, err := l.api.ContainerInspect(ctx, id, client.ContainerInspectOptions{})
@@ -225,14 +197,64 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 	return res, nil
 }
 
+// create makes the step's volumes and its container, or adopts the container an earlier attempt
+// made, and returns the container's ID. Volumes the step owns are added to volumes for cleanup.
+func (l *Launcher) create(ctx context.Context, lane launcher.Lane, step launcher.Step, req request, volumes *[]string, res *launcher.Result) (string, error) {
+	in := inputVolumeOptions(step)
+	if err := l.createVolume(ctx, in); err != nil {
+		return "", fmt.Errorf("create input volume: %w", err)
+	}
+	*volumes = append(*volumes, in.Name)
+	// A persistent cache is adopted if it exists and is never removed here; the cache reaper
+	// owns it.
+	for _, cv := range cacheVolumes(lane, step) {
+		if err := l.createVolume(ctx, cv.opts); err != nil {
+			return "", fmt.Errorf("create cache volume: %w", err)
+		}
+		if !cv.persist {
+			*volumes = append(*volumes, cv.opts.Name)
+		}
+	}
+	if lane.PersistCaches && len(lane.Caches) > 0 {
+		touchCacheKey(ctx, l.api, l.log, lane.Name, step.CacheScope, time.Now())
+	}
+
+	created, err := l.api.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking,
+	})
+	switch {
+	case err == nil:
+		return created.ID, nil
+	case cerrdefs.IsConflict(err):
+		// An earlier attempt created it: adopt, but only if it is ours.
+		found, ierr := l.api.ContainerInspect(ctx, req.name, client.ContainerInspectOptions{})
+		if ierr != nil {
+			return "", fmt.Errorf("adopt %s: %w", req.name, ierr)
+		}
+		lb := found.Container.Config.Labels
+		if lb[labelManaged] != "true" || lb[labelRun] != step.Run || lb[labelStep] != step.Name {
+			return "", fmt.Errorf("container %s exists and is not a Satat step container", req.name)
+		}
+		res.Adopted = true
+		l.log.Info("adopted existing container", "container", req.name, "state", found.Container.State.Status)
+		return found.Container.ID, nil
+	default:
+		return "", fmt.Errorf("create %s: %w", req.name, err)
+	}
+}
+
 // createVolume creates a volume after checking it against the floor. Creating a name that exists
 // returns the existing volume, which is adopted only if it carries exactly the labels asked for
 // and the plain local driver: a re-delivered step finds its own volume, never someone else's.
 func (l *Launcher) createVolume(ctx context.Context, o client.VolumeCreateOptions) error {
+	return createVolume(ctx, l.api, o)
+}
+
+func createVolume(ctx context.Context, api volumeAPI, o client.VolumeCreateOptions) error {
 	if err := ValidateVolume(o); err != nil {
 		return fmt.Errorf("refusing to create volume %s: %w", o.Name, err)
 	}
-	got, err := l.api.VolumeCreate(ctx, o)
+	got, err := api.VolumeCreate(ctx, o)
 	if err != nil {
 		return err
 	}
@@ -425,7 +447,8 @@ func (l *Launcher) Cancel(ctx context.Context, run, name string) error {
 
 // Reap removes Satat containers and volumes created more than maxAge ago, whatever their state.
 // maxAge must exceed the longest lane timeout, so a step a restarted worker could still adopt is
-// left alone. It removes by label, one object at a time, never with a prune call.
+// left alone. It removes by label, one object at a time, never with a prune call. Cache volumes
+// are not its to remove: see ReapCaches.
 func (l *Launcher) Reap(ctx context.Context, maxAge time.Duration) (int, error) {
 	cutoff := time.Now().Add(-maxAge)
 	list, err := l.api.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: make(client.Filters).Add("label", labelManaged+"=true")})
@@ -449,6 +472,10 @@ func (l *Launcher) Reap(ctx context.Context, maxAge time.Duration) (int, error) 
 		return removed, errors.Join(append(errs, fmt.Errorf("list volumes: %w", err))...)
 	}
 	for _, v := range vols.Items {
+		// Caches and their use markers outlive steps by design; ReapCaches owns them.
+		if k := v.Labels[labelKind]; k == kindCache || k == kindCacheUse {
+			continue
+		}
 		created, perr := time.Parse(time.RFC3339, v.CreatedAt)
 		if perr != nil || created.After(cutoff) {
 			continue

@@ -29,7 +29,21 @@ type Config struct {
 	Accounts map[string]string
 	// LaneMaxRuns is each lane's own cap (lane.max_runs), by lane name.
 	LaneMaxRuns map[string]int
+	// CacheReaper bounds the persistent caches of every lane together.
+	CacheReaper CacheReaper
 }
+
+// CacheReaper is the cache reaper's policy (ADR 0033): a persistent cache unused for longer than
+// MaxUnused is evicted, and over MaxBytes in all, the least recently used go first.
+type CacheReaper struct {
+	MaxUnused time.Duration
+	MaxBytes  int64
+}
+
+const (
+	defaultCacheMaxUnused = 14 * 24 * time.Hour
+	defaultCacheMaxBytes  = 20 << 30
+)
 
 // Limits are the deploy-time caps the workflow enforces through Hatchet (ADR 0023). Global is the
 // whole platform; PerRepo and PerAccount are the defaults for each repo and each account.
@@ -40,8 +54,14 @@ type Limits struct {
 }
 
 type file struct {
-	Limits limitsFile          `yaml:"limits"`
-	Lanes  map[string]laneFile `yaml:"lanes"`
+	Limits      limitsFile          `yaml:"limits"`
+	CacheReaper cacheReaperFile     `yaml:"cache_reaper"`
+	Lanes       map[string]laneFile `yaml:"lanes"`
+}
+
+type cacheReaperFile struct {
+	MaxUnused string `yaml:"max_unused"`
+	MaxSize   string `yaml:"max_size"`
 }
 
 type limitsFile struct {
@@ -112,6 +132,10 @@ func Parse(r io.Reader) (Config, error) {
 	if c.Limits.Global <= 0 || c.Limits.PerRepo <= 0 || c.Limits.PerAccount <= 0 {
 		errs = append(errs, errors.New("limits: global, per_repo and per_account are required and must be positive"))
 	}
+	var err error
+	if c.CacheReaper, err = f.CacheReaper.parse(); err != nil {
+		errs = append(errs, fmt.Errorf("cache_reaper: %w", err))
+	}
 	for _, name := range sortedKeys(f.Lanes) {
 		lf := f.Lanes[name]
 		l, err := lf.lane(name)
@@ -136,6 +160,27 @@ func Parse(r io.Reader) (Config, error) {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+// parse fills the defaults, 14 days and 20 GiB, for what the file leaves out.
+func (cf cacheReaperFile) parse() (CacheReaper, error) {
+	r := CacheReaper{MaxUnused: defaultCacheMaxUnused, MaxBytes: defaultCacheMaxBytes}
+	var errs []error
+	if cf.MaxUnused != "" {
+		d, err := time.ParseDuration(cf.MaxUnused)
+		if err != nil || d <= 0 {
+			errs = append(errs, fmt.Errorf("max_unused %q is not a positive duration", cf.MaxUnused))
+		}
+		r.MaxUnused = d
+	}
+	if cf.MaxSize != "" {
+		n, err := parseSize(cf.MaxSize)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("max_size: %w", err))
+		}
+		r.MaxBytes = n
+	}
+	return r, errors.Join(errs...)
 }
 
 func (lf laneFile) lane(name string) (launcher.Lane, error) {
