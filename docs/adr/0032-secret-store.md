@@ -8,7 +8,8 @@ Amended 2026-10-25: one store on every environment, and the Claude token held by
 proxy (see Decision). Settles the "where secrets live" question left open in `AGENTS.md`, for Compose now and
 Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #129 and #130)
 and ADR 0027's "the pusher runs inside the worker". Leaves ADR 0011 (never in git, Terraform
-state or cloud-init) and ADR 0025 (broker, proxy, pusher) unchanged.
+state or cloud-init) unchanged. Amends ADR 0025 (2026-10-25): no broker, and the egress proxy holds no secret
+and needs no identity.
 
 ## Context
 
@@ -28,8 +29,7 @@ operator-only policy, and unsealing itself after a restart.
 
 - **The store is OpenBao,** one node, Raft storage, a KV v2 mount `satat/` with one entry per
   secret. It is the only place loaded secrets rest. Image pinned by digest.
-- **One identity and one policy per component** (pusher, token broker, egress proxy, LiteLLM,
-  worker). A policy grants `read` on named entries and nothing else. The coding agent has no
+- **One identity and one policy per component** (pusher, worker and the LLM gateway proxy). A policy grants `read` on named entries and nothing else. The coding agent has no
   identity. Git name and email are step inputs, not secrets.
 - **One store everywhere.** Compose, k3d and cloud Kubernetes all run OpenBao with the same
   policies and entry names. Only the login method differs. No second store (Kubernetes Secrets,
@@ -57,6 +57,9 @@ operator-only policy, and unsealing itself after a restart.
   `ANTHROPIC_BASE_URL` at the proxy. The lane holds that key, never the long-lived token. LiteLLM
   is the first candidate; any proxy that meets the same properties may replace it. The same on
   Compose and Kubernetes.
+- **GitHub credentials are static entries.** `github-push-token` (a machine user's fine-grained
+  token) is readable by the pusher only; `github-read-token` by the worker only. Nothing mints
+  tokens in v0.2 (ADR 0025).
 - **The pusher becomes its own service** with its own identity, holding the push token and
   signing key. The worker keeps the Docker API and loses push access.
 - **`doctor` checks** that OpenBao is unsealed and every required entry name exists.
@@ -65,7 +68,7 @@ operator-only policy, and unsealing itself after a restart.
 
 - `scripts/compose-up.sh` and `check_op` go; starting Satat no longer needs `op`.
 - One more service (about 54 MiB idle) and one more to upgrade. The OpenBao Go client goes into
-  the pusher, broker, proxy and worker. LiteLLM likely needs OpenBao Agent beside it.
+  the pusher, gateway proxy and worker. LiteLLM likely needs OpenBao Agent beside it.
 - Until the gateway proxy is proven (spike below), the worker's policy includes the Claude token
   and the launcher passes it into the Claude step on Compose, as today: the one known break of
   "use, never see". On Kubernetes no interim delivery path is built; Claude steps there wait for

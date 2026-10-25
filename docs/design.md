@@ -276,8 +276,9 @@ What the step does hold: the Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN
 **read-only** clone token (`SATAT_GITHUB_TOKEN`). The runner keeps the clone token out of
 Claude's environment and uses it only for `git clone`, but both are in the runner's process
 environment, so a determined agent could read them. `satat.yaml` calls this a prototype
-shortcut. The planned fix is a proxy that injects credentials so the step holds none
-([ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md)).
+shortcut. The planned fix: the worker clones before the step starts, so the step holds no GitHub token,
+and an LLM gateway proxy holds the Claude token ([ADR 0025](adr/0025-github-token-broker.md),
+[ADR 0032](adr/0032-secret-store.md), #155).
 
 ## Concurrency caps
 
@@ -368,8 +369,8 @@ Do not read these as features. They are decided or planned, not present:
 | Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
 | Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
-| Egress proxy with a hostname allowlist and credential injection, so a step holds no token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
-| GitHub App identity, token broker and signed commits. Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
+| Egress proxy with a hostname allowlist and no secrets, and a worker-side clone, so a step holds no GitHub token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
+| GitHub App identity, per-push tokens and signed commits (later; v0.2 uses a machine-user token and no broker). Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
 | LiteLLM in the stack. The Claude lane talks to Anthropic directly; the `gateway/` directory is a config template carried from v0.1. | [ADR 0026](adr/0026-docker-first-runtime.md), [ADR 0002](adr/0002-litellm-model-routing.md) |
 | The full `satat.yaml` spec. Only `limits` and `lanes` exist. | #108 |
 | Publishing the Claude lane image to GHCR. It is built locally. | [ADR 0026](adr/0026-docker-first-runtime.md) |
@@ -387,7 +388,7 @@ The v0.1 stack (OpenHands Canvas on EC2) lives on the
 | [0022](adr/0022-v2-platform-requirement-decisions.md) | v0.2 requirements, including draft PRs only |
 | [0023](adr/0023-hatchet-queue-and-workflow-engine.md) | Hatchet as queue and workflow engine, and the four caps |
 | [0024](adr/0024-kubernetes-agent-sandbox-runtime.md) | Kubernetes with agent-sandbox as the target runtime (deferred by 0026) |
-| [0025](adr/0025-github-token-broker.md) | GitHub credentials: broker, proxy, pusher; the agent never holds a write token |
+| [0025](adr/0025-github-token-broker.md) | GitHub credentials: machine-user token in the store, worker-side clone, pusher; no broker in v0.2, App later |
 | [0026](adr/0026-docker-first-runtime.md) | Docker first behind the launcher interface; the hardening floor; lanes |
 | [0027](adr/0027-docker-api-access.md) | Only the worker reaches the Docker API, built from lane config |
 | [0033](adr/0033-lane-toolchain-and-build-caches.md) | Lean lane image; mise installs toolchains at step start; persistent per-repo cache volumes; toolchain and registry egress |
