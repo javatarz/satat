@@ -26,7 +26,7 @@ that owns them.
 ```mermaid
 flowchart LR
   enq["satat-enqueue<br/>by hand"]
-  poll["poller: Hatchet cron<br/>queues ready-for-agent issues<br/>(planned, #135)"]
+  poll["poller: Hatchet cron<br/>queues ready-for-agent issues<br/>(off until satat.yaml lists repos)"]
   hook["webhook<br/>(planned, #112 slice 6)"]
   lanerun["lane-started run<br/>satat agent run &lt;lane&gt;<br/>lanes with no agent only<br/>(planned, #129)"]
 
@@ -57,16 +57,31 @@ flowchart LR
   push -- "push satat/RUN, open draft PR<br/>body ends: Satat-Run: RUN" --> gh[(GitHub)]
 
   classDef planned fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
-  class poll,hook,lanerun planned
+  class hook,lanerun planned
 ```
 
-1. **Ways in.** Today there is one: a person runs
-   `go run ./cmd/satat-enqueue --repo owner/name --issue N`. It reads the issue with the `gh` CLI,
+1. **Ways in.** Two exist. A person runs
+   `go run ./cmd/satat-enqueue --repo owner/name --issue N`: it reads the issue with the `gh` CLI,
    looks up the lane's caps in `satat.yaml` (`workflows.MapIssue`) and pushes the Hatchet event
-   `satat:issue`. Two more are planned, and both push the same event: a poller, which is a
-   Hatchet cron in the worker that queues `ready-for-agent` issues on the repos in `satat.yaml`
-   (#135), and a webhook (#112 slice 6). Because they share the event, everything after this
-   step is the same whichever way a run came in.
+   `satat:issue`. The poller (`poller/`, #135) is a Hatchet cron workflow, `satat-poll`, in the
+   worker. It runs only when `satat.yaml` has `poller.repos`, every `poller.cron` (default every
+   five minutes). For each repo it lists the open issues labelled `ready-for-agent` and pushes the
+   same event for each one that has no run and no open PR, oldest first. "Has a run" means any
+   `satat-issue` run in the last 30 days, found by the repo and issue number in the run input,
+   whatever its status: a failed run is not retried by the poll, so a person retries it with
+   `satat-enqueue`. "Has an open PR" means an open PR whose body says `Resolves #N` (or another
+   closing keyword), which is what Satat's own PRs say. The poller remembers what it pushed for 30
+   minutes, because Hatchet creates the run from the event a moment later. It also refuses a partial view: more
+   than 1000 ready issues or open PRs in one repo, hidden run payloads, or a `satat-issue` run
+   whose input cannot be read each fail the poll rather than risk queuing an issue twice. If Hatchet's runs
+   cannot be listed it queues nothing. It uses the read-only token, which needs Issues: read and
+   Pull requests: read. **The poller has not been run against a live Hatchet**: the cron
+   registration and the run listing are covered by unit tests only. A run older than 30 days (or
+   than Hatchet's retention) is forgotten, so a still-labelled issue whose last run failed that long
+   ago is queued again. The poller does not need the repo-readiness check (#175): the run gate
+   above already handles readiness. List only trusted repos under `poller.repos` until #181 lands.
+   A webhook (#112 slice 6) is planned and will push the same event. Because
+   they share the event, everything after this step is the same whichever way a run came in.
 2. **Queue.** Hatchet Lite (with Postgres) holds the event. The workflow `satat-issue`
    (`workflows/issue.go`) starts on the worker only when all four
    [concurrency caps](#concurrency-caps) allow it. Over-cap work waits and is not dropped. The
@@ -364,7 +379,6 @@ Do not read these as features. They are decided or planned, not present:
 
 | Not built | Where it is tracked |
 |---|---|
-| Poller: a Hatchet cron that queues `ready-for-agent` issues on the repos in `satat.yaml`. Today a human runs `satat-enqueue`. | #135 |
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |

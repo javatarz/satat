@@ -19,6 +19,18 @@ cache_reaper:
   max_unused: 336h   # 14 days
   max_size: 20GiB
 
+# The poller (#135): every cron tick the worker queues the open ready-for-agent issues of these
+# repos that have no run and no open PR yet. Off while repos is empty. Each repo needs a token
+# with Issues: read and Pull requests: read (SATAT_GITHUB_TOKEN), and only trusted repos belong
+# here (ADR 0026). Example:
+#   repos:
+#     - name: owner/name
+#       base: main     # default main
+#       lane: claude   # default claude
+poller:
+  cron: "*/5 * * * *"
+  repos: []
+
 lanes:
   # Claude Code on the subscription token (slice 4). The image is built locally:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)

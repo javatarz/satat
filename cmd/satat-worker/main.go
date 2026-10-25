@@ -5,7 +5,9 @@
 // HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST, SATAT_PUSH_TOKEN, SATAT_GITHUB_TOKEN (read-only, to
 // check an issue is labelled ready-for-agent before running it), and every name a lane lists in
 // pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_INTAKE_REPOS (comma-separated
-// owner/name) turns on the GitHub webhook intake for those repos only.
+// owner/name) turns on the GitHub webhook intake for those repos only. With repos under poller: in
+// satat.yaml the worker also polls them for ready-for-agent issues, which needs Issues: read and
+// Pull requests: read on SATAT_GITHUB_TOKEN.
 package main
 
 import (
@@ -23,6 +25,7 @@ import (
 	"github.com/javatarz/satat/config"
 	"github.com/javatarz/satat/launcher/docker"
 	"github.com/javatarz/satat/pipeline"
+	"github.com/javatarz/satat/poller"
 	"github.com/javatarz/satat/pusher"
 	"github.com/javatarz/satat/workflows"
 )
@@ -109,7 +112,19 @@ func run() error {
 	} else {
 		log.Info("webhook intake off: SATAT_INTAKE_REPOS is empty")
 	}
-	w, err := hc.NewWorker("satat-worker", hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake from waiting behind steps
+	// The poller is on only when satat.yaml lists repos.
+	if repos := cfg.Poller.Repos; len(repos) > 0 {
+		p := &poller.Poller{
+			Config: cfg,
+			Issues: poller.GitHub{Token: readToken},
+			Runs:   poller.HatchetRuns{Client: hc},
+			Queue:  poller.HatchetQueue{Client: hc},
+			Log:    log,
+		}
+		workflowsToRun = append(workflowsToRun, poller.Register(hc, cfg.Poller.Cron, p))
+		log.Info("poller on", "repos", len(repos), "cron", cfg.Poller.Cron)
+	}
+	w, err := hc.NewWorker("satat-worker", hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake and the poll from waiting behind steps
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}
