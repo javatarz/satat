@@ -29,10 +29,13 @@ COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
 # OUT of /etc/mise: mise reads /etc/mise/config.toml on every run, which would install all four
 # languages for a repo that pins only one.
 COPY images/claude/mise-config.toml /usr/share/satat/mise-defaults.toml
-# Managed settings are the second line of defence for #102: subscription login only, and a
-# planted ANTHROPIC_API_KEY makes the session refuse to start.
-RUN mkdir -p /etc/claude-code \
-  && echo '{"forceLoginMethod":"claudeai","allowedProviders":["anthropic"]}' > /etc/claude-code/managed-settings.json
+# Managed settings sit above every other settings level and the agent cannot edit them: root-owned,
+# on the read-only root filesystem. They keep the #102 rules (subscription login only, and a planted
+# ANTHROPIC_API_KEY makes the session refuse to start) and stop the agent skipping the repo's git
+# hooks (#174): deny rules plus a root-owned PreToolUse hook that reads the whole Bash command.
+RUN install -d -m 0755 -o root -g root /etc/claude-code /usr/local/lib/satat /usr/local/lib/satat/hooks
+COPY --chown=root:root --chmod=0644 images/claude/managed-settings.json /etc/claude-code/managed-settings.json
+COPY --chown=root:root --chmod=0755 images/claude/hooks/guard-git-hooks.js /usr/local/lib/satat/hooks/guard-git-hooks.js
 COPY --from=runner /out/satat-runner /usr/local/bin/satat-runner
 # Running a repo's tests leaves bytecode and dependency dirs behind, and an agent that runs
 # `git add -A` commits them (the first sandbox-greet run did: __pycache__/*.pyc). Exclude the common
