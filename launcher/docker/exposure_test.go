@@ -65,8 +65,8 @@ const probeScript = `
 for f in /proc/[0-9]*/environ; do tr '\0' '\n' < "$f" 2>/dev/null; done | sed 's/^/ENV /'
 env | sed 's/^/ENV /'
 for p in /var/run/docker.sock /run/docker.sock /run/secrets /var/run/secrets /root/.docker /root/.config/gh \
-  /root/.git-credentials /root/.netrc "$HOME/.netrc" "$HOME/.git-credentials" "$HOME/.config/gh" "$HOME/.docker"; do
-  [ -e "$p" ] && echo "FILE $p"
+	/root/.git-credentials /root/.netrc "$HOME/.netrc" "$HOME/.git-credentials" "$HOME/.config/gh" "$HOME/.docker"; do
+	[ -e "$p" ] && echo "FILE $p"
 done
 grep -rIlE "$PATTERN" /etc/satat /workspace /tmp /home /root /run /var/run /cache 2>/dev/null | sed 's/^/FILEHIT /'
 sed 's/^/MOUNT /' /proc/self/mountinfo
@@ -282,6 +282,7 @@ func newHarness(t *testing.T, api *client.Client) *harness {
 		"SATAT_GIT_NAME":  "Satat Test",
 		"SATAT_GIT_EMAIL": "satat@example.invalid",
 	}}
+	sweepDecoys(api)
 	h.secretsIP = decoy(t, api, "secrets", 8200)
 	h.dockerIP = decoy(t, api, "docker-api", 2375)
 
@@ -410,4 +411,20 @@ func randHex(n int) string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
+}
+
+// sweepDecoys removes decoys a killed earlier run left behind, found by their label.
+func sweepDecoys(api *client.Client) {
+	ctx := context.Background()
+	f := make(client.Filters).Add("label", "satat.test=exposure")
+	if cs, err := api.ContainerList(ctx, client.ContainerListOptions{All: true, Filters: f}); err == nil {
+		for _, c := range cs.Items {
+			_, _ = api.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true})
+		}
+	}
+	if ns, err := api.NetworkList(ctx, client.NetworkListOptions{Filters: f}); err == nil {
+		for _, n := range ns.Items {
+			_, _ = api.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
+		}
+	}
 }
