@@ -38,7 +38,7 @@ const (
 // finds the repo-pinned toolchains) minus every credential, and with git limited to local
 // transports so a hook cannot reach GitHub through git either.
 func rehearsalEnv(claudeEnv []string) []string {
-	return append(withoutKeys(claudeEnv, oauthVar, cloneVar),
+	return append(withoutKeys(claudeEnv, oauthVar),
 		"GIT_TERMINAL_PROMPT=0", "GIT_CONFIG_NOSYSTEM=1", "GIT_ALLOW_PROTOCOL=file")
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -60,7 +61,18 @@ type GitCloner struct {
 	TempDir string
 	// Depth is the clone depth. Defaults to 50.
 	Depth int
+	// Host is the only host the token is offered to. Defaults to github.com. A clone that is
+	// redirected elsewhere, or a submodule-style request to another host, gets no credential.
+	Host string
 }
+
+const (
+	// maxCommandsBytes bounds .satat/commands.yaml; a real one is a few hundred bytes.
+	maxCommandsBytes = 64 << 10
+	// maxCheckoutBytes bounds the archive handed to the launcher. The worker's scratch space is
+	// smaller than this, so it is a backstop.
+	maxCheckoutBytes = 1 << 30
+)
 
 const cloneTokenVar = "SATAT_CLONE_TOKEN"
 
@@ -94,13 +106,26 @@ func (g GitCloner) Clone(ctx context.Context, repo, base string) (*Checkout, err
 		}
 	}()
 	dir := filepath.Join(tmp, "repo")
-	helper := `!f() { echo username=x-access-token; echo "password=$` + cloneTokenVar + `"; }; f`
+	host := g.Host
+	if host == "" {
+		host = "github.com"
+	}
+	// git sends the request's host on stdin; answer only for the configured one.
+	helper := `!f() { test "$1" = get || exit 0; ok=; while read -r l; do test "$l" = "host=` + host + `" && ok=1; done; ` +
+		`test -n "$ok" || exit 0; echo username=x-access-token; echo "password=$` + cloneTokenVar + `"; }; f`
 	if _, err := g.git(ctx, tmp, "-c", "credential.helper="+helper, "clone", "--quiet", "--depth", fmt.Sprint(depth), "--branch", base, "--single-branch", "--", url, dir); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", repo, err)
 	}
 	sha, err := g.git(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
+	}
+	size, err := g.git(ctx, dir, "cat-file", "-s", "HEAD:"+CommandsFile)
+	if err != nil {
+		return nil, fmt.Errorf("%s is missing on %s: %w", CommandsFile, base, err)
+	}
+	if n, _ := strconv.Atoi(size); n > maxCommandsBytes {
+		return nil, fmt.Errorf("%s on %s is %s bytes, over the %d limit", CommandsFile, base, size, maxCommandsBytes)
 	}
 	raw, err := g.git(ctx, dir, "show", "HEAD:"+CommandsFile)
 	if err != nil {
@@ -152,7 +177,8 @@ func (g GitCloner) git(ctx context.Context, dir string, args ...string) (string,
 
 // tarDir writes dir to w as a tar archive of directories, regular files and symlinks.
 func tarDir(w io.Writer, dir string) error {
-	tw := tar.NewWriter(w)
+	cw := &limitWriter{w: w, left: maxCheckoutBytes}
+	tw := tar.NewWriter(cw)
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -200,13 +226,30 @@ func tarDir(w io.Writer, dir string) error {
 	return errors.Join(err, tw.Close())
 }
 
+// limitWriter fails once more than left bytes are written.
+type limitWriter struct {
+	w    io.Writer
+	left int64
+}
+
+func (l *limitWriter) Write(p []byte) (int, error) {
+	if int64(len(p)) > l.left {
+		return 0, fmt.Errorf("checkout is over %d bytes", int64(maxCheckoutBytes))
+	}
+	l.left -= int64(len(p))
+	return l.w.Write(p)
+}
+
 // ParseCommands reads .satat/commands.yaml: version 1 and a commands map with setup and test.
 // Any other key is a hint. Whether a repo is ready to start is the readiness check's job (#175);
 // this only refuses a file the step could not use.
 func ParseCommands(b []byte) (map[string]string, error) {
+	if len(b) > maxCommandsBytes {
+		return nil, fmt.Errorf("file is over %d bytes", maxCommandsBytes)
+	}
 	var f struct {
-		Version  int               `yaml:"version"`
-		Commands map[string]string `yaml:"commands"`
+		Version  int                  `yaml:"version"`
+		Commands map[string]yaml.Node `yaml:"commands"`
 	}
 	if err := yaml.Unmarshal(b, &f); err != nil {
 		return nil, err
@@ -214,10 +257,19 @@ func ParseCommands(b []byte) (map[string]string, error) {
 	if f.Version != 1 {
 		return nil, fmt.Errorf("version is %d, want 1", f.Version)
 	}
+	// Every value is a string. yaml would coerce `test: true` to "true"; a command must be written
+	// as a string so what the agent is told is what the author wrote.
+	cmds := make(map[string]string, len(f.Commands))
+	for k, n := range f.Commands {
+		if n.Kind != yaml.ScalarNode || n.ShortTag() != "!!str" {
+			return nil, fmt.Errorf("commands.%s must be a string", k)
+		}
+		cmds[k] = n.Value
+	}
 	for _, k := range []string{"setup", "test"} {
-		if strings.TrimSpace(f.Commands[k]) == "" {
+		if strings.TrimSpace(cmds[k]) == "" {
 			return nil, fmt.Errorf("commands.%s is required", k)
 		}
 	}
-	return f.Commands, nil
+	return cmds, nil
 }
