@@ -134,10 +134,13 @@ outside the run, stays valid as an escape hatch for stacks mise cannot install.
 ## Not verified
 
 - First-run time per toolchain, and the speed-up from a warm `/cache`. Record real figures.
-- The full host list. `dl.google.com`, `nodejs.org` and the two `jdx.dev` hosts are from mise's
-  docs. The GitHub hosts come from one Temurin catalog URL and its redirect, and from
-  python-build-standalone file names. `services.gradle.org` and `api.github.com` are expected but
-  not observed. Confirm by running `mise install` behind the proxy and logging hosts.
+- The full host list for a Gradle or Maven build. The egress proxy exists (#169) and the lane's
+  allowlist in `satat.yaml` carries the table above. Observed behind it: `mise install` of the
+  default Go, Node, Python and Temurin 21 (about 30 s cold), `git ls-remote` on GitHub, `pip`
+  index access and `go get` all worked, and the one refusal was `tuf-repo-cdn.sigstore.dev`
+  (mise's attestation check), which was then added. Not observed: a Gradle or Maven build, so
+  `services.gradle.org`, `downloads.gradle.org`, `plugins.gradle.org` and `repo1.maven.org` are
+  expected, not confirmed. A refusal shows in `docker logs satat-egress-<lane>`.
 - That the lean image plus mise on Debian bookworm installs all four toolchains as uid 10001 with
   a read-only root.
 - `mise trust` and `--locked` behaviour when run non-interactively by the runner.

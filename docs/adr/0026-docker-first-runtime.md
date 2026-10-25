@@ -72,8 +72,16 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
 - **Network.** One user-defined Docker network per lane, marked internal, so a step reaches
   only the containers attached to it: an egress proxy, and LiteLLM once a lane uses it. The proxy is a
   hostname allowlist only: no TLS interception, no secrets and no token injection (ADR 0025). It
-  is part of v0.2 (#99). Until it exists, steps get a plain bridge network with no hostname
-  allowlist, and only the owner's repos may be pointed at it.
+  is part of v0.2 (#99) and exists as of #169: a Go forward proxy in this repo (`egress/`), one
+  container per lane that sets `egress.allow` in `satat.yaml`, started by the launcher on the lane's
+  internal network and on a plain outbound one. It refuses address literals, ports the entry does
+  not allow and any name that resolves to a private, link-local or metadata address (DNS
+  rebinding). Every lane in `satat.yaml` is now `internal: true`. The interim limit (only the
+  owner's repos until the proxy exists) is lifted for the network. It still holds for the
+  credentials the step holds: the Claude token (#155 replaces it with a virtual key) and for
+  untrusted repos, which need kernel isolation (#166, #110). What the proxy does not do: it does
+  not stop an upload to a host on the allowlist, it does not see inside TLS, and it has no
+  per-step identity, so every step of a lane has the same list.
 - **Concurrency cap.** A deploy-time value: the Docker VM's memory, minus the platform share
   (measured in the prototype, expected below ADR 0024's 2.4 GiB because k3s is gone), divided
   by the per-step memory limit. #109 calibrates the per-step values on real steps.
@@ -101,6 +109,9 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
 
 ## Not verified
 
+- That the egress proxy behaves the same on Docker Desktop as on the colima (Linux) engine #169 was
+  tested on (internal network, the proxy's two networks, and a lane network's DNS
+  not resolving outside names). The exposure and egress tests check all three.
 - That an internal lane network plus a proxy container works the same on Docker Desktop and
   colima as on Linux.
 - The real harness's RAM and CPU per step, and the platform's share under Compose (#109).

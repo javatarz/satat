@@ -49,7 +49,8 @@ Next, in order:
    (ADR 0032, #155). Until then the Compose Claude step still holds the token: the one known
    break of "use, never see".
 6. Checks that run repo code move to a step with no credentials, before the pusher.
-7. A hostname-allowlist egress proxy on the lane network.
+7. ~~A hostname-allowlist egress proxy on the lane network.~~ Done (#169). Left: the allowlist is
+   per lane, not per step or per repo, and a host that accepts uploads is still an exfiltration route.
 8. A container test: start a process in a step and list what it can see and reach.
 
 The k3d version of the store (#153, #158) waits in the Kubernetes map (#166).
