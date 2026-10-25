@@ -366,7 +366,7 @@ Do not read these as features. They are decided or planned, not present:
 | Poller: a Hatchet cron that queues `ready-for-agent` issues on the repos in `satat.yaml`. Today a human runs `satat-enqueue`. | #135 |
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
 | Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
-| Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: one polyglot image and disk-backed build caches. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
+| Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
 | Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
 | Egress proxy with a hostname allowlist and credential injection, so a step holds no token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
 | GitHub App identity, token broker and signed commits. Today the pusher uses a token from `SATAT_PUSH_TOKEN` and the PR carries `Satat-Run` in its body, not as a commit trailer. | [ADR 0025](adr/0025-github-token-broker.md) |
@@ -390,7 +390,7 @@ The v0.1 stack (OpenHands Canvas on EC2) lives on the
 | [0025](adr/0025-github-token-broker.md) | GitHub credentials: broker, proxy, pusher; the agent never holds a write token |
 | [0026](adr/0026-docker-first-runtime.md) | Docker first behind the launcher interface; the hardening floor; lanes |
 | [0027](adr/0027-docker-api-access.md) | Only the worker reaches the Docker API, built from lane config |
-| [0033](adr/0033-lane-toolchain-and-build-caches.md) | One polyglot lane image; build caches on disk volumes; registry egress |
+| [0033](adr/0033-lane-toolchain-and-build-caches.md) | Lean lane image; mise installs toolchains at step start; persistent per-repo cache volumes; toolchain and registry egress |
 
 Research behind them is in [docs/research/v2/](research/v2/), in particular
 [docker-prototype.md](research/v2/docker-prototype.md) (measurements and findings per slice),
