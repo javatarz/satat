@@ -1,8 +1,9 @@
 name: Signed commits
 
-# main requires signed commits, and PRs are rebase-merged, so every commit in a PR lands on main
-# as it is. Fail the PR early, naming each commit GitHub does not show as Verified and why,
-# instead of finding out at merge time. The job name is stable so it can be a required check.
+# main requires signed commits, and PRs are merged by fast-forwarding main (GitHub's rebase merge
+# would re-create the commits unsigned), so every commit in a PR lands on main as it is. Fail the
+# PR early, naming each commit GitHub does not show as Verified and why, instead of finding out
+# at merge time. The job name is stable so it is a required check on main.
 
 on:
   pull_request:

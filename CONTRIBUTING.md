@@ -47,15 +47,27 @@ trying things, and we never let the product stop working while we do.
 
 ## Pull requests
 
-### Rebase merges only
+### Linear history, merged from the command line
 
-**PRs are rebase-merged. There are no merge commits and no squashing.** Every commit in your PR
-lands on `main` exactly as you wrote it, so:
+**There are no merge commits and no squashing.** Every commit in your PR lands on `main` exactly
+as you signed it, so:
 
 - Each commit must build and pass the checks on its own.
 - Each commit message is written for `main`, not for your reviewer. "Fix review comments" and
   "WIP" commits have to be folded into the commits they fix before you merge.
 - Keep the history in the order a reader should follow it.
+
+Merge from the command line, not with GitHub's merge button. The button's "Rebase and merge"
+creates new, unsigned commits, which `main` rejects. Rebase your branch onto `origin/main`, make
+sure every commit is signed, wait for the checks, then fast-forward `main`:
+
+```sh
+git fetch origin
+git rebase origin/main        # only if main moved; then re-sign (see Signed commits)
+git push origin <branch>:main
+```
+
+The PR closes by itself once its commits are on `main`.
 
 ### A good PR
 
@@ -111,8 +123,8 @@ for it there.
 
 ## Signed commits
 
-`main` only accepts commits GitHub shows as Verified. PRs are rebase-merged, so every commit in
-your PR has to be signed, not just the last one. Three checks tell you early:
+`main` only accepts commits GitHub shows as Verified. Your PR's commits land on `main` as they
+are, so every one has to be signed, not just the last one. Three checks tell you early:
 
 - **On commit**, the pre-commit hook fails if git isn't set up to sign
   (`scripts/check-signing-config.sh`). `just doctor` warns about the same thing.
