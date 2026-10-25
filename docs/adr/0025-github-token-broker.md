@@ -26,8 +26,11 @@ setting separates "push a branch" from "merge" (both need `contents: write`).
 **A Satat-owned GitHub App.** Permissions: contents, pull requests, issues, metadata. No
 administration, workflows or secrets. Commits and PRs come from `<slug>[bot]`, which GitHub
 badges as a bot. Commit author is `<slug>[bot]` with the App's noreply email, plus a
-`Satat-Run: <id>` trailer. The pusher signs commits with a key only the broker holds, so they
-show as Verified.
+`Satat-Run: <id>` trailer. The pusher creates the commits through the API
+(`createCommitOnBranch`) as the App, so GitHub signs them and they show as Verified; it replays
+the agent's commits one by one and sets no author. See
+[signed agent commits](../research/v2/signed-agent-commits.md) (#148). If that does not verify,
+the fallback is to sign in the pusher with a key held by the broker.
 
 **A token broker (Go)** holds the App private key and mints installation tokens with
 `POST /app/installations/{id}/access_tokens`, narrowed by `repositories` and `permissions`.
@@ -81,7 +84,9 @@ check re-runs on a schedule, and a repo that no longer passes is paused.
   API (spike on Infisical Agent Vault, iron-proxy, or a custom Go proxy).
 - That GitHub rejects the merge API call for the App under the ruleset, with the App absent
   from the bypass list. Test on a scratch repo.
-- API-created commits (`createCommitOnBranch`) as an alternative to signing in the pusher.
+- That API-created commits (`createCommitOnBranch`) with an App installation token show as
+  Verified, and that replaying a bundle through them keeps what Satat needs (#148). Needs a
+  scratch repo and an App.
 - Rate limits: two App token calls plus a revoke per step at Satat's volume.
 
 Revisit if the proxy cannot carry `git push`, or if rulesets cannot be enforced on the
