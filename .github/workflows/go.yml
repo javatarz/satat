@@ -2,7 +2,6 @@ name: Go
 
 on:
   pull_request:
-    paths: ["**.go", "go.mod", "go.sum", "compose.yaml", "scripts/check-compose-socket.sh", ".github/workflows/go.yml"]
   push:
     branches: [main]
     paths: ["**.go", "go.mod", "go.sum", "compose.yaml", "scripts/check-compose-socket.sh", ".github/workflows/go.yml"]
