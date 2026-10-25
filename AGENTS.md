@@ -55,4 +55,4 @@ repository secrets and cloud OIDC (no long-lived keys).
 ### External repos
 
 - `javatarz/satat` — this repo, public, contains docs, service configs and CI
-- `javatarz/satat-automations` — private, Git Sync target for automation YAML files
+- `javatarz/satat-automations` — private, the owner's eval set (v0.1: the Agent Canvas Git Sync target)

@@ -68,8 +68,8 @@ A scheduled or event-driven rule that triggers an agent conversation.
 Defined in an `automation.yaml` file and synced via Git Sync.
 
 **Automations repo**:
-The private `satat-automations` repo that Git Sync synchronizes with Agent Canvas.
-Contains `automations/*/automation.yaml` files, one per watched repo.
+The private `satat-automations` repo. It is the owner's eval set. In v0.1 it was the repo that
+Git Sync synchronized with Agent Canvas, with one `automations/*/automation.yaml` per watched repo.
 
 **Infra repo**:
 This public `satat` repo. Contains Terraform, docs, CI, and service configs.
