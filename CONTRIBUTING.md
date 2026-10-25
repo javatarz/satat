@@ -150,7 +150,7 @@ covers the details.
 
 ### Re-sign commits you already made
 
-Re-signing rewrites the commit ids but keeps your changes and messages. From your branch:
+Re-signing rewrites the commit ids but keeps your changes, messages and authors. From your branch:
 
 ```sh
 git fetch origin
@@ -162,6 +162,13 @@ git push --force-with-lease
 git keeps commits that are already on top of `origin/main` as they are, unsigned. If the check
 says `bad_email`, fix `user.email` and add `--reset-author` to the amend so the commits take the
 new email.
+
+Both commands re-sign **every** commit in the range as you, replacing any existing signature and
+making you the committer. That is right for your own commits. If the PR also has commits by other
+people, don't re-sign those for them: your signature on their work says you wrote it, and
+`--reset-author` would overwrite their authorship. Ask them to re-sign their own commits, or
+re-sign only yours with an interactive rebase (`git rebase -i origin/main`, then `exec git commit
+--amend --no-edit -S` after each of your commits).
 
 ## Commit messages
 

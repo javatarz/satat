@@ -66,7 +66,9 @@ signed commits: ${#unsigned[@]} commit(s) about to be pushed are not signed. mai
 $(printf '  %s\n' "${unsigned[@]}")
 
 Set up signing (scripts/check-signing-config.sh says what is missing), then re-sign the commits
-and push again. Re-signing keeps your changes and messages but rewrites the commit ids:
+and push again. Re-signing keeps your changes, messages and authors but rewrites the commit ids,
+and signs every commit in the range as you. Only do that for your own commits; if the branch has
+commits by other people, ask them to re-sign theirs.
 
   git rebase --exec 'git commit --amend --no-edit -S' origin/main
   # or (--force-rebase makes git rewrite commits it would otherwise keep):
