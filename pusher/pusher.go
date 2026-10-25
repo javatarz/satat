@@ -141,6 +141,12 @@ func (p *Pusher) Push(ctx context.Context, req Request) (Outcome, error) {
 	if len(lines) != 2 || lines[1] != req.HeadSHA {
 		return out, refuse("the bundle must hold exactly one branch ending at %s, got %q", req.HeadSHA, refs)
 	}
+	// The base must be a commit of the base branch itself. Callers take it from the worker's own
+	// clone, but the check is here too: the policy is read from this commit, and a commit the
+	// agent made is not one the agent may vouch for.
+	if err := p.git(ctx, repoDir, false, "merge-base", "--is-ancestor", req.BaseSHA, "HEAD"); err != nil {
+		return out, refuse("base %s is not on %s (or is deeper than the clone); not trusting it", req.BaseSHA, req.Base)
+	}
 	if err := p.git(ctx, repoDir, false, "merge-base", "--is-ancestor", req.BaseSHA, req.HeadSHA); err != nil {
 		return out, refuse("head %s does not descend from base %s", req.HeadSHA, req.BaseSHA)
 	}

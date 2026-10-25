@@ -422,3 +422,118 @@ func TestBaseConfigThatIsASymlinkFallsBackToRefusal(t *testing.T) {
 		t.Fatalf("error = %v, want a refusal", err)
 	}
 }
+
+// bundleOf bundles base..branch from the agent's clone.
+func (f *fixture) bundleOf(base, branch string) Request {
+	f.t.Helper()
+	head := sh(f.t, f.clone, "rev-parse", branch)
+	bundle := filepath.Join(f.root, strings.ReplaceAll(branch, "/", "-")+".bundle")
+	sh(f.t, f.clone, "bundle", "create", "-q", bundle, base+".."+branch)
+	b, err := os.ReadFile(bundle)
+	if err != nil {
+		f.t.Fatal(err)
+	}
+	return Request{Repo: "acme/widgets", Base: "main", Run: "run1", BaseSHA: f.baseSHA, HeadSHA: head, Bundle: b, Issue: 7}
+}
+
+func (f *fixture) commitFile(name, content string) string {
+	f.t.Helper()
+	write(f.t, f.clone, name, content)
+	sh(f.t, f.clone, "add", "-A")
+	sh(f.t, f.clone, "commit", "-q", "-m", "Agent change")
+	return sh(f.t, f.clone, "rev-parse", "HEAD")
+}
+
+func wantProtectedRefusal(t *testing.T, f *fixture, req Request, named string) {
+	t.Helper()
+	_, err := f.pusher().Push(context.Background(), req)
+	var ref *Refusal
+	if !errors.As(err, &ref) {
+		t.Fatalf("error = %v, want a refusal", err)
+	}
+	if named != "" && !strings.Contains(err.Error(), named) {
+		t.Errorf("refusal does not mention %q: %v", named, err)
+	}
+	if f.remoteHas("satat/run1") != "" {
+		t.Error("a refused change was pushed")
+	}
+}
+
+// The step reports its own base SHA. An agent that commits a workflow and reports that commit as
+// the base would otherwise hide it from the diff and choose the policy.
+func TestForgedBaseIsRefused(t *testing.T) {
+	f := newFixture(t)
+	sh(t, f.clone, "checkout", "-q", "-B", "satat/run1", f.baseSHA)
+	forged := f.commitFile(".github/workflows/evil.yml", "on: push\n")
+	f.commitFile("a.go", "package a\n")
+	req := f.bundleOf(f.baseSHA, "satat/run1")
+	req.BaseSHA = forged
+	wantProtectedRefusal(t, f, req, "not on main")
+}
+
+func TestProtectedContentInHistoryIsRefused(t *testing.T) {
+	f := newFixture(t)
+	sh(t, f.clone, "checkout", "-q", "-B", "satat/run1", f.baseSHA)
+	f.commitFile(".github/workflows/evil.yml", "on: push\n")
+	sh(t, f.clone, "rm", "-q", ".github/workflows/evil.yml")
+	sh(t, f.clone, "commit", "-q", "-m", "Remove it again")
+	req := f.bundleOf(f.baseSHA, "satat/run1")
+	wantProtectedRefusal(t, f, req, ".github/workflows/evil.yml")
+}
+
+func TestMergeCommitIsCheckedAgainstBothParents(t *testing.T) {
+	f := newFixture(t)
+	sh(t, f.clone, "checkout", "-q", "-B", "side", f.baseSHA)
+	f.commitFile(".husky/pre-push", "#!/bin/sh\n")
+	sh(t, f.clone, "checkout", "-q", "-B", "satat/run1", f.baseSHA)
+	f.commitFile("a.go", "package a\n")
+	sh(t, f.clone, "merge", "-q", "--no-ff", "-m", "Merge side", "side")
+	sh(t, f.clone, "rm", "-q", ".husky/pre-push")
+	sh(t, f.clone, "commit", "-q", "-m", "Drop it")
+	req := f.bundleOf(f.baseSHA, "satat/run1")
+	wantProtectedRefusal(t, f, req, ".husky/pre-push")
+}
+
+func TestMoreDefaults(t *testing.T) {
+	for _, name := range []string{"CODEOWNERS", "docs/CODEOWNERS", ".github/CODEOWNERS", ".gitattributes"} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			req := f.agent("run1", func(d string) { write(t, d, name, "* @me\n") })
+			wantProtectedRefusal(t, f, req, name)
+		})
+	}
+}
+
+func TestSymlinkToAProtectedParentIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct{ link, target string }{
+		"github dir":  {"gh", ".github"},
+		"workflows":   {"wf", ".github/workflows"},
+		"repo root":   {"here", "."},
+		"parent hops": {"a/b/up", "../.."},
+		"parent dir":  {"a/up", "../.github"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			f := newFixture(t)
+			req := f.agent("run1", func(d string) {
+				os.MkdirAll(filepath.Join(d, filepath.Dir(tc.link)), 0o755)
+				if err := os.Symlink(tc.target, filepath.Join(d, tc.link)); err != nil {
+					t.Fatal(err)
+				}
+			})
+			wantProtectedRefusal(t, f, req, tc.link)
+		})
+	}
+}
+
+func TestAllowIsAnchoredAtTheRoot(t *testing.T) {
+	f := newFixture(t)
+	f.rebase(map[string]string{baseFiles: "version: 1\ncommands: {setup: s, test: t}\nprotected:\n  allow: [.editorconfig]\n"}, nil)
+	req := f.agent("run1", func(d string) {
+		write(t, d, ".editorconfig", "root = true\n")
+		write(t, d, ".satat/.editorconfig", "x\n")
+	})
+	_, err := f.pusher().Push(context.Background(), req)
+	if err == nil || !strings.Contains(err.Error(), ".satat/.editorconfig") || strings.Contains(err.Error(), `"`+".editorconfig"+`"`) {
+		t.Fatalf("error = %v, want only the nested file refused", err)
+	}
+}
