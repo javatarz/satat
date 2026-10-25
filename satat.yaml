@@ -13,6 +13,12 @@ limits:
   per_repo: 1
   per_account: 1
 
+# Persistent caches (a lane's caches.persist) of all lanes together: one unused for longer than
+# max_unused is evicted, and over max_size the least recently used go first (ADR 0033).
+cache_reaper:
+  max_unused: 336h   # 14 days
+  max_size: 20GiB
+
 lanes:
   # Claude Code on the subscription token (slice 4). The image is built locally:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
@@ -39,6 +45,21 @@ lanes:
     max_runs: 1
     # Needs to reach Anthropic and GitHub; open egress until the proxy exists (see smoke).
     internal: false
+    # Build caches on disk volumes, outside /workspace, so they do not count against `memory`
+    # (ADR 0033). The paths match the image's cache env vars; /cache/tmp takes temp files a
+    # build needs to execute, which the noexec /tmp tmpfs refuses. Per step for now: the
+    # caches start empty and are removed with the step. persist: true keeps them per repo.
+    caches:
+      persist: false
+      paths:
+        go-mod: /cache/go-mod
+        go-build: /cache/go-build
+        pip: /cache/pip
+        npm: /cache/npm
+        maven: /cache/maven
+        gradle: /cache/gradle
+        corepack: /cache/corepack
+        tmp: /cache/tmp
 
   # Placeholder until the Claude Code image exists (slice 4 replaces it).
   smoke:
