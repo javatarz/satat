@@ -89,7 +89,7 @@ function gitReason(args) {
 
 function segmentReason(seg, depth) {
   let i = 0;
-  while (i < seg.length && (ASSIGN.test(seg[i]) || ["env", "export", "command", "exec", "nohup", "time"].includes(seg[i]))) {
+  while (i < seg.length && (ASSIGN.test(seg[i]) || ["env", "export", "command", "exec", "nohup", "time", "if", "then", "else", "elif", "do", "while", "until", "!", "{"].includes(seg[i]))) {
     if (badAssign(seg[i])) return "SKIP / HUSKY / PRE_COMMIT_ALLOW_NO_CONFIG / LEFTHOOK or GIT_CONFIG hook skipping";
     i++;
   }

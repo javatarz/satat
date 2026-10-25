@@ -84,6 +84,12 @@ func TestGuardBlocksHookSkipping(t *testing.T) {
 		"eval 'git commit --no-verify -m x'",
 		"bash -c \"bash -c 'git commit -n'\"",
 		"SKIP=\"x\" git commit -m x",
+		// compound commands
+		"if true; then git commit -n -m x; fi",
+		"for f in a b; do git commit --no-verify -m $f; done",
+		"if git commit -n -m x; then echo ok; fi",
+		"false || { git commit -n -m x; }",
+		"while true; do HUSKY=0 git commit -m x; done",
 		// variants
 		"HUSKY_SKIP_HOOKS=1 git commit -m x",
 		"LEFTHOOK=0 git commit -m x",
@@ -152,6 +158,8 @@ func TestGuardBlocksHookSkipping(t *testing.T) {
 		"bash -c 'git commit -m x'",
 		"sh -c 'ls -n'",
 		"git log --no-merges",
+		"if true; then git commit -m x; fi",
+		"for f in a b; do git add $f; done",
 		"skip=1 make test",
 	}
 	for _, cmd := range allowed {
