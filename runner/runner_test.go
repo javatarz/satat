@@ -45,14 +45,21 @@ echo '{"type":"result","is_error":false,"result":"done","num_turns":2}'
 // fakeMise stands in for mise. It logs each call, records the environment and directory of the
 // install, and behaves as the fake/mise-mode file says (mise's allowlisted environment has no
 // FAKE_* variables): "" installs go, "hit" finds everything cached, "fail" fails on go, "slow"
-// hangs until killed, "lsfail" breaks only the missing-tools check.
+// hangs until killed, "lsfail" breaks only the missing-tools check. fake/mise-pins "none" makes
+// the repo pin nothing.
 const fakeMise = `#!/bin/sh
 rec="$(dirname "$0")/fake"
 FAKE_MISE="$(cat "$rec/mise-mode" 2>/dev/null)"
+FAKE_PINS="$(cat "$rec/mise-pins" 2>/dev/null)"
 echo "$*" >> "$rec/mise-calls"
 case "$1" in
 	trust) echo "mise trusted $2" >&2; exit 0;;
 	ls)
+		if [ "$3" != --missing ]; then
+			# Pin detection: "unpinned" resolves nothing unless the lane defaults are in play.
+			if [ "$FAKE_PINS" = none ] && [ -z "$MISE_GLOBAL_CONFIG_FILE" ]; then echo '{}'; exit 0; fi
+			echo '{"go":[{"version":"1.25.1","installed":false}]}'; exit 0
+		fi
 		case "$FAKE_MISE" in
 			hit) echo '{}';;
 			lsfail) echo 'boom' >&2; exit 1;;

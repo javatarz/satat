@@ -207,8 +207,13 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		return err
 	}
 
-	if err := prepareToolchain(ctx, cfg, repoDir, toolTimeout, res); err != nil {
+	toolEnv, err := prepareToolchain(ctx, cfg, repoDir, toolTimeout, res)
+	if err != nil {
 		return err
+	}
+	for _, kv := range toolEnv {
+		k, _, _ := strings.Cut(kv, "=")
+		claudeEnv = append(withoutKeys(claudeEnv, k), kv)
 	}
 
 	claudeErr := runClaude(ctx, cfg, claudeEnv, repoDir, in, res)
