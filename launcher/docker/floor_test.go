@@ -214,7 +214,7 @@ func TestOptionalEnvIsPassedOnlyWhenSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := strings.Join(req.cfg.Env, "\n")
+	got := strings.Join(req.config.Env, "\n")
 	if !strings.Contains(got, "SET_ME=v") || strings.Contains(got, "EMPTY_ME") || strings.Contains(got, "UNSET_ME") {
 		t.Errorf("optional env not handled as set-only:\n%s", got)
 	}
