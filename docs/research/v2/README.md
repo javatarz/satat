@@ -13,6 +13,7 @@ starting with [ADR 0021](../../adr/0021-adopt-platform-plumbing.md).
 | [intake-triggers.md](intake-triggers.md) | Intake for webhooks, cron and alerts: Hatchet built-ins versus gateways and integration platforms |
 | [octo-sts-fit.md](octo-sts-fit.md) | Whether octo-sts can mint per-step GitHub tokens on k3s, what self-hosting involves, and the alternatives. Recommends a Satat token broker |
 | [lane-started-runs.md](lane-started-runs.md) | How a lane is marked as running an agent, why lane-started runs are refused on agent lanes, and what #129 should change |
+| [secret-store.md](secret-store.md) | Where loaded secrets live per cluster: encrypted Kubernetes Secrets on k3d and EKS, the alternatives, the Compose question and the one-time load. Feeds ADR 0032 |
 | [notes/](notes/) | Raw per-topic research with full citations, used as input to the files above. Notes may describe options that were later rejected |
 
 The current architecture is kept in the onboarding guide
