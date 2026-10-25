@@ -141,9 +141,22 @@ workflow, `satat-intake`, triggered by the event key `github:issues`. It maps Gi
 the run input (`MapWebhook`) and pushes `satat:issue`, which the existing workflow already handles. It queues
 only `labeled` + `ready-for-agent` on an open issue (not a PR) in a repo named in `SATAT_INTAKE_REPOS`; the
 list is required, so an unset variable queues nothing and the worker logs that intake is off. The worker
-still re-reads the issue's labels at run start, so a stale or forged delivery cannot launch a step.
+still re-reads the issue's labels at run start, so a stale delivery for an issue that lost its label launches nothing.
+It does not re-read the title and body: they come from the webhook payload, so a forged delivery for a
+genuinely labelled issue would run with attacker-chosen text. Re-reading them at run start is a follow-up.
 Unit tests cover the mapping, every skip, fail-closed config and a failed push (which fails the intake run so
 Hatchet retries it).
+
+Security limits of this slice:
+
+- **The webhook secret is mandatory.** Never expose a webhook with a blank secret on a tunnel.
+- **Tunnelling to port 8888 exposes the whole Hatchet API and dashboard,** not just the webhook path. Put a
+  tunnel or proxy in front that forwards only the webhook path, or use `gh webhook forward` and expose nothing.
+- Anyone holding a Hatchet token can push `github:issues` or `satat:issue` directly; the repo allowlist does
+  not cover that.
+- The #175 rule (Satat's machine user must not be the labeller) is deferred to #175. Nothing checks the
+  sender yet; Satat never applies `ready-for-agent` today.
+- Redeliveries of one delivery are not deduplicated: a redelivered event queues a second run for the issue.
 
 Setup, once, in the Hatchet dashboard (Webhooks, new): source GitHub, the webhook secret from 1Password, event
 key expression `'github:issues'` (a constant: GitHub's event type is a header, and the mapper checks the
