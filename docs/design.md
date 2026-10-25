@@ -352,6 +352,9 @@ go test -short -p 1 ./...   # skips the tests that start containers
    `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.
 
+`just setup` does step 1 with a random password, and `just run` does steps 3 and 4 after
+`just doctor` has checked the prerequisites.
+
 Never put token values in the repo ([AGENTS.md](../AGENTS.md#secrets)).
 
 ## What is not built

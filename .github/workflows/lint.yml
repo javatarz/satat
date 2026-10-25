@@ -25,5 +25,10 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
           sudo mv actionlint /usr/local/bin/
 
+      - uses: extractions/setup-just@v4
+
+      - name: Check the justfile parses
+        run: just --list
+
       - name: Run pre-commit
         run: pipx run pre-commit run --all-files --show-diff-on-failure

@@ -18,6 +18,26 @@ It never merges anything itself.
 See [docs/design.md](./docs/design.md) for how it works today, and [CONTEXT.md](./CONTEXT.md)
 for versions and the domain glossary.
 
+## Getting started
+
+You need Docker ([colima](https://github.com/abiosoft/colima) or Docker Desktop), [mise](https://mise.jdx.dev/),
+[just](https://just.systems/), [pre-commit](https://pre-commit.com/), [gh](https://cli.github.com/),
+[actionlint](https://github.com/rhysd/actionlint) and the
+[1Password CLI](https://developer.1password.com/docs/cli/) (`op`).
+
+```sh
+just setup    # install the pinned tools and git hooks, create .env, then run doctor
+just doctor   # check this machine can run Satat; names what is missing
+just run      # bring the platform up on Docker Compose
+just lint     # what CI runs: pre-commit, gofmt, go vet and the Docker socket check
+just test     # Go tests (needs Docker); just test-short skips the container tests
+just build    # build the Go binaries; just build-images builds the images
+```
+
+The Claude lane image is built locally: `just build-images`, then put the reference it prints
+in `satat.yaml`. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and
+watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#run-it-locally).
+
 ## Docs
 
 - [docs/design.md](./docs/design.md) — how Satat works today: flow, launcher, pusher, caps, evals
