@@ -23,7 +23,7 @@
   (NN12) decided that a repo maps to an account and the launcher will mount that account's
   secret. On `main` today, accounts are only concurrency cap keys.
 - Secrets live in one store per install, loaded once from any source
-  ([security](security.md#secrets-use-never-see), ADR 0032 Proposed). `satat.yaml` names which
+  ([security](security.md#secrets-use-never-see), ADR 0032). `satat.yaml` names which
   secrets exist, never where their values come from. That replaces the `deploy.secrets` source
   map proposed on #129. Grouping secrets per account or person still applies, as store entries.
 - The shared `satat.yaml` should not name one owner's 1Password vault. Each install loads its

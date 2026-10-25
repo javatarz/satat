@@ -47,8 +47,10 @@ None of that exists yet. The EC2 + Docker Compose pipeline lives on the `v0.1` b
 
 ### Secrets
 
-Never in git-tracked files, Terraform state or cloud-init. Where secrets live on Kubernetes is
-undecided (planned ADR); until then, GitHub repository secrets and cloud OIDC (no long-lived keys).
+Never in git-tracked files, Terraform state or cloud-init. Loaded secrets live in one OpenBao
+store per environment, read per component identity, with the policy held in the store (ADR
+0032). Until that is built, `scripts/compose-up.sh` reads them from 1Password. CI uses GitHub
+repository secrets and cloud OIDC (no long-lived keys).
 
 ### External repos
 

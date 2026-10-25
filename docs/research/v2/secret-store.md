@@ -283,7 +283,7 @@ So on k3d the seal key Secret, and OpenBao's Raft volume, survive stop and start
 ## Not verified
 
 - **k3d with Kubernetes auth.** Same policies, roles bound to service accounts, a step pod with
-  no service-account token and a NetworkPolicy keeping it from OpenBao. Needs a k3d card; #130
+  no service-account token and a NetworkPolicy keeping it from OpenBao. Spike card #153; #130
   brings k3d.
 - `kubectl port-forward` arriving as loopback inside the pod, so the operator login works
   through it. `kubectl exec` is the fallback.
