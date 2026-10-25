@@ -24,7 +24,7 @@ unanswered.
 - **NN9 (local install):** a local single-node install needs Docker plus the k3d CLI, not
   Docker alone.
 - **Laptop isolation:** plain container isolation on the laptop. gVisor is unproven on k3d and
-  absent on macOS. The laptop runs only the owner's repos. gVisor stays on k3s and the clouds.
+  absent on macOS. The laptop runs only trusted repos (the operator's own, or collaborators' that the operator lists; amended 2026-10-25). Untrusted repos need gVisor or Kata (#166, #110). gVisor stays on k3s and the clouds.
 - **k3s overhead:** accepted on the current t4g.xlarge. Measured in #104: k3s, Hatchet,
   Postgres, LiteLLM and a worker use about 2.4 GiB with nothing running, leaving about 13 GiB
   of the 16 for step pods (`docs/research/v2/platform-ram-spike.md`). Concurrency is then set
