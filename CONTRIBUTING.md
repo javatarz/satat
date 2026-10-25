@@ -124,6 +124,15 @@ Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 `mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
 `just doctor`, which names anything else that is missing, such as `actionlint`.
 
+### Lane images
+
+The lanes in `satat.yaml` run images built locally, and the pinned references in the file are the
+author's builds. On a new machine, or after changing `egress/` or `images/egress`, run
+`scripts/build-egress-image.sh` (the egress proxy, #169) and `scripts/build-claude-image.sh`, and
+paste each printed digest into `satat.yaml` (`egress.image` and the claude lane's `image`). A
+missing egress image fails the launch with that instruction. The worker image copies `egress/`, so
+rebuild it with the compose project after the same change.
+
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.
 

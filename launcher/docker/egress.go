@@ -238,6 +238,9 @@ func (l *Launcher) ensureEgressOnce(ctx context.Context, lane launcher.Lane) err
 		if cerrdefs.IsConflict(err) {
 			continue
 		}
+		if cerrdefs.IsNotFound(err) {
+			return fmt.Errorf("create %s: the egress proxy image %s is missing: run scripts/build-egress-image.sh and paste the digest it prints into egress.image in satat.yaml: %w", name, cfg.Image, err)
+		}
 		if err != nil {
 			return fmt.Errorf("create %s: %w", name, err)
 		}

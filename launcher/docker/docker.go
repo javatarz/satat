@@ -91,7 +91,7 @@ func (l *Launcher) Setup(ctx context.Context) error {
 		}
 		if lane.Egress != nil {
 			if err := l.pullIfMissing(ctx, lane.Egress.Image); err != nil {
-				return err
+				return fmt.Errorf("lane %q: the egress proxy image is missing and could not be pulled: run scripts/build-egress-image.sh and paste the digest it prints into egress.image in satat.yaml: %w", lane.Name, err)
 			}
 			if err := l.ensureEgress(ctx, lane); err != nil {
 				return err
