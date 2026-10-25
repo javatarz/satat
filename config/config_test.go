@@ -257,8 +257,18 @@ func TestClaudeImageStartsUnderTheFloor(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		_, _ = api.NetworkRemove(context.Background(), "satat-lane-claude", client.NetworkRemoveOptions{})
+		// The lane keeps its caches per repo, so the step leaves persistent volumes under its scope.
+		for _, prefix := range []string{"satat-cache-claude-imgtest-", "satat-cacheuse-claude-imgtest-"} {
+			vols, err := api.VolumeList(context.Background(), client.VolumeListOptions{Filters: make(client.Filters).Add("name", prefix)})
+			if err != nil {
+				continue
+			}
+			for _, v := range vols.Items {
+				_, _ = api.VolumeRemove(context.Background(), v.Name, client.VolumeRemoveOptions{})
+			}
+		}
 	})
-	res, err := l.Launch(ctx, launcher.Step{Run: "imgtest", Name: "claude", Lane: "claude", Input: []byte(`{"repo":"--bad","base":"main","issue":{"number":1,"title":"t"}}`)})
+	res, err := l.Launch(ctx, launcher.Step{Run: "imgtest", Name: "claude", Lane: "claude", CacheScope: "imgtest", Input: []byte(`{"repo":"--bad","base":"main","issue":{"number":1,"title":"t"}}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
