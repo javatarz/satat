@@ -185,7 +185,7 @@ template beside them with its own identity. Not tried here.
 Target: an LLM gateway proxy holds the token and gives each step a short-lived virtual key
 (ADR 0032, `secrets-decisions.md` section 3). LiteLLM is the first candidate; any proxy with
 the same properties will do. Whether it can use the subscription OAuth token upstream is
-unproven (card GATEWAY_SPIKE).
+unproven (#155).
 
 Until then on Compose, the Claude lane cannot work without the token in its
 container. The launcher (worker identity) would read `claude-oauth-token` and pass it in, as it
@@ -295,7 +295,7 @@ So on k3d the seal key Secret, and OpenBao's Raft volume, survive stop and start
 - A colima restart (as opposed to `compose down` / `up`). Not run, to avoid stopping the
   running Satat stack. Named volumes live in the VM disk, so it should survive.
 - OpenBao Agent rendering a file for the gateway proxy, and the proxy using the OAuth token
-  upstream (card GATEWAY_SPIKE).
+  upstream (#155).
 - Raft snapshot and restore (`bao operator raft snapshot`), if re-initialising per environment
   ever stops being acceptable.
 - Anything on EKS; from AWS docs only.
