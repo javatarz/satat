@@ -31,7 +31,27 @@ type Config struct {
 	LaneMaxRuns map[string]int
 	// CacheReaper bounds the persistent caches of every lane together.
 	CacheReaper CacheReaper
+	// Poller says which repos the worker polls for ready-for-agent issues (#135).
+	Poller Poller
 }
+
+// Poller is the worker's issue poll. With no repos it is off.
+type Poller struct {
+	// Cron is a five-field cron expression.
+	Cron  string
+	Repos []PollRepo
+}
+
+// PollRepo is one repo to poll: issues labelled ready-for-agent are queued onto Lane, and the
+// agent starts from Base.
+type PollRepo struct {
+	Name string
+	Base string
+	Lane string
+}
+
+// DefaultPollCron is every five minutes.
+const DefaultPollCron = "*/5 * * * *"
 
 // CacheReaper is the cache reaper's policy (ADR 0033): a persistent cache unused for longer than
 // MaxUnused is evicted, and over MaxBytes in all, the least recently used go first.
@@ -56,7 +76,19 @@ type Limits struct {
 type file struct {
 	Limits      limitsFile          `yaml:"limits"`
 	CacheReaper cacheReaperFile     `yaml:"cache_reaper"`
+	Poller      pollerFile          `yaml:"poller"`
 	Lanes       map[string]laneFile `yaml:"lanes"`
+}
+
+type pollerFile struct {
+	Cron  string         `yaml:"cron"`
+	Repos []pollRepoFile `yaml:"repos"`
+}
+
+type pollRepoFile struct {
+	Name string `yaml:"name"`
+	Base string `yaml:"base"`
+	Lane string `yaml:"lane"`
 }
 
 type cacheReaperFile struct {
@@ -156,10 +188,60 @@ func Parse(r io.Reader) (Config, error) {
 			c.LaneMaxRuns[name] = 1
 		}
 	}
+	var perr error
+	if c.Poller, perr = f.Poller.parse(c.Accounts); perr != nil {
+		errs = append(errs, fmt.Errorf("poller: %w", perr))
+	}
 	if err := errors.Join(errs...); err != nil {
 		return Config{}, err
 	}
 	return c, nil
+}
+
+var (
+	pollRepoRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
+	pollBranchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
+)
+
+// parse checks the repos against the lanes (the keys of lanes) and fills the defaults: cron every
+// five minutes, base main, lane claude.
+func (pf pollerFile) parse(lanes map[string]string) (Poller, error) {
+	p := Poller{Cron: pf.Cron}
+	if p.Cron == "" {
+		p.Cron = DefaultPollCron
+	}
+	var errs []error
+	if len(strings.Fields(p.Cron)) != 5 {
+		errs = append(errs, fmt.Errorf("cron %q is not a five-field cron expression", p.Cron))
+	}
+	seen := map[string]bool{}
+	for i, rf := range pf.Repos {
+		r := PollRepo{Name: rf.Name, Base: rf.Base, Lane: rf.Lane}
+		if r.Base == "" {
+			r.Base = "main"
+		}
+		if r.Lane == "" {
+			r.Lane = "claude"
+		}
+		switch {
+		case !pollRepoRE.MatchString(r.Name) || strings.Contains(r.Name, ".."):
+			errs = append(errs, fmt.Errorf("repos[%d]: name %q is not owner/name", i, r.Name))
+			continue
+		case seen[r.Name]:
+			errs = append(errs, fmt.Errorf("repos[%d]: %s is listed twice", i, r.Name))
+			continue
+		case !pollBranchRE.MatchString(r.Base) || strings.Contains(r.Base, ".."):
+			errs = append(errs, fmt.Errorf("repos[%d]: base %q is not a plain branch name", i, r.Base))
+			continue
+		}
+		if _, ok := lanes[r.Lane]; !ok {
+			errs = append(errs, fmt.Errorf("repos[%d]: unknown lane %q", i, r.Lane))
+			continue
+		}
+		seen[r.Name] = true
+		p.Repos = append(p.Repos, r)
+	}
+	return p, errors.Join(errs...)
 }
 
 // parse fills the defaults, 14 days and 20 GiB, for what the file leaves out.

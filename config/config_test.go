@@ -279,3 +279,41 @@ func TestClaudeImageStartsUnderTheFloor(t *testing.T) {
 		t.Fatalf("result.json missing or wrong: %v", res.Files)
 	}
 }
+
+func TestPollerIsOffWithoutRepos(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(c.Poller.Repos) != 0 || c.Poller.Cron != DefaultPollCron {
+		t.Fatalf("unexpected poller: %+v", c.Poller)
+	}
+}
+
+func TestPollerReposTakeDefaults(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("") + "poller:\n  cron: \"*/10 * * * *\"\n  repos:\n    - name: me/one\n      lane: a\n    - name: me/two\n      base: develop\n      lane: a\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []PollRepo{{"me/one", "main", "a"}, {"me/two", "develop", "a"}}
+	if c.Poller.Cron != "*/10 * * * *" || len(c.Poller.Repos) != 2 || c.Poller.Repos[0] != want[0] || c.Poller.Repos[1] != want[1] {
+		t.Fatalf("unexpected poller: %+v", c.Poller)
+	}
+}
+
+func TestPollerRefusesBadRepos(t *testing.T) {
+	for name, y := range map[string]string{
+		"not owner/name": "poller:\n  repos:\n    - {name: nope, lane: a}\n",
+		"traversal":      "poller:\n  repos:\n    - {name: me/.., lane: a}\n",
+		"duplicate":      "poller:\n  repos:\n    - {name: me/x, lane: a}\n    - {name: me/x, lane: a}\n",
+		"unknown lane":   "poller:\n  repos:\n    - {name: me/x, lane: nope}\n",
+		"default lane":   "poller:\n  repos:\n    - {name: me/x}\n",
+		"bad base":       "poller:\n  repos:\n    - {name: me/x, lane: a, base: \"a b\"}\n",
+		"bad cron":       "poller:\n  cron: \"every day\"\n",
+		"unknown key":    "poller:\n  interval: 5m\n",
+	} {
+		if _, err := Parse(strings.NewReader(lane("") + y)); err == nil {
+			t.Errorf("%s: want an error", name)
+		}
+	}
+}

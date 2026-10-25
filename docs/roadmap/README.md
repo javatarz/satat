@@ -81,7 +81,7 @@ Every workflow that starts somewhere other than a person's issue ends in a draft
 human moves an issue from `needs-triage` to `ready-for-agent`, and only `ready-for-agent`
 issues reach the agent.
 
-Every way in produces the same issue event: `satat-enqueue` by hand today, a poller (#135) and
+Every way in produces the same issue event: `satat-enqueue` by hand, the poller (#135) and
 later a webhook. The worker checks `ready-for-agent` when the run starts (#134), and then checks
 the repo is ready (#175: a valid `.satat/commands.yaml`, access, merge protection). If it is not,
 the issue is not started, Satat comments once and sets `needs-info`. Every way in is gated,
