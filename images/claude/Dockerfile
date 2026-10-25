@@ -1,10 +1,10 @@
-# Claude lane image (ADR 0026): the unmodified claude CLI plus the Satat runner, non-root, with a
-# polyglot toolchain (Go, JDK 21 + Maven, Python, Node) so the agent can run a repo's own tests (#120).
+# Claude lane image (ADR 0026): the unmodified claude CLI plus the Satat runner, non-root. Language
+# toolchains are NOT baked in: mise installs them at run time from the repo's .mise.toml (or the lane
+# defaults in /etc/mise/config.toml) into the /cache volume, so the image stays lean (#120).
 # Build from the repo root:  scripts/build-claude-image.sh
 ARG GO_IMAGE
 ARG NODE_IMAGE
-ARG JDK_IMAGE
-ARG MAVEN_IMAGE
+ARG MISE_IMAGE
 
 FROM ${GO_IMAGE} AS runner
 WORKDIR /src
@@ -14,30 +14,19 @@ COPY runner ./runner
 COPY cmd/satat-runner ./cmd/satat-runner
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/satat-runner ./cmd/satat-runner
 
-# Source stage for /usr/share/maven. Copied rather than apt-installed: Debian bookworm ships an old
-# Maven (3.8.x) that drags in its own default JDK, and a digest-pinned upstream tree matches how Go
-# and the JDK are pinned. Maven is pure Java, so it runs on the copied JDK.
-FROM ${MAVEN_IMAGE} AS maven
-FROM ${JDK_IMAGE} AS jdk
+# Digest-pinned official mise image, used only as the source of the mise binary.
+FROM ${MISE_IMAGE} AS mise
 
 FROM ${NODE_IMAGE}
 ARG CLAUDE_CODE_VERSION
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git ca-certificates \
-    python3 python3-venv python3-pip python-is-python3 \
   && rm -rf /var/lib/apt/lists/* \
   && npm install -g --omit=dev "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   && npm cache clean --force
-# Go from the pinned golang image (the runner build stage). GOTOOLCHAIN=local (set below) stops go
-# from trying to download a newer toolchain, which the network-less lane could not do anyway.
-COPY --from=runner /usr/local/go /usr/local/go
-# JDK 21 (Temurin jammy build: its glibc is older than bookworm's, so it runs here) and Maven.
-COPY --from=jdk /opt/java/openjdk /opt/java/openjdk
-COPY --from=maven /usr/share/maven /usr/share/maven
-RUN ln -s /usr/share/maven/bin/mvn /usr/local/bin/mvn
-# corepack ships with Node; enabling it puts yarn/pnpm shims on PATH. The shims download the pinned
-# package manager on first use into COREPACK_HOME, so never prompt for it.
-RUN corepack enable
+COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
+# Lane defaults, used when a repo pins nothing.
+COPY images/claude/mise-config.toml /etc/mise/config.toml
 # Managed settings are the second line of defence for #102: subscription login only, and a
 # planted ANTHROPIC_API_KEY makes the session refuse to start.
 RUN mkdir -p /etc/claude-code \
@@ -45,18 +34,24 @@ RUN mkdir -p /etc/claude-code \
 COPY --from=runner /out/satat-runner /usr/local/bin/satat-runner
 # Numeric non-root user with no login shell. HOME is /workspace at run time (a tmpfs).
 RUN groupadd --gid 10001 satat && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin satat
-# Package-manager caches. The root filesystem is read-only at run time, so these paths are NOT
-# writable until the launcher mounts a disk volume on /cache. This image must therefore be merged
-# together with the launcher cache-mount slice of #120: on its own, go/pip/npm/mvn/corepack fail
+# Caches and scratch. The root filesystem is read-only at run time, so these paths are NOT writable
+# until the launcher mounts a disk volume on /cache. This image must therefore be merged together
+# with (after) the launcher cache-mount slice of #120: on its own, mise, go, pip, npm and mvn fail
 # with read-only or permission errors. Ownership here only seeds fresh named volumes.
-# /cache/tmp is the scratch dir: the /tmp and /workspace tmpfs mounts are noexec, and go run/test,
-# Maven's jansi native library and similar tools must execute what they write, so TMPDIR points at
-# the exec-capable cache volume instead.
-RUN mkdir -p /cache/go-mod /cache/go-build /cache/pip /cache/npm /cache/maven /cache/gradle /cache/corepack /cache/tmp \
+# /cache/tmp is the scratch dir: the /tmp and /workspace tmpfs mounts are noexec, and tools that
+# must execute what they write (go run/test, JVM native libs) need an exec-capable TMPDIR.
+RUN mkdir -p /cache/mise /cache/mise-cache /cache/mise-state \
+    /cache/go-mod /cache/go-build /cache/pip /cache/npm /cache/maven /cache/gradle /cache/corepack /cache/tmp \
   && chown -R 10001:10001 /cache
 USER 10001:10001
-ENV JAVA_HOME=/opt/java/openjdk \
-  PATH=/usr/local/go/bin:/opt/java/openjdk/bin:$PATH \
+# Shims first so `go`, `python`, `java`, `node` resolve to the mise-managed (repo-pinned) versions.
+ENV MISE_DATA_DIR=/cache/mise \
+  MISE_CACHE_DIR=/cache/mise-cache \
+  MISE_STATE_DIR=/cache/mise-state \
+  MISE_CONFIG_DIR=/etc/mise \
+  MISE_YES=1 \
+  MISE_TRUSTED_CONFIG_PATHS=/workspace \
+  PATH=/cache/mise/shims:$PATH \
   GOTOOLCHAIN=local \
   GOMODCACHE=/cache/go-mod \
   GOCACHE=/cache/go-build \
