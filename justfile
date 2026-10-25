@@ -30,12 +30,13 @@ run: doctor
     fi
     scripts/compose-up.sh
 
-# Run what CI runs: pre-commit, gofmt, go vet and the Docker socket check
+# Run what CI runs: pre-commit, gofmt, go vet, the Docker socket check and the compose render check
 lint:
     pre-commit run --all-files
     @unformatted="$(git ls-files -z '*.go' | xargs -0 gofmt -l)"; [ -z "$unformatted" ] || { echo "$unformatted"; echo "run: gofmt -w on these"; exit 1; }
     go vet ./...
     scripts/check-compose-socket.sh
+    go run ./cmd/satat deploy render --check
 
 # Run all Go tests (needs Docker)
 test:

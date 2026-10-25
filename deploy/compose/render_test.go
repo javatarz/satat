@@ -63,6 +63,39 @@ lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea41618
 	}
 }
 
+func TestRenderPassesOptionalEnvOnlyWhenSet(t *testing.T) {
+	cfg, err := config.Parse(strings.NewReader(`
+limits: {global: 1, per_repo: 1, per_account: 1}
+deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}
+lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12", memory: 1GiB, cpus: 1, pids: 64, workspace: 64MiB, timeout: 1m, optional_env: [SATAT_GIT_NAME], account: a, max_runs: 1}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f composeFile
+	if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
+		t.Fatal(err)
+	}
+	if got, want := f.Services["worker"].Environment["SATAT_GIT_NAME"], "${SATAT_GIT_NAME:-}"; got != want {
+		t.Fatalf("worker.environment.SATAT_GIT_NAME = %q, want %q", got, want)
+	}
+}
+
+// The cache reaper reads /system/df through the proxy (ADR 0033); a render without SYSTEM breaks it.
+func TestRenderKeepsSystemOnTheProxy(t *testing.T) {
+	cfg, err := config.Load("../../satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f composeFile
+	if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.Services["docker-proxy"].Environment["SYSTEM"]; got != "1" {
+		t.Fatalf("docker-proxy SYSTEM = %q, want 1", got)
+	}
+}
+
 func TestRenderMountsTheSocketOnlyInTheProxy(t *testing.T) {
 	cfg, err := config.Load("../../satat.yaml")
 	if err != nil {

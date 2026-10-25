@@ -101,10 +101,6 @@ services:
       DOCKER_HOST: tcp://docker-proxy:2375
       SATAT_CONFIG: /etc/satat/satat.yaml
       HOME: /tmp
-      # Author and committer for the agent's commits. Optional: set them in the environment to
-      # override the defaults in the runner.
-      SATAT_GIT_NAME: ${SATAT_GIT_NAME:-}
-      SATAT_GIT_EMAIL: ${SATAT_GIT_EMAIL:-}
       # Repos (owner/name, comma-separated) the webhook intake may queue. Empty turns intake off.
       SATAT_INTAKE_REPOS: ${SATAT_INTAKE_REPOS:-}
       # Secrets, by name: the ones a lane passes to its step (pass_env, ADR 0026) and the worker's own
@@ -117,6 +113,11 @@ services:
       CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?run satat deploy up}
       SATAT_GITHUB_TOKEN: ${SATAT_GITHUB_TOKEN:?run satat deploy up}
       SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?run satat deploy up}
+      # Optional, by name: each lane's optional_env (the agent's git author and committer, say).
+      # Set them in the environment of `satat deploy up` to override the runner's defaults; unset
+      # or empty, the step does not get them.
+      SATAT_GIT_EMAIL: ${SATAT_GIT_EMAIL:-}
+      SATAT_GIT_NAME: ${SATAT_GIT_NAME:-}
     volumes:
       - ./satat.yaml:/etc/satat/satat.yaml:ro
     # Ready means Hatchet lists this worker as ACTIVE with a fresh heartbeat and Docker answers.
