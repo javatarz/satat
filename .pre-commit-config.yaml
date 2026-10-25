@@ -6,7 +6,7 @@ repos:
         stages: [pre-commit]
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -63,6 +63,6 @@ repos:
         always_run: true
 
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
-    rev: 2.7.3
+    rev: 3.11.1
     hooks:
       - id: editorconfig-checker
