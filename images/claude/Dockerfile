@@ -1,6 +1,6 @@
 # Claude lane image (ADR 0026): the unmodified claude CLI plus the Satat runner, non-root. Language
 # toolchains are NOT baked in: mise installs them at run time from the repo's .mise.toml (or the lane
-# defaults in /etc/mise/config.toml) into the /cache volume, so the image stays lean (#120).
+# defaults in /usr/share/satat/mise-defaults.toml) into the /cache volume, so the image stays lean (#120).
 # Build from the repo root:  scripts/build-claude-image.sh
 ARG GO_IMAGE
 ARG NODE_IMAGE
@@ -25,8 +25,10 @@ RUN apt-get update \
   && npm install -g --omit=dev "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   && npm cache clean --force
 COPY --from=mise /usr/local/bin/mise /usr/local/bin/mise
-# Lane defaults, used when a repo pins nothing.
-COPY images/claude/mise-config.toml /etc/mise/config.toml
+# Lane defaults, applied by the runner only when a repo pins nothing (SATAT_MISE_DEFAULTS). Keep this
+# OUT of /etc/mise: mise reads /etc/mise/config.toml on every run, which would install all four
+# languages for a repo that pins only one.
+COPY images/claude/mise-config.toml /usr/share/satat/mise-defaults.toml
 # Managed settings are the second line of defence for #102: subscription login only, and a
 # planted ANTHROPIC_API_KEY makes the session refuse to start.
 RUN mkdir -p /etc/claude-code \
@@ -49,6 +51,7 @@ ENV MISE_DATA_DIR=/cache/mise \
   MISE_CACHE_DIR=/cache/mise-cache \
   MISE_STATE_DIR=/cache/mise-state \
   MISE_CONFIG_DIR=/etc/mise \
+  SATAT_MISE_DEFAULTS=/usr/share/satat/mise-defaults.toml \
   MISE_YES=1 \
   MISE_TRUSTED_CONFIG_PATHS=/workspace \
   PATH=/cache/mise/shims:$PATH \
