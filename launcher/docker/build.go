@@ -9,6 +9,7 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/launcher"
 )
@@ -49,7 +50,7 @@ func normalizeLane(l launcher.Lane) (launcher.Lane, error) {
 	if err != nil {
 		return l, err
 	}
-	if err := ValidateRequest(probe.config, probe.host, probe.networking); err != nil {
+	if err := ValidateRequest(probe.config, probe.host, probe.networking, cachePaths(l)); err != nil {
 		return l, fmt.Errorf("lane %q: %w", l.Name, err)
 	}
 	return l, nil
@@ -65,6 +66,17 @@ type request struct {
 func containerName(run, step string) string { return resourcePrefix + run + "-" + step }
 func inputVolume(run, step string) string   { return containerName(run, step) + "-in" }
 func laneNetwork(lane string) string        { return networkPrefix + lane }
+
+func inputVolumeOptions(s launcher.Step) client.VolumeCreateOptions {
+	return client.VolumeCreateOptions{
+		Name:   inputVolume(s.Run, s.Name),
+		Labels: map[string]string{labelManaged: "true", labelKind: kindInput, labelRun: s.Run, labelStep: s.Name},
+	}
+}
+
+// cachePaths are the paths the lane declares for caches: the only places, besides /etc/satat and
+// /workspace, where the floor lets a volume be mounted.
+func cachePaths(l launcher.Lane) []string { return nil }
 
 // buildRequest turns a lane and a step identity into a create request. Nothing from Step.Input
 // or any other runtime data reaches a flag here: only the lane and the step's identifiers do.

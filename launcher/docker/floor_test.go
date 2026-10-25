@@ -7,6 +7,8 @@ import (
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/api/types/volume"
+	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/launcher"
 )
@@ -34,7 +36,7 @@ func okRequest(t *testing.T) request {
 
 func TestBuiltRequestPassesTheFloor(t *testing.T) {
 	r := okRequest(t)
-	if err := ValidateRequest(r.config, r.host, r.networking); err != nil {
+	if err := ValidateRequest(r.config, r.host, r.networking, nil); err != nil {
 		t.Fatalf("a request built from a valid lane must pass the floor: %v", err)
 	}
 }
@@ -97,12 +99,27 @@ func TestFloorRefuses(t *testing.T) {
 		{"unlabelled", func(r *request) { delete(r.config.Labels, labelManaged) }, "label"},
 		{"log driver", func(r *request) { r.host.LogConfig.Type = "syslog" }, "log driver"},
 		{"dns override", func(r *request) { r.host.ExtraHosts = []string{"x:1.2.3.4"} }, "dns"},
+		{"volume as a host bind", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x", Target: "/cache/a",
+				VolumeOptions: &mount.VolumeOptions{DriverConfig: &mount.Driver{Name: "local", Options: map[string]string{"type": "none", "o": "bind", "device": "/"}}}})
+		}, "driver config"},
+		{"volume subpath", func(r *request) { r.host.Mounts[0].VolumeOptions.Subpath = "out" }, "subpath"},
+		{"volume at an undeclared path", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x", Target: "/home"})
+		}, "volume at \"/home\" is not allowed"},
+		{"volume at an undeclared cache path", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x", Target: "/cache/b"})
+		}, "volume at \"/cache/b\" is not allowed"},
+		{"input volume moved", func(r *request) { r.host.Mounts[0].Target = "/etc" }, "volume at \"/etc\" is not allowed"},
+		{"typed tmpfs elsewhere", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeTmpfs, Target: "/etc"})
+		}, "tmpfs at"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			r := okRequest(t)
 			tc.mutate(&r)
-			err := ValidateRequest(r.config, r.host, r.networking)
+			err := ValidateRequest(r.config, r.host, r.networking, []string{"/cache/a"})
 			if err == nil {
 				t.Fatal("the floor accepted a request it must refuse")
 			}
@@ -118,7 +135,7 @@ func TestFloorReportsEveryViolation(t *testing.T) {
 	r.host.Privileged = true
 	r.host.Binds = []string{"/:/host"}
 	r.config.User = "0:0"
-	err := ValidateRequest(r.config, r.host, r.networking)
+	err := ValidateRequest(r.config, r.host, r.networking, nil)
 	for _, want := range []string{"privileged", "bind mounts", "non-root"} {
 		if err == nil || !strings.Contains(err.Error(), want) {
 			t.Errorf("combined error lacks %q: %v", want, err)
@@ -126,8 +143,65 @@ func TestFloorReportsEveryViolation(t *testing.T) {
 	}
 }
 
+func TestFloorAllowsAVolumeAtADeclaredCachePath(t *testing.T) {
+	r := okRequest(t)
+	r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x", Target: "/cache/a"})
+	if err := ValidateRequest(r.config, r.host, r.networking, []string{"/cache/a"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// The declared paths come from the lane, but the floor still checks their shape: a lane that
+// declares /etc as a cache must not get a volume there.
+func TestFloorRefusesCachePathsOutsideTheCacheRoot(t *testing.T) {
+	for _, p := range []string{"/etc", "/cache", "/cache/", "/cache/../etc", "cache/a", "/cache/a/", "/cachex/a"} {
+		r := okRequest(t)
+		err := ValidateRequest(r.config, r.host, r.networking, []string{p})
+		if err == nil || !strings.Contains(err.Error(), "under /cache") {
+			t.Errorf("cache path %q: err = %v", p, err)
+		}
+	}
+}
+
+func TestVolumeCreateFloor(t *testing.T) {
+	ok := inputVolumeOptions(launcher.Step{Run: "r", Name: "s"})
+	if err := ValidateVolume(ok); err != nil {
+		t.Fatalf("the input volume must pass: %v", err)
+	}
+	cases := []struct {
+		name   string
+		mutate func(o *client.VolumeCreateOptions)
+		want   string
+	}{
+		{"foreign name", func(o *client.VolumeCreateOptions) { o.Name = "data" }, "volume name"},
+		{"name with a path", func(o *client.VolumeCreateOptions) { o.Name = "satat-../x" }, "volume name"},
+		{"other driver", func(o *client.VolumeCreateOptions) { o.Driver = "nfs" }, "driver"},
+		{"bind in disguise", func(o *client.VolumeCreateOptions) {
+			o.DriverOpts = map[string]string{"type": "none", "o": "bind", "device": "/"}
+		}, "driver options"},
+		{"local with options", func(o *client.VolumeCreateOptions) {
+			o.Driver = "local"
+			o.DriverOpts = map[string]string{"type": "tmpfs"}
+		}, "driver options"},
+		{"cluster volume", func(o *client.VolumeCreateOptions) { o.ClusterVolumeSpec = &volume.ClusterVolumeSpec{} }, "cluster"},
+		{"unmanaged", func(o *client.VolumeCreateOptions) { delete(o.Labels, labelManaged) }, labelManaged},
+		{"no kind", func(o *client.VolumeCreateOptions) { delete(o.Labels, labelKind) }, "kind"},
+		{"unknown kind", func(o *client.VolumeCreateOptions) { o.Labels[labelKind] = "scratch" }, "kind"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			o := inputVolumeOptions(launcher.Step{Run: "r", Name: "s"})
+			tc.mutate(&o)
+			err := ValidateVolume(o)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ValidateVolume error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestIncompleteRequestIsRefused(t *testing.T) {
-	if err := ValidateRequest(nil, nil, nil); err == nil {
+	if err := ValidateRequest(nil, nil, nil, nil); err == nil {
 		t.Fatal("a nil request must be refused")
 	}
 }
