@@ -34,6 +34,11 @@ COPY images/claude/mise-config.toml /usr/share/satat/mise-defaults.toml
 RUN mkdir -p /etc/claude-code \
   && echo '{"forceLoginMethod":"claudeai","allowedProviders":["anthropic"]}' > /etc/claude-code/managed-settings.json
 COPY --from=runner /out/satat-runner /usr/local/bin/satat-runner
+# Running a repo's tests leaves bytecode and dependency dirs behind, and an agent that runs
+# `git add -A` commits them (the first sandbox-greet run did: __pycache__/*.pyc). Exclude the common
+# ones for every repo; the repo's own .gitignore still applies.
+COPY images/claude/gitignore /etc/satat/gitignore
+RUN git config --system core.excludesFile /etc/satat/gitignore
 # Numeric non-root user with no login shell. HOME is /workspace at run time (a tmpfs).
 RUN groupadd --gid 10001 satat && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin satat
 # Caches and scratch. The root filesystem is read-only at run time, so these paths are NOT writable
@@ -66,6 +71,7 @@ ENV MISE_DATA_DIR=/cache/mise \
   COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
   TMPDIR=/cache/tmp \
   GOTMPDIR=/cache/tmp \
-  JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/cache/tmp
+  JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/cache/tmp \
+  PYTHONDONTWRITEBYTECODE=1
 ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENTRYPOINT ["/usr/local/bin/satat-runner"]

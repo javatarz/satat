@@ -1,0 +1,11 @@
+# System-wide git excludes for the lane (core.excludesFile). Running a repo's tests creates these, and an
+# agent that runs `git add -A` would otherwise commit them. A repo's own .gitignore still applies, and
+# files already tracked are unaffected. Kept short on purpose: no build/ or dist/, which some repos commit.
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+node_modules/
+.gradle/
+target/
