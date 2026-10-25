@@ -327,6 +327,20 @@ lane timeout plus 15 minutes, and the worker has as many slots as `limits.global
 are sized for a laptop VM of about 5.8 GiB; see
 [docker-prototype.md](research/v2/docker-prototype.md).
 
+## Claude rate-limit back-off
+
+A step that dies on the subscription rate or usage limit is retried, not failed. The worker
+(`workflows/ratelimit.go`) reads the runner's `result.json`: a `rate_limit_event` with status
+`rejected` (which carries the reset time), a 429 in the error, or an error result that says the
+usage limit was reached. It then closes the account's Hatchet rate limit (`account-<account>`, set
+to 0) until the reset plus 30 seconds, and fails that attempt with a retryable error. The task
+declares one unit of that rate limit, so the retry waits in the queue while the lane is closed,
+and an in-process timer reopens the lane at the reset. When the stream gives no reset time the wait
+starts at five minutes and doubles to an hour. Any other failure is non-retryable, as before.
+Each attempt is visible in Hatchet (its error and log line), and the run's output carries
+`backoffs`. A run is backed off up to 20 times. The schedule timeout is already 720 hours (see
+above). Lanes are opened at worker start, so a restart cannot leave one closed.
+
 ## The eval harness
 
 `cmd/satat-eval` runs one issue through the same pipeline and grades the result with checks a
@@ -400,7 +414,7 @@ Do not read these as features. They are decided or planned, not present:
 | LiteLLM in the stack. The Claude lane talks to Anthropic directly; the `gateway/` directory is a config template carried from v0.1. | [ADR 0026](adr/0026-docker-first-runtime.md), [ADR 0002](adr/0002-litellm-model-routing.md) |
 | The full `satat.yaml` spec. Only `limits` and `lanes` exist. | #108 |
 | Publishing the Claude lane image to GHCR. It is built locally. | [ADR 0026](adr/0026-docker-first-runtime.md) |
-| Back-off on Claude rate limits, and a restart test of adoption on the real stack | [docker-prototype.md](research/v2/docker-prototype.md) |
+| Back-off on Claude rate limits is built, but untested against a live Hatchet; a restart test of adoption on the real stack | [docker-prototype.md](research/v2/docker-prototype.md) |
 | Reading `.satat/commands.yaml`. The file exists in this repo (format in [CONTRIBUTING.md](../CONTRIBUTING.md#satatcommandsyaml)) but nothing parses it yet. | #167, #175 |
 | Inner loops (lint, judge, reviewer) before the draft PR | [inner loop](roadmap/inner-loop.md) |
 | Trusting agent PRs without human approval | #124, [CONTRIBUTING.md](../CONTRIBUTING.md) |

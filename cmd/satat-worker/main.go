@@ -14,7 +14,9 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -98,12 +100,23 @@ func run() error {
 	for _, r := range cfg.Poller.Repos {
 		allowed = append(allowed, r.Name)
 	}
+	// Every account's lane starts open, which also creates the rate-limit keys the task names. A
+	// step that hits the Claude subscription limit closes its account's lane until the reset.
+	limiter := &workflows.Limiter{Put: workflows.HatchetPut(hc)}
+	accounts := map[string]bool{}
+	for _, a := range cfg.Accounts {
+		accounts[a] = true
+	}
+	if err := limiter.Open(slices.Sorted(maps.Keys(accounts))...); err != nil {
+		return fmt.Errorf("open lanes: %w", err)
+	}
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
 	wf, err := workflows.Register(hc, spec, workflows.Handler{
 		Launcher: l,
 		Pusher:   &pusher.Pusher{Token: token},
 		Issues:   pipeline.GitHubIssues{Token: readToken},
 		Allowed:  allowed,
+		Gate:     limiter,
 	})
 	if err != nil {
 		return err

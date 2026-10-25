@@ -53,13 +53,16 @@ type Input struct {
 
 // Output is what a finished run reports in the dashboard.
 type Output struct {
-	Run      string `json:"run"`
-	Status   string `json:"status"`
-	Branch   string `json:"branch,omitempty"`
-	PRURL    string `json:"pr_url,omitempty"`
-	Reused   bool   `json:"reused,omitempty"`
-	ExitCode int    `json:"exit_code"`
-	Commits  int    `json:"commits"`
+	Run    string `json:"run"`
+	Status string `json:"status"`
+	Branch string `json:"branch,omitempty"`
+	PRURL  string `json:"pr_url,omitempty"`
+	Reused bool   `json:"reused,omitempty"`
+	// Backoffs is how many times the run has been backed off for the Claude rate limit, set on
+	// the attempt that hit it. Hatchet's attempt history shows the rest.
+	Backoffs int `json:"backoffs,omitempty"`
+	ExitCode int `json:"exit_code"`
+	Commits  int `json:"commits"`
 	// Reason says why a run was skipped.
 	Reason string `json:"reason,omitempty"`
 }
@@ -157,6 +160,11 @@ type Handler struct {
 	// run start, so an event for a repo no longer listed, or a forged one, launches nothing. Empty
 	// allows no repo.
 	Allowed []string
+	// Gate closes the account's lane when a step hits the subscription rate limit. With a nil
+	// Gate the limit is reported but the lane is not paused.
+	Gate Gate
+	// Now is the clock; nil means time.Now.
+	Now func() time.Time
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;
@@ -165,7 +173,16 @@ type Handler struct {
 // repo that is no longer allowed) is skipped, which is a normal result; if it cannot be read,
 // nothing is launched and the run fails. A step that fails, or a change that cannot be published,
 // is an error so the run shows as failed; a step that changes nothing is a normal result.
+//
+// A step that hit the subscription rate limit closes its account's lane until the reset and
+// returns a *RateLimitError, which Register leaves retryable.
 func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error) {
+	return h.RunAttempt(ctx, runID, in, 0)
+}
+
+// RunAttempt is Run for a run that has already been backed off attempt times; the count sets how
+// long to wait when the step reports no reset time.
+func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt int) (Output, error) {
 	st, reason, err := h.notReady(ctx, in)
 	if err != nil {
 		err = fmt.Errorf("not launched: cannot read %s#%d: %w", in.Repo, in.Issue.Number, err)
@@ -186,6 +203,9 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 	if err != nil {
 		return out, err
 	}
+	if resets, limited := DetectRateLimit(rep.Runner); limited {
+		return h.backOff(ctx, out, in, resets, attempt)
+	}
 	if rep.Push != nil {
 		out.PRURL, out.Reused = rep.Push.PRURL, rep.Push.Reused
 	}
@@ -193,6 +213,25 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 		return out, failure(rep)
 	}
 	return out, nil
+}
+
+// backOff closes the lane and reports the attempt as rate limited.
+func (h Handler) backOff(ctx context.Context, out Output, in Input, resets time.Time, attempt int) (Output, error) {
+	now := time.Now
+	if h.Now != nil {
+		now = h.Now
+	}
+	out.Status = StatusRateLimited
+	rl := &RateLimitError{ResetsAt: resets}
+	if h.Gate == nil {
+		return out, rl
+	}
+	if err := h.Gate.Close(ctx, in.Account, BackoffUntil(now(), resets, attempt)); err != nil {
+		// Without the pause the retry would run straight into the limit again, so do not retry.
+		// %v, not %w: the error must not be a *RateLimitError, which Register would retry.
+		return out, fmt.Errorf("claude rate limit hit but the lane could not be paused: %v", err)
+	}
+	return out, rl
 }
 
 // notReady re-reads the issue, because it can change while the run waits behind a cap. It returns
@@ -262,19 +301,37 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 		}
 		caps = append(caps, hc)
 	}
+	keyExpr, units := AccountKeyExpr, 1
 	wf := client.NewWorkflow(spec.Name,
 		hatchet.WithWorkflowEvents(spec.Events...),
 		hatchet.WithWorkflowConcurrency(caps...),
 	)
 	wf.NewTask("run", func(ctx hatchet.Context, in Input) (*Output, error) {
-		out, err := h.Run(ctx, ctx.WorkflowRunId(), in)
+		attempt := ctx.RetryCount()
+		out, err := h.RunAttempt(ctx, ctx.WorkflowRunId(), in, attempt)
+		var rl *RateLimitError
+		switch {
+		case errors.As(err, &rl):
+			// The step did not fail: its lane is closed until the limit resets, and the retry
+			// queues behind it. Hatchet shows each attempt, so the wait is visible.
+			// Counts only rate-limit back-offs: this attempt is the (attempt+1)th, since every
+			// other failure is non-retryable.
+			out.Backoffs = attempt + 1
+			ctx.Log("rate limited: " + err.Error())
+		case err != nil:
+			// Any other failure repeats on a retry (the launcher would adopt the same step).
+			err = hatchet.NewNonRetryableError(err)
+		}
 		return &out, err
 	},
 		hatchet.WithScheduleTimeout(spec.ScheduleTimeout),
 		hatchet.WithExecutionTimeout(spec.ExecutionTimeout),
-		// A re-delivered task finds the earlier attempt's container (the launcher adopts it), so
-		// Hatchet-level retries would only repeat a failure.
-		hatchet.WithRetries(0),
+		// Only a rate limit is retried (everything else is made non-retryable above): a
+		// re-delivered task finds the earlier attempt's container (the launcher adopts it), so
+		// retrying other failures would only repeat them.
+		hatchet.WithRetries(MaxBackoffRetries),
+		// The retry waits on the account's rate limit, which the Gate closes until the reset.
+		hatchet.WithRateLimits(&hatchet.RateLimit{KeyExpr: &keyExpr, Units: &units}),
 	)
 	return wf, nil
 }
