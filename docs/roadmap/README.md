@@ -79,7 +79,16 @@ team can take into engagements, and the source for blogs and talks.
 
 Every workflow that starts somewhere other than a person's issue ends in a draft issue. Only a
 human moves an issue from `needs-triage` to `ready-for-agent`, and only `ready-for-agent`
-issues reach the agent. Green is decided, amber is being shaped, and grey dashed is an idea.
+issues reach the agent.
+
+Every way in produces the same issue event: `satat-enqueue` by hand today, a poller (#135) and
+later a webhook. The worker checks `ready-for-agent` when the run starts (#134), so every
+way in is gated, whoever pushed the event.
+The direction for the one exception is [lane-started runs](../design.md#lane-started-runs),
+only on lanes that run no agent: platform smoke tests, and perhaps eval lanes. Nothing in
+config marks those lanes yet (#129).
+
+Green is decided, amber is being shaped, and grey dashed is an idea.
 
 ```mermaid
 flowchart LR
@@ -93,6 +102,7 @@ flowchart LR
 
   subgraph satat[Satat]
     queue[Hatchet queue]
+    ready{{Worker checks<br/>ready-for-agent<br/>at run start}}
     context[Context<br/>skills, docs, memory]
     agent[Agent in an isolated<br/>container per step<br/>Claude Code, OpenCode, Pi]
     gateway[LiteLLM]
@@ -111,7 +121,7 @@ flowchart LR
   feature --> breakdown --> triage
   alert --> diagnose --> triage
   retro --> triage
-  triage --> queue --> agent
+  triage --> queue --> ready --> agent
   context -. primes .-> agent
   agent <--> gateway <--> model
   agent --> inner
@@ -125,14 +135,14 @@ flowchart LR
   classDef decided fill:#d3f0d8,stroke:#2f7d3e,color:#0b2e14
   classDef shaping fill:#fde8c4,stroke:#b7791f,color:#3d2600
   classDef idea fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
-  class person,triage,queue,gateway,model,pr,merge decided
+  class person,triage,queue,ready,gateway,model,pr,merge decided
   class agent,inner,docs,evals shaping
   class alert,diagnose,retro,context,capture,feature,breakdown idea
 ```
 
 | Workflow | Starts with | Ends with | Status | Themes |
 |---|---|---|---|---|
-| Issue to draft PR | A human labels an issue `ready-for-agent` | A draft PR that a human merges | Shaping (#112) | [Inner loop](inner-loop.md), [interchangeable agents](interchangeable-agents.md) |
+| Issue to draft PR | A human labels an issue `ready-for-agent` | A draft PR that a human merges | Shaping (#112, #135) | [Inner loop](inner-loop.md), [interchangeable agents](interchangeable-agents.md) |
 | Feature breakdown | A feature or spec | Draft issues waiting for a human to accept them | Idea | [Per-codebase workflows](per-codebase-workflows.md) |
 | Production signal to issue | An alert or drift in the running system | A diagnosis as a draft issue | Idea | [Signal-driven intake](signal-driven-intake.md), [observability](observability.md) |
 | Harness self-improvement | A schedule | An issue with a hypothesis about the harness | Idea | [Observability](observability.md), [memory](memory.md) |
@@ -158,9 +168,9 @@ developer already does with Claude Code today.
 |---|---|---|
 | [Inner loop as a state machine](inner-loop.md) | Shaping | #112 |
 | [Interchangeable agents](interchangeable-agents.md) | Idea | ADR 0022 |
-| [Model and provider neutrality](provider-neutrality.md) | Idea | ADR 0016, ADR 0022 |
+| [Model and provider neutrality](provider-neutrality.md) | Idea | ADR 0016, ADR 0022, #94 |
 | [Model routing](model-routing.md) | Shaping | ADR 0016 |
-| [Runtime scaling tiers](runtime-scaling.md) | Decided (near term) | ADR 0024, ADR 0026 |
+| [Runtime scaling tiers](runtime-scaling.md) | Decided (near term) | ADR 0024, ADR 0026, #130 |
 | [Per-codebase workflows](per-codebase-workflows.md) | Idea | |
 | [Skill distribution](skill-distribution.md) | Idea | |
 | [Observability and conversation capture](observability.md) | Idea | #82, ADR 0022 |
