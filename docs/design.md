@@ -375,6 +375,7 @@ Do not read these as features. They are decided or planned, not present:
 | The full `satat.yaml` spec. Only `limits` and `lanes` exist. | #108 |
 | Publishing the Claude lane image to GHCR. It is built locally. | [ADR 0026](adr/0026-docker-first-runtime.md) |
 | Back-off on Claude rate limits, and a restart test of adoption on the real stack | [docker-prototype.md](research/v2/docker-prototype.md) |
+| Reading `.satat/commands.yaml`. The file exists in this repo (format in [CONTRIBUTING.md](../CONTRIBUTING.md#satatcommandsyaml)) but nothing parses it yet. | #167, #175 |
 | Inner loops (lint, judge, reviewer) before the draft PR | [inner loop](roadmap/inner-loop.md) |
 | Trusting agent PRs without human approval | #124, [CONTRIBUTING.md](../CONTRIBUTING.md) |
 

@@ -119,6 +119,15 @@ Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.
 
+### `.satat/commands.yaml`
+
+Satat's agent reads the repo's commands from `.satat/commands.yaml` on the base branch. It has
+`version: 1` and a `commands:` map. `setup` and `test` are required; any other key is an optional,
+free-form hint. The harness runs none of them as a gate: `setup` installs the git hooks (commit,
+commit-msg and pre-push), and those hooks are the gate. `test` is a fast loop, here
+`go test -p 1 -short ./...` (the Docker tests need `just test`). See
+[per-codebase workflows](docs/roadmap/per-codebase-workflows.md).
+
 ## Signed commits
 
 We recommend signing your commits, but `main` doesn't require it. Signed commits show as Verified

@@ -1,0 +1,7 @@
+# Repo-owned commands for Satat's agent (see docs/roadmap/per-codebase-workflows.md).
+version: 1
+commands:
+  # Required. Installs the hooks that gate every commit and the push rehearsal.
+  setup: pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
+  # Required. A fast loop for the agent between commits; the harness never runs it as a gate.
+  test: go test -p 1 -short ./...
