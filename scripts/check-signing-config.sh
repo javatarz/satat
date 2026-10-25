@@ -1,9 +1,8 @@
 #!/usr/bin/env bash
 # Check that git will sign the commits made in this repo (signing is encouraged, not required).
 #
-# A pre-commit hook runs before the commit exists, so this checks configuration only:
-# commit.gpgsign must be true and a signing key must be configured for gpg.format.
-# scripts/check-signed-push.sh checks the commits themselves before they are pushed.
+# It checks configuration only: commit.gpgsign must be true and a signing key must be configured
+# for gpg.format. scripts/doctor.sh warns on a failure; nothing blocks an unsigned commit.
 #
 # usage: scripts/check-signing-config.sh [--brief]
 #   --brief  print only the one-line reason (for scripts/doctor.sh) and no fix instructions
