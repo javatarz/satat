@@ -154,6 +154,12 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 		return res, fmt.Errorf("create input volume: %w", err)
 	}
 	volumes = append(volumes, in.Name)
+	for _, cv := range cacheVolumes(lane, step) {
+		if err := l.createVolume(ctx, cv.opts); err != nil {
+			return res, fmt.Errorf("create cache volume: %w", err)
+		}
+		volumes = append(volumes, cv.opts.Name)
+	}
 
 	created, err := l.api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking,

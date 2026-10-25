@@ -163,6 +163,76 @@ func TestFloorRefusesCachePathsOutsideTheCacheRoot(t *testing.T) {
 	}
 }
 
+func cacheLane() launcher.Lane {
+	l := testLane()
+	l.Caches = []launcher.Cache{{Name: "go-mod", Path: "/cache/go-mod"}, {Name: "pip", Path: "/cache/pip"}}
+	return l
+}
+
+// Each cache is its own volume, mounted at its path, named after the step and created with
+// copy-up so the image's ownership of the directory carries over.
+func TestCachesAreStepVolumes(t *testing.T) {
+	lane, err := normalizeLane(cacheLane())
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := launcher.Step{Run: "r1", Name: "s1", Lane: "t"}
+	r, err := buildRequest(lane, step, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRequest(r.config, r.host, r.networking, cachePaths(lane)); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, m := range r.host.Mounts[1:] {
+		if m.VolumeOptions != nil {
+			t.Errorf("cache mount %s sets volume options (NoCopy would leave it root-owned)", m.Target)
+		}
+		got[m.Target] = m.Source
+	}
+	want := map[string]string{"/cache/go-mod": "satat-r1-s1-cache-go-mod", "/cache/pip": "satat-r1-s1-cache-pip"}
+	if len(got) != len(want) || got["/cache/go-mod"] != want["/cache/go-mod"] || got["/cache/pip"] != want["/cache/pip"] {
+		t.Errorf("cache mounts = %v, want %v", got, want)
+	}
+	for _, cv := range cacheVolumes(lane, step) {
+		if err := ValidateVolume(cv.opts); err != nil {
+			t.Errorf("%s: %v", cv.opts.Name, err)
+		}
+		if lb := cv.opts.Labels; lb[labelKind] != kindCache || lb[labelLane] != "t" || lb[labelManaged] != "true" {
+			t.Errorf("%s labels = %v", cv.opts.Name, lb)
+		}
+	}
+}
+
+func TestCacheDeclarationsAreChecked(t *testing.T) {
+	cases := map[string]struct {
+		caches []launcher.Cache
+		want   string
+	}{
+		"relative path":     {[]launcher.Cache{{Name: "a", Path: "cache/a"}}, "under /cache"},
+		"outside /cache":    {[]launcher.Cache{{Name: "a", Path: "/home/a"}}, "under /cache"},
+		"the root itself":   {[]launcher.Cache{{Name: "a", Path: "/cache"}}, "under /cache"},
+		"unclean path":      {[]launcher.Cache{{Name: "a", Path: "/cache/x/../../etc"}}, "under /cache"},
+		"duplicate path":    {[]launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "b", Path: "/cache/a"}}, "overlap"},
+		"nested path":       {[]launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "b", Path: "/cache/a/b"}}, "overlap"},
+		"duplicate name":    {[]launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "a", Path: "/cache/b"}}, "twice"},
+		"upper-case name":   {[]launcher.Cache{{Name: "Go", Path: "/cache/go"}}, "identifier"},
+		"name with a slash": {[]launcher.Cache{{Name: "a/b", Path: "/cache/a"}}, "identifier"},
+		"empty name":        {[]launcher.Cache{{Name: "", Path: "/cache/a"}}, "identifier"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := testLane()
+			l.Caches = tc.caches
+			_, err := New(nil, []launcher.Lane{l})
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("New() error = %v, want it to mention %q", err, tc.want)
+			}
+		})
+	}
+}
+
 func TestVolumeCreateFloor(t *testing.T) {
 	ok := inputVolumeOptions(launcher.Step{Run: "r", Name: "s"})
 	if err := ValidateVolume(ok); err != nil {
@@ -187,6 +257,7 @@ func TestVolumeCreateFloor(t *testing.T) {
 		{"unmanaged", func(o *client.VolumeCreateOptions) { delete(o.Labels, labelManaged) }, labelManaged},
 		{"no kind", func(o *client.VolumeCreateOptions) { delete(o.Labels, labelKind) }, "kind"},
 		{"unknown kind", func(o *client.VolumeCreateOptions) { o.Labels[labelKind] = "scratch" }, "kind"},
+		{"cache without its lane", func(o *client.VolumeCreateOptions) { o.Labels[labelKind] = kindCache }, "cache labels"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

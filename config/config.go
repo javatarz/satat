@@ -51,20 +51,26 @@ type limitsFile struct {
 }
 
 type laneFile struct {
-	Image       string   `yaml:"image"`
-	User        string   `yaml:"user"`
-	Command     []string `yaml:"command"`
-	PassEnv     []string `yaml:"pass_env"`
-	OptionalEnv []string `yaml:"optional_env"`
-	Memory      string   `yaml:"memory"`
-	CPUs        float64  `yaml:"cpus"`
-	Pids        int64    `yaml:"pids"`
-	Workspace   string   `yaml:"workspace"`
-	Internal    bool     `yaml:"internal"`
-	Runtime     string   `yaml:"runtime"`
-	Timeout     string   `yaml:"timeout"`
-	Account     string   `yaml:"account"`
-	MaxRuns     int      `yaml:"max_runs"`
+	Image       string     `yaml:"image"`
+	User        string     `yaml:"user"`
+	Command     []string   `yaml:"command"`
+	PassEnv     []string   `yaml:"pass_env"`
+	OptionalEnv []string   `yaml:"optional_env"`
+	Memory      string     `yaml:"memory"`
+	CPUs        float64    `yaml:"cpus"`
+	Pids        int64      `yaml:"pids"`
+	Workspace   string     `yaml:"workspace"`
+	Internal    bool       `yaml:"internal"`
+	Runtime     string     `yaml:"runtime"`
+	Timeout     string     `yaml:"timeout"`
+	Account     string     `yaml:"account"`
+	MaxRuns     int        `yaml:"max_runs"`
+	Caches      cachesFile `yaml:"caches"`
+}
+
+// cachesFile is a lane's cache list: cache name to the path the step sees it at (ADR 0033).
+type cachesFile struct {
+	Paths map[string]string `yaml:"paths"`
 }
 
 // Load reads and parses the file at path.
@@ -151,6 +157,10 @@ func (lf laneFile) lane(name string) (launcher.Lane, error) {
 		errs = append(errs, fmt.Errorf("workspace: %w", err))
 	}
 	l.PidsLimit = lf.Pids
+	// Names and paths are checked by the launcher, with the rest of the lane, at docker.New.
+	for _, n := range sortedKeys(lf.Caches.Paths) {
+		l.Caches = append(l.Caches, launcher.Cache{Name: n, Path: lf.Caches.Paths[n]})
+	}
 	if lf.Timeout != "" {
 		if l.Timeout, err = time.ParseDuration(lf.Timeout); err != nil || l.Timeout <= 0 {
 			errs = append(errs, fmt.Errorf("timeout %q is not a positive duration", lf.Timeout))

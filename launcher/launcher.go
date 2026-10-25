@@ -31,6 +31,10 @@ type Lane struct {
 	PidsLimit      int64
 	WorkspaceBytes int64 // size of the tmpfs at /workspace; counts against MemoryBytes
 
+	// Caches are disk-backed directories for build tools' downloads and outputs (ADR 0033). Each
+	// step gets its own, empty and removed with the step.
+	Caches []Cache
+
 	// Internal puts the lane on a network with no route out except to containers attached to it.
 	Internal bool
 	// Runtime is "" (engine default) or "runsc" (gVisor) where installed.
@@ -38,6 +42,15 @@ type Lane struct {
 
 	// Timeout bounds one step. Defaults to 30 minutes.
 	Timeout time.Duration
+}
+
+// Cache is one cache directory. It is a name and a path, not a backend object: Docker backs it
+// with a volume, Kubernetes with an emptyDir or a claim. It does not count against MemoryBytes.
+type Cache struct {
+	// Name is lower-case letters and digits, optionally joined by single hyphens.
+	Name string
+	// Path is where the step sees the cache: a clean absolute path under /cache.
+	Path string
 }
 
 // Step is one unit of work. Its identity names the container, so a re-delivered step finds the
