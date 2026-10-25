@@ -23,6 +23,8 @@ type Lane struct {
 	// PassEnv names environment variables copied from the launcher's own environment into the
 	// step (for example CLAUDE_CODE_OAUTH_TOKEN). A name that is unset fails the launch.
 	PassEnv []string
+	// OptionalEnv is like PassEnv, but a name that is unset or empty is skipped.
+	OptionalEnv []string
 
 	MemoryBytes    int64
 	CPUs           float64

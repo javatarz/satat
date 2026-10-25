@@ -28,7 +28,9 @@ lanes:
     timeout: 20m
     # SATAT_GITHUB_TOKEN is a read-only token for the test repo. Prototype shortcut: the agent
     # can read it from the runner's process environment. ADR 0025 replaces it.
-    pass_env: [CLAUDE_CODE_OAUTH_TOKEN, SATAT_GITHUB_TOKEN, SATAT_GIT_NAME, SATAT_GIT_EMAIL]
+    pass_env: [CLAUDE_CODE_OAUTH_TOKEN, SATAT_GITHUB_TOKEN]
+    # Override the agent's git identity (default: Satat); skipped when unset.
+    optional_env: [SATAT_GIT_NAME, SATAT_GIT_EMAIL]
     # The credential account this lane spends (the Claude subscription): one cap across lanes that
     # share it. max_runs is this lane's own cap.
     account: claude-subscription
