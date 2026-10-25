@@ -93,22 +93,21 @@ We follow these
 
 1. A short README that says what the code does and how to get started.
 2. A single entry point for every task: one command to set up a workstation, one to run the
-   system, and one each to lint and test. Which tool doesn't matter (`just`, `make`, a script),
-   as long as it's one place.
+   system, and one each to lint and test. Ours is the `justfile`: `just setup`, `just doctor`,
+   `just run`, `just lint`, `just test` and `just build`. New tasks get a recipe there.
 3. Fast feedback: linting and tests quick enough to run on every commit.
 4. Pre-commit checks that run the CI safety net locally.
 5. Everything runs locally, without the internet where possible.
 
 ## Setup
 
-Install [pre-commit](https://pre-commit.com/) and the hooks, including the commit message check:
+Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
+[pre-commit](https://pre-commit.com/), then run `just setup`. It installs the tools pinned in
+`mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
+`just doctor`, which names anything else that is missing, such as `actionlint`.
 
-```sh
-pre-commit install --hook-type pre-commit --hook-type commit-msg
-```
-
-The hooks also need `actionlint` on your path, and Terraform at the version pinned in
-`mise.toml` (`mise install`).
+`scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
+for it there.
 
 ## Commit messages
 
