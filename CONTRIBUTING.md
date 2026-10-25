@@ -77,6 +77,13 @@ The PR closes by itself once its commits are on `main`.
 - **Tests come with the change.** A PR that changes behaviour includes the tests that prove it.
   Run them before you push. For Go, that's `go test -p 1 ./...`: tests that start containers
   share one Docker daemon, so packages must not run in parallel, and `-short` skips them.
+- **Exposure test.** `launcher/docker/exposure_test.go` starts a probe process in a real step
+  container and lists every credential it can see (environment, files, mounts) and every address
+  it can reach (the secret store's network, the Docker API, hosts outside the allowlist). It
+  fails on any finding that is not in `knownGaps`, the holes the harness has today: the Claude
+  and GitHub tokens in `pass_env` and open egress on `internal: false` lanes. Those show as
+  skips with the reason. When you close one, the test fails until you delete its entry. It needs
+  Docker and is skipped with `-short`.
 - **Docs come with the change.** Update the docs in the same PR. They aren't a separate task.
 - **The description says what, why and how you tested it,** and links the issue (`Closes #N`).
 - **Open it as a draft** when you want early feedback.
