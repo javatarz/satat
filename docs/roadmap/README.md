@@ -177,7 +177,7 @@ developer already does with Claude Code today.
 | [Memory](memory.md) | Idea | |
 | [Evals](evals.md) | Shaping | |
 | [Self-documenting repos](self-documenting-repos.md) | Shaping | |
-| [Security](security.md) | Backlog (parts) | ADR 0025, #97 |
+| [Security](security.md) | Shaping (secret store), Backlog (parts) | ADR 0025, ADR 0032, #97, #143 |
 | [Signal-driven intake](signal-driven-intake.md) | Idea | ADR 0023 |
 
 Sources are the team calls on 2026-10-16 and 2026-10-21.
