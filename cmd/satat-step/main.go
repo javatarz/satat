@@ -4,8 +4,10 @@
 //
 //	satat-step --repo owner/name --issue 12 [--base main] [--lane claude] [--push]
 //
-// The lane's pass_env names must be set in the shell, for example CLAUDE_CODE_OAUTH_TOKEN and
-// SATAT_GITHUB_TOKEN. Their values are passed to the container by name and never printed.
+// The lane's pass_env names must be set in the shell, for example CLAUDE_CODE_OAUTH_TOKEN. Their
+// values are passed to the container by name and never printed. SATAT_GITHUB_TOKEN (read-only)
+// must be set too: this process clones the repo before the step starts and keeps the token to
+// itself.
 // --push also needs SATAT_PUSH_TOKEN, which only this process holds and never reaches a container.
 package main
 
@@ -63,6 +65,11 @@ func run() error {
 		p = &pusher.Pusher{Token: tok}
 	}
 
+	readToken := os.Getenv("SATAT_GITHUB_TOKEN")
+	if readToken == "" {
+		return fmt.Errorf("SATAT_GITHUB_TOKEN is not set: this process clones the repo before the step starts")
+	}
+
 	iss, err := pipeline.FetchIssue(*repo, *issue)
 	if err != nil {
 		return err
@@ -89,7 +96,7 @@ func run() error {
 	}
 	fmt.Fprintf(os.Stderr, "run %s: repo %s issue #%d on lane %s (Ctrl-C stops the step)\n", *runID, *repo, *issue, *lane)
 	start := time.Now()
-	rep, err := pipeline.Run(ctx, pipeline.Options{Launcher: l, Pusher: p, Run: *runID, Lane: *lane, Repo: *repo, Base: *base, Issue: iss})
+	rep, err := pipeline.Run(ctx, pipeline.Options{Launcher: l, Pusher: p, Cloner: pipeline.GitCloner{Token: readToken}, Run: *runID, Lane: *lane, Repo: *repo, Base: *base, Issue: iss})
 	if err != nil {
 		return err
 	}

@@ -29,7 +29,7 @@ The current launcher matters here:
   `VolumeOptions` (driver config, subpath).
 - Volumes are created in `launcher/docker/docker.go` with the default driver and no check of their
   own. `Reap` removes every `satat.managed=true` volume older than one age limit.
-- `runner/runner.go` clones with `SATAT_GITHUB_TOKEN` and strips it from `claude`'s environment.
+- `runner/runner.go` cloned with `SATAT_GITHUB_TOKEN` and stripped it from `claude`'s environment. The worker now clones before the step starts (#167), so the step holds no GitHub token.
 
 ## Decision
 

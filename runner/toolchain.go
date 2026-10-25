@@ -85,7 +85,7 @@ func miseEnv(env []string) []string {
 outer:
 	for _, kv := range env {
 		k, v, ok := strings.Cut(kv, "=")
-		if !ok || k == cloneVar || k == oauthVar || !allowedForMise(k) {
+		if !ok || k == oauthVar || !allowedForMise(k) {
 			continue
 		}
 		for _, s := range secrets {
@@ -113,7 +113,7 @@ func allowedForMise(k string) bool {
 func secretValues(env []string) []string {
 	m := envMap(env)
 	var out []string
-	for _, k := range []string{cloneVar, oauthVar} {
+	for _, k := range []string{oauthVar} {
 		if v := m[k]; v != "" {
 			out = append(out, v)
 		}

@@ -44,11 +44,11 @@ lanes:
     # tmpfs at /workspace holds HOME and the clone, and counts against `memory`.
     workspace: 1GiB
     timeout: 20m
-    # SATAT_GITHUB_TOKEN is a read-only token for the test repo. Prototype shortcut: the agent
-    # can read it from the runner's process environment. ADR 0025 replaces it. It needs
-    # Contents: read (the clone) and Issues: read (the worker's ready-for-agent check); without
-    # Issues: read a private repo answers 404 and every run fails closed.
-    pass_env: [CLAUDE_CODE_OAUTH_TOKEN, SATAT_GITHUB_TOKEN]
+    # The step holds no GitHub credential: the worker clones the repo with the read token
+    # (SATAT_GITHUB_TOKEN, held by the worker only) before the step starts, and the runner copies the
+    # clone in. The token needs Contents: read (the clone) and Issues: read (the ready-for-agent
+    # check); without Issues: read a private repo answers 404 and every run fails closed.
+    pass_env: [CLAUDE_CODE_OAUTH_TOKEN]
     # Override the agent's git identity (default: Satat); skipped when unset.
     optional_env: [SATAT_GIT_NAME, SATAT_GIT_EMAIL]
     # The credential account this lane spends (the Claude subscription): one cap across lanes that

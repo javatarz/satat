@@ -56,7 +56,7 @@ satat/
 ├── workflows/      # the Hatchet workflow `satat-issue` and its concurrency caps
 ├── pipeline/       # issue to draft PR: launch a step, then publish
 ├── launcher/       # launcher interface, Docker backend, hardening floor, conformance suite
-├── runner/         # runs inside the Claude lane container: clone, Claude Code, commit
+├── runner/         # runs inside the Claude lane container: Claude Code, commit
 ├── pusher/         # pushes the branch and opens the draft PR (holds the write token)
 ├── config/         # satat.yaml loader (limits and lanes)
 ├── eval/           # eval harness and cases

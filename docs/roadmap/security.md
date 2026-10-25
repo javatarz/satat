@@ -44,7 +44,7 @@ Next, in order:
    check confirms it.
 3. Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
    `scripts/compose-up.sh` stops calling `op`.
-4. The worker clones the repo before the step starts, so the step holds no GitHub token.
+4. ~~The worker clones the repo before the step starts, so the step holds no GitHub token.~~ Done (#167).
 5. An LLM gateway proxy takes the Claude token and issues each step a short-lived virtual key
    (ADR 0032, #155). Until then the Compose Claude step still holds the token: the one known
    break of "use, never see".

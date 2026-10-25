@@ -3,7 +3,8 @@
 //
 // Environment: the Hatchet client settings (HATCHET_CLIENT_TOKEN, HATCHET_CLIENT_HOST_PORT,
 // HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST, SATAT_PUSH_TOKEN, SATAT_GITHUB_TOKEN (read-only, to
-// check an issue is labelled ready-for-agent before running it), and every name a lane lists in
+// check an issue is labelled ready-for-agent and to clone the repo before each step; it is not
+// in any lane's pass_env, so no step holds it), and every name a lane lists in
 // pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_INTAKE_REPOS (comma-separated
 // owner/name) turns on the GitHub webhook intake for those repos only. With repos under poller: in
 // satat.yaml the worker also polls them for ready-for-agent issues, which needs Issues: read and
@@ -51,7 +52,8 @@ func run() error {
 	if token == "" {
 		return fmt.Errorf("SATAT_PUSH_TOKEN is not set: the worker publishes the PR, so it needs the write token")
 	}
-	// The ready-for-agent check only reads, so it uses the read-only token, not the write token.
+	// The read-only token (ADR 0032: github-read-token) is the worker's alone: it checks the issue,
+	// polls, and clones the repo before each step starts. No step receives it.
 	readToken := os.Getenv("SATAT_GITHUB_TOKEN")
 	if readToken == "" {
 		return fmt.Errorf("SATAT_GITHUB_TOKEN is not set: the worker reads each issue's labels before it runs, so it needs the read token")
@@ -102,6 +104,7 @@ func run() error {
 	wf, err := workflows.Register(hc, spec, workflows.Handler{
 		Launcher: l,
 		Pusher:   &pusher.Pusher{Token: token},
+		Cloner:   pipeline.GitCloner{Token: readToken},
 		Issues:   pipeline.GitHubIssues{Token: readToken},
 		Allowed:  allowed,
 	})

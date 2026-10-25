@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"strings"
 	"testing"
 
 	"github.com/javatarz/satat/launcher"
@@ -43,8 +45,24 @@ func result(status string) launcher.Result {
 	return launcher.Result{Files: map[string][]byte{"result.json": b, "changes.bundle": []byte("bundle")}}
 }
 
+type fakeCloner struct {
+	err    error
+	closed bool
+}
+
+func (f *fakeCloner) Clone(context.Context, string, string) (*Checkout, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	return &Checkout{
+		Tar: strings.NewReader("tar"), BaseSHA: "b",
+		Commands: map[string]string{"setup": "just setup", "test": "just test"},
+		closeFn:  func() { f.closed = true },
+	}, nil
+}
+
 func opts(l launcher.Launcher, p Publisher) Options {
-	return Options{Launcher: l, Pusher: p, Run: "r1", Lane: "claude", Repo: "a/b", Base: "main", Issue: runner.Issue{Number: 3, Title: "t", Body: "b"}}
+	return Options{Launcher: l, Pusher: p, Cloner: &fakeCloner{}, Run: "r1", Lane: "claude", Repo: "a/b", Base: "main", Issue: runner.Issue{Number: 3, Title: "t", Body: "b"}}
 }
 
 func TestChangesArePublished(t *testing.T) {
@@ -57,10 +75,12 @@ func TestChangesArePublished(t *testing.T) {
 	if p.req.Summary != "all done" || p.req.HeadSHA != "h" || p.req.Issue != 3 || string(p.req.Bundle) != "bundle" {
 		t.Errorf("push request: %+v", p.req)
 	}
-	var in map[string]any
-	json.Unmarshal(l.got.Input, &in)
-	if in["repo"] != "a/b" || in["base"] != "main" {
-		t.Errorf("step input: %s", l.got.Input)
+	in, err := runner.ParseInput(l.got.Input)
+	if err != nil || in.Repo != "a/b" || in.Base != "main" || in.Commands["test"] != "just test" {
+		t.Errorf("step input: %s (%v)", l.got.Input, err)
+	}
+	if b, _ := io.ReadAll(l.got.Checkout); string(b) != "tar" {
+		t.Errorf("the step did not get the worker's checkout: %q", b)
 	}
 	if l.got.CacheScope != launcher.CacheScope("a/b") {
 		t.Errorf("cache scope = %q, want the repo's", l.got.CacheScope)
@@ -97,5 +117,34 @@ func TestARefusalIsReportedNotHidden(t *testing.T) {
 	var ref *pusher.Refusal
 	if err != nil || rep.OK() || !errors.As(rep.PushErr, &ref) {
 		t.Fatalf("report %+v, err %v: want PushErr set and OK false", rep, err)
+	}
+}
+
+// A step that cannot be given a checkout is not launched, and no cloner means no launch.
+func TestNothingLaunchesWithoutACheckout(t *testing.T) {
+	l := &fakeLauncher{res: result("changes")}
+	o := opts(l, nil)
+	o.Cloner = &fakeCloner{err: errors.New("no such branch")}
+	if _, err := Run(context.Background(), o); err == nil || !strings.Contains(err.Error(), "no such branch") {
+		t.Fatalf("err = %v", err)
+	}
+	o.Cloner = nil
+	if _, err := Run(context.Background(), o); err == nil {
+		t.Fatal("a run with no cloner launched")
+	}
+	if l.got.Run != "" {
+		t.Error("the launcher was called")
+	}
+}
+
+func TestTheCheckoutIsReleasedAfterTheStep(t *testing.T) {
+	c := &fakeCloner{}
+	o := opts(&fakeLauncher{res: result("no_changes")}, nil)
+	o.Cloner = c
+	if _, err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	if !c.closed {
+		t.Error("the clone was not removed")
 	}
 }

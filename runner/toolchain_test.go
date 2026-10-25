@@ -79,6 +79,7 @@ func TestALockfileMeansLockedInstall(t *testing.T) {
 	for _, args := range [][]string{
 		{"-C", e.repo, "add", "mise.lock"},
 		{"-C", e.repo, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "-m", "Lock"},
+		{"-C", e.checkout, "pull", "-q"}, // the worker clones after the commit
 	} {
 		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -152,7 +153,7 @@ func TestMiseGetsOnlyTheAllowlistedEnvironment(t *testing.T) {
 	e := setup(t, "commit",
 		"GITHUB_TOKEN=gh-secret",
 		"AWS_SECRET_ACCESS_KEY=aws-secret",
-		"MISE_GITHUB_TOKEN=clone-secret-value", // allowed name, secret value: dropped
+		"MISE_GITHUB_TOKEN=oauth-secret-value", // allowed name, secret value: dropped
 		"HTTPS_PROXY=http://proxy:3128",
 		"GOMODCACHE=/cache/go-mod",
 		"TMPDIR=/cache/tmp",
@@ -162,7 +163,7 @@ func TestMiseGetsOnlyTheAllowlistedEnvironment(t *testing.T) {
 		t.Fatal(err)
 	}
 	raw := e.read(t, filepath.Join(e.fake, "mise-env"))
-	for _, s := range []string{"SATAT_GITHUB_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN", "clone-secret-value", "oauth-secret-value",
+	for _, s := range []string{"CLAUDE_CODE_OAUTH_TOKEN", "oauth-secret-value",
 		"GITHUB_TOKEN", "aws-secret", "FAKE_MODE", "GIT_AUTHOR_NAME"} {
 		if strings.Contains(raw, s) {
 			t.Errorf("mise's environment contains %s:\n%s", s, raw)

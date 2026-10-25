@@ -100,6 +100,8 @@ type env struct {
 	cfg        Config
 	dir, out   string
 	fake, repo string
+	// checkout stands in for the clone the worker puts in the input volume.
+	checkout string
 }
 
 func setup(t *testing.T, mode string, extra ...string) *env {
@@ -127,6 +129,10 @@ func setup(t *testing.T, mode string, extra ...string) *env {
 			t.Fatalf("git %v: %v\n%s", args, err, out)
 		}
 	}
+	e.checkout = filepath.Join(root, "input", "repo")
+	if out, err := exec.Command("git", "clone", "-q", "file://"+e.repo, e.checkout).CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
 	claude := filepath.Join(root, "claude")
 	if err := os.WriteFile(claude, []byte(fakeClaude), 0o755); err != nil {
 		t.Fatal(err)
@@ -146,13 +152,12 @@ func setup(t *testing.T, mode string, extra ...string) *env {
 		"FAKE_DIR=" + e.fake,
 		"FAKE_MODE=" + mode,
 		"CLAUDE_CODE_OAUTH_TOKEN=oauth-secret-value",
-		"SATAT_GITHUB_TOKEN=clone-secret-value",
 		"MISE_DATA_DIR=" + filepath.Join(root, "cache", "mise"),
 	}, extra...)
 	e.cfg = Config{
 		Run: "run1", InputPath: input, OutDir: e.out, WorkDir: filepath.Join(root, "work"),
 		Claude: claude, Mise: mise, Git: "git", Env: environ,
-		CloneURL: func(string) string { return "file://" + e.repo },
+		Checkout: e.checkout,
 	}
 	return e
 }
@@ -269,9 +274,6 @@ func TestSecretsStayWhereTheyBelong(t *testing.T) {
 		t.Fatal(err)
 	}
 	cenv := e.read(t, filepath.Join(e.fake, "env"))
-	if strings.Contains(cenv, "SATAT_GITHUB_TOKEN") || strings.Contains(cenv, "clone-secret-value") {
-		t.Error("the clone token reached claude's environment")
-	}
 	if !strings.Contains(cenv, "CLAUDE_CODE_OAUTH_TOKEN=oauth-secret-value") {
 		t.Error("claude did not get the OAuth token")
 	}
@@ -280,7 +282,7 @@ func TestSecretsStayWhereTheyBelong(t *testing.T) {
 			return nil
 		}
 		b, _ := os.ReadFile(p)
-		for _, s := range []string{"clone-secret-value", "oauth-secret-value"} {
+		for _, s := range []string{"oauth-secret-value"} {
 			if strings.Contains(string(b), s) {
 				t.Errorf("%s contains a secret value (%s)", p, s)
 			}
@@ -366,7 +368,6 @@ func TestRefusesToStart(t *testing.T) {
 		"bad git email":  {[]string{"SATAT_GIT_EMAIL=a@b\nc"}, "SATAT_GIT_EMAIL must not contain"},
 		"email no at":    {[]string{"SATAT_GIT_EMAIL=not an email"}, "SATAT_GIT_EMAIL must be an email"},
 		"name only dot":  {[]string{"SATAT_GIT_NAME=."}, "SATAT_GIT_NAME must contain"},
-		"no clone token": {[]string{"SATAT_GITHUB_TOKEN="}, "SATAT_GITHUB_TOKEN is not set"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -384,7 +385,7 @@ func TestRefusesToStart(t *testing.T) {
 				t.Error("claude ran a session despite the refusal")
 			}
 			if _, err := os.Stat(filepath.Join(e.cfg.WorkDir, "repo")); err == nil {
-				t.Error("the repo was cloned despite the refusal")
+				t.Error("the checkout was copied despite the refusal")
 			}
 		})
 	}
@@ -417,9 +418,63 @@ func TestParseInput(t *testing.T) {
 }
 
 func TestScrubRemovesSecretValues(t *testing.T) {
-	env := []string{"SATAT_GITHUB_TOKEN=abc123", "CLAUDE_CODE_OAUTH_TOKEN=xyz789"}
-	got := scrub("fatal: could not read abc123 or xyz789", env)
-	if strings.Contains(got, "abc123") || strings.Contains(got, "xyz789") {
+	env := []string{"CLAUDE_CODE_OAUTH_TOKEN=xyz789"}
+	got := scrub("fatal: could not read xyz789", env)
+	if strings.Contains(got, "xyz789") {
 		t.Errorf("secret survived: %s", got)
+	}
+}
+
+// The step needs no GitHub credential to start: the checkout is already there, and the runner
+// has no variable it reads one from.
+func TestRunsWithoutAnyGitHubCredential(t *testing.T) {
+	e := setup(t, "commit")
+	for _, kv := range e.cfg.Env {
+		if strings.Contains(kv, "GITHUB") {
+			t.Fatalf("the test environment has %s", kv)
+		}
+	}
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	if r := e.result(t); r.Status != "changes" || r.Commits != 1 {
+		t.Fatalf("unexpected result: %+v", r)
+	}
+	// The copy is where the agent works, the original is untouched, and the remote is the one the
+	// worker cloned from, with no credential in it.
+	if _, err := os.Stat(filepath.Join(e.checkout, "fix.txt")); err == nil {
+		t.Error("the agent's change landed in the input checkout")
+	}
+	cfg := e.read(t, filepath.Join(e.cfg.WorkDir, "repo", ".git", "config"))
+	if strings.Contains(cfg, "credential") || strings.Contains(cfg, "@") {
+		t.Errorf("git config in the work copy:\n%s", cfg)
+	}
+}
+
+func TestRefusesWithoutACheckout(t *testing.T) {
+	e := setup(t, "commit")
+	e.cfg.Checkout = filepath.Join(e.dir, "nowhere")
+	if err := Run(context.Background(), e.cfg); err == nil || !strings.Contains(err.Error(), "checkout") {
+		t.Fatalf("error = %v, want a missing-checkout refusal", err)
+	}
+	if _, err := os.Stat(filepath.Join(e.fake, "args")); err == nil {
+		t.Error("claude ran without a checkout")
+	}
+}
+
+func TestCommandsReachTheAgentAsInput(t *testing.T) {
+	e := setup(t, "commit")
+	in := `{"repo":"acme/widgets","base":"main","issue":{"number":7,"title":"t"},"commands":{"setup":"just setup","test":"go test -short ./...","lint":"just lint"}}`
+	if err := os.WriteFile(e.cfg.InputPath, []byte(in), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := Run(context.Background(), e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	prompt := e.read(t, filepath.Join(e.fake, "stdin"))
+	for _, want := range []string{"- setup: just setup\n", "- test: go test -short ./...\n", "- lint: just lint\n"} {
+		if !strings.Contains(prompt, want) {
+			t.Errorf("prompt lacks %q:\n%s", want, prompt)
+		}
 	}
 }

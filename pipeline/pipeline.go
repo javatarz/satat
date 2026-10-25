@@ -31,6 +31,9 @@ type Publisher interface {
 type Options struct {
 	Launcher launcher.Launcher
 	Pusher   Publisher
+	// Cloner clones the repo before the step starts, so the step holds no GitHub credential. It
+	// is required: with none, nothing is launched.
+	Cloner Cloner
 
 	Run, Lane  string
 	Repo, Base string
@@ -53,12 +56,21 @@ type Report struct {
 // itself failed.
 func Run(ctx context.Context, o Options) (Report, error) {
 	rep := Report{Run: o.Run}
-	input, err := json.Marshal(map[string]any{"repo": o.Repo, "base": o.Base, "issue": o.Issue})
+	if o.Cloner == nil {
+		return rep, errors.New("no cloner configured: the step holds no GitHub credential, so the worker must clone")
+	}
+	ck, err := o.Cloner.Clone(ctx, o.Repo, o.Base)
+	if err != nil {
+		return rep, err
+	}
+	defer ck.Close()
+	// The commands are the base commit's, read by the worker. The step gets them as input.
+	input, err := json.Marshal(runner.Input{Repo: o.Repo, Base: o.Base, Issue: o.Issue, Commands: ck.Commands})
 	if err != nil {
 		return rep, err
 	}
 	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
-		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, CacheScope: launcher.CacheScope(o.Repo),
+		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, Checkout: ck.Tar, CacheScope: launcher.CacheScope(o.Repo),
 	})
 	if err != nil {
 		return rep, err

@@ -34,9 +34,11 @@ const (
 
 	inputDir   = "/etc/satat"
 	outputName = "out"
-	outputDir  = inputDir + "/" + outputName
-	workspace  = "/workspace"
-	tmpDir     = "/tmp"
+	// checkoutName is the directory under inputDir that holds the repo the caller cloned.
+	checkoutName = "repo"
+	outputDir    = inputDir + "/" + outputName
+	workspace    = "/workspace"
+	tmpDir       = "/tmp"
 	// cacheRoot holds every cache path a lane may declare.
 	cacheRoot = "/cache"
 )

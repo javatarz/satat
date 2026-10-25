@@ -3,7 +3,8 @@
 //	satat-eval --case eval/cases/sandbox-greet [--push]       run the issue, then grade it
 //	satat-eval --case eval/cases/sandbox-greet --grade DIR    grade a saved run (no new run, no tokens)
 //
-// The lane's pass_env names must be set, as for satat-step. --push also needs SATAT_PUSH_TOKEN.
+// The lane's pass_env names must be set, as for satat-step, and so must SATAT_GITHUB_TOKEN, with
+// which this process clones the repo before the step starts. --push also needs SATAT_PUSH_TOKEN.
 // Grading clones the repo and reads the PR back with SATAT_PUSH_TOKEN or, failing that,
 // SATAT_GITHUB_TOKEN.
 package main
@@ -91,12 +92,16 @@ func run() (bool, error) {
 			}
 			pub = &pusher.Pusher{Token: tok}
 		}
+		readToken := os.Getenv("SATAT_GITHUB_TOKEN")
+		if readToken == "" {
+			return false, fmt.Errorf("SATAT_GITHUB_TOKEN is not set: this process clones the repo before the step starts")
+		}
 		iss, err := pipeline.FetchIssue(c.Repo, c.Issue)
 		if err != nil {
 			return false, err
 		}
 		fmt.Fprintf(os.Stderr, "run %s: %s issue #%d on lane %s\n", *runID, c.Repo, c.Issue, *lane)
-		rep, err := pipeline.Run(ctx, pipeline.Options{Launcher: l, Pusher: pub, Run: *runID, Lane: *lane, Repo: c.Repo, Base: c.Base, Issue: iss})
+		rep, err := pipeline.Run(ctx, pipeline.Options{Launcher: l, Pusher: pub, Cloner: pipeline.GitCloner{Token: readToken}, Run: *runID, Lane: *lane, Repo: c.Repo, Base: c.Base, Issue: iss})
 		if err != nil {
 			return false, err
 		}

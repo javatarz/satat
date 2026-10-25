@@ -50,7 +50,7 @@ flowchart LR
   launch -- "Docker API via<br/>docker-proxy" --> step
 
   subgraph step["one-shot step container (untrusted)"]
-    runner["satat-runner<br/>clone, run the agent, commit"]
+    runner["satat-runner<br/>run the agent, commit"]
   end
 
   step -- "if changes:<br/>result.json + changes.bundle" --> push
@@ -104,11 +104,18 @@ flowchart LR
    same run left running, which the reaper then removes.
 4. **One step, one container.** Otherwise the task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the
-   [launcher](#the-launcher). Input is `{repo, base, issue}`. It holds no secrets.
+   [launcher](#the-launcher). Before launching, the worker clones the repo and base branch (depth
+   50) with the read token (`GitCloner`, `pipeline/clone.go`) and reads `.satat/commands.yaml`
+   from the **base commit**: `version: 1`, with `commands.setup` and `commands.test` required and
+   any other key a free-form hint. The step's input is `{repo, base, issue, commands}`, and the
+   clone arrives in the step's input volume at `/etc/satat/repo`, owned by the step's user. The
+   input holds no secrets. The agent's edits to the commands file cannot change what the harness
+   passed, and a repo whose file is missing or invalid is not started (the full readiness check is
+   #175).
 5. **Runner.** Inside the container the entrypoint is `satat-runner` (`runner/runner.go`). It
    checks that no variable would route Claude Code off the subscription token
-   (`ANTHROPIC_API_KEY` and others make it refuse to start), clones the repo with the read
-   token (depth 50), creates branch `satat/<run>`, and runs `claude -p` headless on the issue
+   (`ANTHROPIC_API_KEY` and others make it refuse to start), copies the worker's clone into
+   `/workspace/repo`, creates branch `satat/<run>`, and runs `claude -p` headless on the issue
    with a fixed prompt that fences the issue text as untrusted data. Anything the agent left
    uncommitted is committed as `Satat`. Then it rehearses the push: `HEAD` goes to a throwaway
    local bare repo, so git runs the repo's own `pre-push` hook (pre-commit, husky, a plain
@@ -299,13 +306,16 @@ So the design keeps write access out of reach of the agent
   at a different commit. If the branch and PR already exist (a re-delivered step), it reuses them.
 - The PR is always a draft, with `maintainer_can_modify` off.
 
-What the step does hold: the Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`) and a
-**read-only** clone token (`SATAT_GITHUB_TOKEN`). The runner keeps the clone token out of
-Claude's environment and uses it only for `git clone`, but both are in the runner's process
-environment, so a determined agent could read them. `satat.yaml` calls this a prototype
-shortcut. The planned fix: the worker clones before the step starts, so the step holds no GitHub token,
-and an LLM gateway proxy holds the Claude token ([ADR 0025](adr/0025-github-token-broker.md),
-[ADR 0032](adr/0032-secret-store.md), #155).
+What the step does hold: the Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`). It holds **no
+GitHub credential**: the worker clones with the read token (`SATAT_GITHUB_TOKEN`, in the worker's
+environment only and never in a lane's `pass_env`) before the container starts, git gets the
+token through a credential helper in that one clone process, and the clone's remote is the plain
+`https://github.com/<repo>.git`. `launcher/docker/exposure_test.go` starts a process in the step
+and fails if a GitHub credential is visible by name, value or file. The Claude token is the one
+known gap: the planned fix is an LLM gateway proxy that issues each step a short-lived key
+([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md), #155). Until
+OpenBao exists the worker reads `github-read-token` from its environment as
+`SATAT_GITHUB_TOKEN`.
 
 ## Concurrency caps
 

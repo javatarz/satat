@@ -1,6 +1,7 @@
-// Package runner is what runs inside a Claude lane container: it reads the step input, clones
-// the repo, runs the unmodified claude CLI headless on the issue, commits locally and writes a
-// result file and a transcript. It never pushes (that is the pusher's job, ADR 0025).
+// Package runner is what runs inside a Claude lane container: it reads the step input, copies in
+// the checkout the worker cloned before the step started, runs the unmodified claude CLI headless
+// on the issue, commits locally and writes a result file and a transcript. It holds no GitHub
+// credential and never pushes (the pusher does, ADR 0025).
 package runner
 
 import (
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -25,6 +27,10 @@ type Input struct {
 	Repo  string `json:"repo"` // owner/name on github.com
 	Base  string `json:"base"` // branch to start from
 	Issue Issue  `json:"issue"`
+	// Commands are the repo's commands from .satat/commands.yaml on the base commit, read by the
+	// worker before the step started: "setup", "test" and any hints. The agent's edits to the file
+	// cannot change them.
+	Commands map[string]string `json:"commands,omitempty"`
 }
 
 type Issue struct {
@@ -73,8 +79,9 @@ type Config struct {
 	// MiseTimeout bounds the toolchain step. Zero means $SATAT_MISE_TIMEOUT, else
 	// DefaultMiseTimeout.
 	MiseTimeout time.Duration
-	// CloneURL builds the URL to clone. Defaults to https://github.com/<repo>.git.
-	CloneURL func(repo string) string
+	// Checkout is the directory holding the clone the worker made before the step started. It is
+	// copied to WorkDir/repo; the original stays untouched.
+	Checkout string
 	Env      []string // the runner's environment, as os.Environ
 	Log      io.Writer
 	MaxTurns int
@@ -82,7 +89,6 @@ type Config struct {
 
 const (
 	oauthVar = "CLAUDE_CODE_OAUTH_TOKEN"
-	cloneVar = "SATAT_GITHUB_TOKEN"
 	nameVar  = "SATAT_GIT_NAME"
 	emailVar = "SATAT_GIT_EMAIL"
 
@@ -99,6 +105,23 @@ var (
 	bannedEnv = []string{"ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX"}
 )
 
+// CheckRepo refuses a repo that is not a plain owner/name. The worker uses it too, because the
+// value reaches git there before it reaches the step.
+func CheckRepo(repo string) error {
+	if !repoRE.MatchString(repo) || strings.Contains(repo, "..") {
+		return fmt.Errorf("repo %q is not owner/name", repo)
+	}
+	return nil
+}
+
+// CheckBase refuses a base that is not a plain branch name.
+func CheckBase(base string) error {
+	if !branchRE.MatchString(base) || strings.Contains(base, "..") || strings.HasSuffix(base, "/") || strings.HasSuffix(base, ".lock") {
+		return fmt.Errorf("base %q is not a plain branch name", base)
+	}
+	return nil
+}
+
 // ParseInput validates the step input. It is strict because it feeds git and a prompt.
 func ParseInput(b []byte) (Input, error) {
 	var in Input
@@ -107,11 +130,11 @@ func ParseInput(b []byte) (Input, error) {
 	if err := dec.Decode(&in); err != nil {
 		return in, fmt.Errorf("input: %w", err)
 	}
-	if !repoRE.MatchString(in.Repo) || strings.Contains(in.Repo, "..") {
-		return in, fmt.Errorf("input: repo %q is not owner/name", in.Repo)
+	if err := CheckRepo(in.Repo); err != nil {
+		return in, fmt.Errorf("input: %w", err)
 	}
-	if !branchRE.MatchString(in.Base) || strings.Contains(in.Base, "..") || strings.HasSuffix(in.Base, "/") || strings.HasSuffix(in.Base, ".lock") {
-		return in, fmt.Errorf("input: base %q is not a plain branch name", in.Base)
+	if err := CheckBase(in.Base); err != nil {
+		return in, fmt.Errorf("input: %w", err)
 	}
 	if in.Issue.Number <= 0 {
 		return in, errors.New("input: issue number is required")
@@ -161,9 +184,6 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	if env[oauthVar] == "" {
 		return fmt.Errorf("%s is not set", oauthVar)
 	}
-	if env[cloneVar] == "" {
-		return fmt.Errorf("%s is not set", cloneVar)
-	}
 	for _, b := range []struct{ name, path string }{{"claude", cfg.Claude}, {"mise", cfg.Mise}} {
 		if !filepath.IsAbs(b.path) {
 			return fmt.Errorf("%s binary %q must be an absolute path", b.name, b.path)
@@ -174,7 +194,6 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		return err
 	}
 
-	// The clone token goes to git only; claude's environment never has it.
 	// Commits the agent makes default to Satat's identity, set in the environment rather than git
 	// config on disk. It is a default: the agent can still override it with --author or its own
 	// GIT_* variables. Only the leftovers commit below is fixed.
@@ -183,7 +202,7 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		return err
 	}
 	// PATH has the mise shims first, so the agent's Bash tool runs the repo-pinned toolchains.
-	claudeEnv := withToolchainEnv(append(withoutKeys(cfg.Env, append([]string{cloneVar, nameVar, emailVar}, identityKeys...)...), identity...))
+	claudeEnv := withToolchainEnv(append(withoutKeys(cfg.Env, append([]string{nameVar, emailVar}, identityKeys...)...), identity...))
 
 	method, err := authMethod(ctx, cfg, claudeEnv)
 	if err != nil {
@@ -195,13 +214,8 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	}
 
 	repoDir := filepath.Join(cfg.WorkDir, "repo")
-	cloneURL := "https://github.com/" + in.Repo + ".git"
-	if cfg.CloneURL != nil {
-		cloneURL = cfg.CloneURL(in.Repo)
-	}
-	helper := `!f() { echo username=x-access-token; echo "password=$` + cloneVar + `"; }; f`
-	if err := git(ctx, cfg, cfg.Env, cfg.WorkDir, "-c", "credential.helper="+helper, "clone", "--quiet", "--depth", "50", "--branch", in.Base, "--", cloneURL, repoDir); err != nil {
-		return fmt.Errorf("clone: %w", err)
+	if err := copyCheckout(ctx, cfg, repoDir); err != nil {
+		return fmt.Errorf("checkout: %w", err)
 	}
 	res.Branch = "satat/" + cfg.Run
 	if err := git(ctx, cfg, cfg.Env, repoDir, "checkout", "--quiet", "-b", res.Branch); err != nil {
@@ -265,6 +279,21 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	return nil
 }
 
+// copyCheckout puts the worker's clone in the work directory, which is where the agent works. The
+// checkout arrives in the step's input volume; the work directory is the writable scratch space.
+func copyCheckout(ctx context.Context, cfg Config, dst string) error {
+	if !filepath.IsAbs(cfg.Checkout) {
+		return fmt.Errorf("checkout directory %q must be an absolute path", cfg.Checkout)
+	}
+	if _, err := os.Stat(filepath.Join(cfg.Checkout, ".git")); err != nil {
+		return fmt.Errorf("no clone at %s: %w", cfg.Checkout, err)
+	}
+	if out, err := exec.CommandContext(ctx, "cp", "-a", "--", cfg.Checkout, dst).CombinedOutput(); err != nil {
+		return fmt.Errorf("copy %s: %w: %s", cfg.Checkout, err, out)
+	}
+	return nil
+}
+
 func authMethod(ctx context.Context, cfg Config, env []string) (string, error) {
 	cmd := exec.CommandContext(ctx, cfg.Claude, "auth", "status", "--json")
 	cmd.Env, cmd.Dir = env, cfg.WorkDir
@@ -297,7 +326,25 @@ Issue #%d: %s
 <issue-body>
 %s
 </issue-body>
-`, in.Repo, in.Issue.Number, in.Issue.Title, in.Issue.Body)
+%s`, in.Repo, in.Issue.Number, in.Issue.Title, in.Issue.Body, commandsBlock(in.Commands))
+}
+
+// commandsBlock lists the repo's commands, which the worker read from the base commit.
+func commandsBlock(cmds map[string]string) string {
+	if len(cmds) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(cmds))
+	for k := range cmds {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var b strings.Builder
+	b.WriteString("\nThe repo's own commands, from .satat/commands.yaml on the base commit (setup installs the git hooks; test is a fast loop; any other entry is a hint):\n")
+	for _, k := range keys {
+		fmt.Fprintf(&b, "- %s: %s\n", k, strings.ReplaceAll(strings.TrimSpace(cmds[k]), "\n", "\n  "))
+	}
+	return b.String()
 }
 
 // ClaudeArgs is the exact command line. The two setting flags keep user-level settings and MCP
@@ -447,7 +494,7 @@ func git(ctx context.Context, cfg Config, env []string, dir string, args ...stri
 
 func gitOut(ctx context.Context, cfg Config, dir string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, cfg.Git, args...)
-	cmd.Env, cmd.Dir = append(withoutKeys(cfg.Env, cloneVar), "GIT_CONFIG_NOSYSTEM=1"), dir
+	cmd.Env, cmd.Dir = append(append([]string{}, cfg.Env...), "GIT_CONFIG_NOSYSTEM=1"), dir
 	out, err := cmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("git %s: %w", args[0], err)
@@ -458,7 +505,7 @@ func gitOut(ctx context.Context, cfg Config, dir string, args ...string) (string
 // scrub removes secret values from text that is about to be logged or written to result.json.
 func scrub(s string, env []string) string {
 	m := envMap(env)
-	for _, k := range []string{cloneVar, oauthVar} {
+	for _, k := range []string{oauthVar} {
 		if v := m[k]; v != "" {
 			s = strings.ReplaceAll(s, v, "***")
 		}

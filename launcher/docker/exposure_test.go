@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -38,7 +39,6 @@ const openEgress = "internal: false gives the lane a plain bridge until the host
 var knownGaps = map[string][]knownGap{
 	"claude": {
 		{"env CLAUDE_CODE_OAUTH_TOKEN", "the Claude step holds the long-lived token until the LLM gateway proxy issues virtual keys (ADR 0032, #155)", false},
-		{"env SATAT_GITHUB_TOKEN", "the runner clones inside the step with a read token until the worker clones before the step starts (ADR 0025, roadmap/security.md next step 4)", false},
 		{"route: default route (open egress)", openEgress, false},
 		{"reach external-host 1.1.1.1:443", openEgress + ": any host is reachable", true},
 		{"reach dns example.com", openEgress + ": any name resolves", true},
@@ -230,6 +230,8 @@ func TestConfiguredLanesExposure(t *testing.T) {
 		t.Fatal(err)
 	}
 	h := newHarness(t, api)
+	// As in a real run, the worker has cloned the repo into the step before it starts.
+	h.checkout = func() io.Reader { return aCheckout(t) }
 	for _, lane := range cfg.Lanes {
 		t.Run(lane.Name, func(t *testing.T) {
 			probe := testLane()
@@ -274,6 +276,8 @@ type harness struct {
 	dockerIP  string
 	env       map[string]string
 	sentinels []string
+	// checkout, when set, builds the clone the worker puts in each step, as it does in a real run.
+	checkout func() io.Reader
 }
 
 func newHarness(t *testing.T, api *client.Client) *harness {
@@ -313,7 +317,7 @@ func (h *harness) probe(t *testing.T, lane launcher.Lane) []string {
 		v, ok := h.env[n]
 		return v, ok
 	}))
-	res, err := l.Launch(context.Background(), launcher.Step{Run: "expose", Name: "probe", Lane: lane.Name})
+	res, err := l.Launch(context.Background(), launcher.Step{Run: "expose", Name: "probe", Lane: lane.Name, Checkout: h.checkoutTar()})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,6 +329,13 @@ func (h *harness) probe(t *testing.T, lane launcher.Lane) []string {
 		t.Fatalf("probe did not run to the end; the test would prove nothing:\n%s", redact(out, h.sentinels))
 	}
 	return analyze(out, h.sentinels)
+}
+
+func (h *harness) checkoutTar() io.Reader {
+	if h.checkout == nil {
+		return nil
+	}
+	return h.checkout()
 }
 
 func redact(s string, secrets []string) string {
@@ -426,5 +437,62 @@ func sweepDecoys(api *client.Client) {
 		for _, n := range ns.Items {
 			_, _ = api.NetworkRemove(ctx, n.ID, client.NetworkRemoveOptions{})
 		}
+	}
+}
+
+// The worker holds the read token and clones for the step, so the claude lane's step has the repo
+// and no GitHub credential: not in its environment, not in a file, not in the clone's git config.
+// The harness plants SATAT_GITHUB_TOKEN in the worker's environment; it must not arrive by any
+// route. TestConfiguredLanesExposure catches it by name; this one fails on the value alone.
+func TestClaudeLaneStepHoldsNoGitHubCredential(t *testing.T) {
+	api := dockerAPI(t)
+	cfg, err := config.Load(filepath.Join("..", "..", "satat.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, api)
+	h.checkout = func() io.Reader { return aCheckout(t) }
+	var claude *launcher.Lane
+	for i := range cfg.Lanes {
+		if cfg.Lanes[i].Name == "claude" {
+			claude = &cfg.Lanes[i]
+		}
+	}
+	if claude == nil {
+		t.Fatal("satat.yaml has no claude lane")
+	}
+	for _, n := range append(append([]string{}, claude.PassEnv...), claude.OptionalEnv...) {
+		if strings.Contains(n, "GITHUB") || strings.Contains(n, "PUSH") || strings.Contains(n, "GH_") {
+			t.Errorf("the claude lane passes %s to the step", n)
+		}
+	}
+	probe := testLane()
+	probe.Name = "expose-no-github"
+	probe.PassEnv, probe.OptionalEnv = claude.PassEnv, claude.OptionalEnv
+	probe.Command = []string{"sh", "-c", `
+for f in /proc/[0-9]*/environ; do tr '\0' '\n' < "$f" 2>/dev/null; done; env
+grep -rIh "" /etc/satat/repo 2>/dev/null
+test -f /etc/satat/repo/README.md && echo CHECKOUT-PRESENT
+`}
+	probe.Timeout = time.Minute
+	l := newLauncher(t, api, []launcher.Lane{probe}, WithEnv(func(n string) (string, bool) { v, ok := h.env[n]; return v, ok }))
+	res, err := l.Launch(context.Background(), launcher.Step{Run: "nogh", Name: "probe", Lane: probe.Name, Checkout: aCheckout(t)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := string(res.Stdout)
+	if !strings.Contains(out, "CHECKOUT-PRESENT") {
+		t.Fatalf("the step has no checkout; the test would prove nothing: %s", res.Stderr)
+	}
+	for _, name := range []string{"SATAT_GITHUB_TOKEN", "SATAT_PUSH_TOKEN"} {
+		if strings.Contains(out, name) || strings.Contains(out, h.env[name]) {
+			t.Errorf("the step can see %s", name)
+		}
+	}
+	if credentialValueRE.MatchString(out) && !strings.Contains(out, "CLAUDE_CODE_OAUTH_TOKEN") {
+		t.Error("a credential-shaped value is visible to the step")
+	}
+	if strings.Contains(out, "x-access-token") {
+		t.Error("the step can see a GitHub credential helper")
 	}
 }
