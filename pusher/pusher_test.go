@@ -304,3 +304,37 @@ func TestBodyShape(t *testing.T) {
 		t.Errorf("unexpected body:\n%s", b)
 	}
 }
+
+// The repo's hooks run in the agent's container (the push rehearsal), never here. Hooks that
+// arrive with the bundle are only files, and one that git would otherwise install into the
+// pusher's own clone (from a template dir) must not fire on the push.
+func TestPusherRunsNoRepoHooks(t *testing.T) {
+	f := newFixture(t)
+	marker := filepath.Join(f.root, "hook-ran")
+	hook := "#!/bin/sh\necho ran >> " + marker + "\nexit 1\n"
+	tpl := filepath.Join(f.root, "tpl")
+	if err := os.MkdirAll(filepath.Join(tpl, "hooks"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"pre-push", "post-checkout", "post-merge", "reference-transaction"} {
+		if err := os.WriteFile(filepath.Join(tpl, "hooks", name), []byte(hook), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("GIT_TEMPLATE_DIR", tpl)
+	req := f.commit("run1", map[string]string{
+		"hello.py":                "print('hi')\n\ndef greet(n):\n    return n\n",
+		".githooks/pre-push":      hook,
+		".husky/pre-push":         hook,
+		".pre-commit-config.yaml": "repos:\n- repo: local\n  hooks:\n  - id: x\n    name: x\n    entry: touch " + marker + "\n    language: system\n    stages: [pre-push]\n",
+	})
+	if _, err := f.pusher().Push(context.Background(), req); err != nil {
+		t.Fatalf("push: %v", err)
+	}
+	if got := f.remoteHas("satat/run1"); got != req.HeadSHA {
+		t.Errorf("remote branch at %q, want %s", got, req.HeadSHA)
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Error("a repo hook ran in the pusher")
+	}
+}
