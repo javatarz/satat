@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 	"time"
 
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
@@ -152,14 +153,20 @@ type Handler struct {
 	// Issues gates each run: only an open issue labelled ReadyLabel runs. A nil reader fails
 	// closed: nothing is launched.
 	Issues IssueReader
+	// Allowed lists the repos a run may start in (the intake and poller lists). It is checked at
+	// run start, so an event for a repo no longer listed, or a forged one, launches nothing. Empty
+	// allows no repo.
+	Allowed []string
 }
 
-// Run takes one input to a result. An issue that is not ready at run start (closed, a pull
-// request, or without ReadyLabel) is skipped, which is a normal result; if it cannot be read,
+// Run takes one input to a result. The issue's title and body are read from GitHub at run start;
+// the text in the input is ignored, so a forged event cannot choose what the agent is told (#181).
+// An issue that is not ready at run start (closed, a pull request, without ReadyLabel, or in a
+// repo that is no longer allowed) is skipped, which is a normal result; if it cannot be read,
 // nothing is launched and the run fails. A step that fails, or a change that cannot be published,
 // is an error so the run shows as failed; a step that changes nothing is a normal result.
 func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error) {
-	reason, err := h.notReady(ctx, in)
+	st, reason, err := h.notReady(ctx, in)
 	if err != nil {
 		err = fmt.Errorf("not launched: cannot read %s#%d: %w", in.Repo, in.Issue.Number, err)
 		return Output{Run: runID}, errors.Join(err, h.stopEarlierAttempt(ctx, runID))
@@ -167,6 +174,7 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 	if reason != "" {
 		return Output{Run: runID, Status: StatusSkipped, Reason: reason}, h.stopEarlierAttempt(ctx, runID)
 	}
+	in.Issue.Title, in.Issue.Body = st.Title, st.Body
 	rep, err := pipeline.Run(ctx, pipeline.Options{
 		Launcher: h.Launcher, Pusher: h.Pusher,
 		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue,
@@ -188,25 +196,28 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 }
 
 // notReady re-reads the issue, because it can change while the run waits behind a cap. It returns
-// why the issue must not run, or "" when it may.
-func (h Handler) notReady(ctx context.Context, in Input) (string, error) {
+// why the issue must not run, or "" when it may, along with the state it read.
+func (h Handler) notReady(ctx context.Context, in Input) (pipeline.IssueState, string, error) {
 	if h.Issues == nil {
-		return "", errors.New("no issue reader configured")
+		return pipeline.IssueState{}, "", errors.New("no issue reader configured")
+	}
+	ref := fmt.Sprintf("%s#%d", in.Repo, in.Issue.Number)
+	if !slices.ContainsFunc(h.Allowed, func(a string) bool { return strings.EqualFold(a, in.Repo) }) {
+		return pipeline.IssueState{}, in.Repo + " is not an allowed repo", nil
 	}
 	st, err := h.Issues.Issue(ctx, in.Repo, in.Issue.Number)
 	if err != nil {
-		return "", err
+		return pipeline.IssueState{}, "", err
 	}
-	ref := fmt.Sprintf("%s#%d", in.Repo, in.Issue.Number)
 	switch {
 	case st.PullRequest:
-		return ref + " is a pull request, not an issue", nil
+		return st, ref + " is a pull request, not an issue", nil
 	case !st.Open:
-		return ref + " is closed", nil
+		return st, ref + " is closed", nil
 	case !slices.Contains(st.Labels, ReadyLabel):
-		return fmt.Sprintf("%s is not labelled %s", ref, ReadyLabel), nil
+		return st, fmt.Sprintf("%s is not labelled %s", ref, ReadyLabel), nil
 	}
-	return "", nil
+	return st, "", nil
 }
 
 // stopEarlierAttempt cancels this run's step when the gate stops the run. A re-delivered task

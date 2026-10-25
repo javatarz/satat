@@ -13,6 +13,10 @@ import (
 
 // IssueState is what the worker's readiness check needs to know about an issue right now.
 type IssueState struct {
+	// Title and Body are the issue's text as GitHub has it now. A run uses these, never the
+	// text its trigger carried (#181).
+	Title  string
+	Body   string
 	Labels []string
 	// Open is false for a closed issue. PullRequest is true when the number is a PR, not an issue.
 	Open        bool
@@ -75,6 +79,8 @@ func (g GitHubIssues) Issue(ctx context.Context, repo string, number int) (Issue
 		return IssueState{}, fmt.Errorf("GET issue %s#%d: %s%s: %s", repo, number, resp.Status, hint, strings.TrimSpace(string(b)))
 	}
 	var iss struct {
+		Title       string          `json:"title"`
+		Body        *string         `json:"body"`
 		State       string          `json:"state"`
 		PullRequest json.RawMessage `json:"pull_request"`
 		Labels      []struct {
@@ -85,9 +91,13 @@ func (g GitHubIssues) Issue(ctx context.Context, repo string, number int) (Issue
 		return IssueState{}, fmt.Errorf("issue %s#%d: %w", repo, number, err)
 	}
 	st := IssueState{
+		Title:       iss.Title,
 		Open:        iss.State == "open",
 		PullRequest: len(iss.PullRequest) > 0 && string(iss.PullRequest) != "null",
 		Labels:      make([]string, 0, len(iss.Labels)),
+	}
+	if iss.Body != nil {
+		st.Body = *iss.Body
 	}
 	for _, l := range iss.Labels {
 		st.Labels = append(st.Labels, l.Name)

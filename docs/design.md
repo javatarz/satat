@@ -79,7 +79,7 @@ flowchart LR
    registration and the run listing are covered by unit tests only. A run older than 30 days (or
    than Hatchet's retention) is forgotten, so a still-labelled issue whose last run failed that long
    ago is queued again. The poller does not need the repo-readiness check (#175): the run gate
-   above already handles readiness. List only trusted repos under `poller.repos` until #181 lands.
+   above already handles readiness. The worker also re-reads the title and body (step 3), so listing a repo is not what keeps a forged delivery's text out.
    A webhook (#112 slice 6) is planned and will push the same event. Because
    they share the event, everything after this step is the same whichever way a run came in.
 2. **Queue.** Hatchet Lite (with Postgres) holds the event. The workflow `satat-issue`
@@ -88,13 +88,15 @@ flowchart LR
    Hatchet run ID becomes the Satat run ID.
 3. **Readiness check.** When the run starts, the worker re-reads the issue from the GitHub API
    with the read-only token (`SATAT_GITHUB_TOKEN`, which needs Issues: read as well as
-   Contents: read). Unless the issue is open, not a pull request, and labelled `ready-for-agent`,
+   Contents: read). Unless the repo is still listed (`SATAT_INTAKE_REPOS` plus `poller.repos`; an
+   empty list allows none) and the issue is open, not a pull request, and labelled `ready-for-agent`,
    nothing is launched and the run finishes with status `skipped` and a reason. It belongs in the
    worker, not in each way in, so that every way in is gated the same way and a label removed
    while the run waited behind a cap is honoured. Only a human moves an issue to
    `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). If the issue cannot be
    read (a fine-grained token without Issues: read gets a 404 on a private repo), nothing is
-   launched and the run fails. Either way the task cancels any container an earlier attempt of
+   launched and the run fails. The step is given the title and body from this read; the text in
+   the event, whether from the poller, the webhook or a forged delivery, is ignored (#181). Either way the task cancels any container an earlier attempt of
    the same run left running, which the reaper then removes.
 4. **One step, one container.** Otherwise the task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the

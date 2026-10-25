@@ -142,8 +142,9 @@ the run input (`MapWebhook`) and pushes `satat:issue`, which the existing workfl
 only `labeled` + `ready-for-agent` on an open issue (not a PR) in a repo named in `SATAT_INTAKE_REPOS`; the
 list is required, so an unset variable queues nothing and the worker logs that intake is off. The worker
 still re-reads the issue's labels at run start, so a stale delivery for an issue that lost its label launches nothing.
-It does not re-read the title and body: they come from the webhook payload, so a forged delivery for a
-genuinely labelled issue would run with attacker-chosen text. Re-reading them at run start is a follow-up.
+It also re-reads the title and body (#181) and ignores the payload's text, so a forged delivery for a
+genuinely labelled issue cannot run with attacker-chosen text. A forged delivery can still choose which
+labelled issue runs, in a repo the worker is configured for.
 Unit tests cover the mapping, every skip, fail-closed config and a failed push (which fails the intake run so
 Hatchet retries it).
 
