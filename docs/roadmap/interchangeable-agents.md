@@ -1,6 +1,6 @@
 # Interchangeable agents
 
-**Status:** Idea · **Related:** [ADR 0022](../adr/0022-v2-platform-requirement-decisions.md) ·
+**Status:** Idea, after v0.2 (parked in a later map) · **Related:** [ADR 0022](../adr/0022-v2-platform-requirement-decisions.md) ·
 **Source:** calls on 2026-10-16 and 2026-10-21
 
 - The harness runs at least three agents: Claude Code, OpenCode and Pi. Later, any
