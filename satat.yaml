@@ -24,7 +24,7 @@ lanes:
   #   scripts/build-claude-image.sh   (prints the digest-pinned reference to paste below)
   # Publishing it to GHCR comes later. Run it with: go run ./cmd/satat-step --repo ... --issue N
   claude:
-    image: satat-claude@sha256:83e954d450eab0ac5b9cfeac1533c73a58f01416bd68e3045bab6170e5826d1e
+    image: satat-claude@sha256:5d0a2935e81590e39b09bb3ad74298e05281080f9871c2f359a048389062f0c9
     # The image's entrypoint is the Satat runner; no command override.
     memory: 3GiB
     cpus: 2
@@ -47,11 +47,16 @@ lanes:
     internal: false
     # Build caches on disk volumes, outside /workspace, so they do not count against `memory`
     # (ADR 0033). The paths match the image's cache env vars; /cache/tmp takes temp files a
-    # build needs to execute, which the noexec /tmp tmpfs refuses. Per step for now: the
-    # caches start empty and are removed with the step. persist: true keeps them per repo.
+    # build needs to execute, which the noexec /tmp tmpfs refuses. Persistent per (lane, repo):
+    # mise installs the repo's toolchains into /cache/mise once, then every later step of that repo
+    # reuses them (a cold install is about 30 s, a warm one about 1 s). persist: false would remove
+    # them with the step.
     caches:
-      persist: false
+      persist: true
       paths:
+        mise: /cache/mise
+        mise-cache: /cache/mise-cache
+        mise-state: /cache/mise-state
         go-mod: /cache/go-mod
         go-build: /cache/go-build
         pip: /cache/pip
