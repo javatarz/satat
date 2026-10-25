@@ -2,6 +2,7 @@ package workflows
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -23,19 +24,34 @@ const (
 	agentStep = "agent"
 )
 
-// MapAgent builds an agent run input from config, looking up the lane's caps as MapIssue does.
+// MapAgent builds an agent run input from config, looking up the lane's caps as MapIssue does. It
+// refuses a lane that runs an agent, so the CLI fails before it pushes; the worker checks again.
 func MapAgent(cfg config.Config, lane string, stepInput []byte) (Input, error) {
 	account, ok := cfg.Accounts[lane]
 	if !ok {
 		return Input{}, fmt.Errorf("unknown lane %q", lane)
 	}
+	if !cfg.NoAgent[lane] {
+		return Input{}, errors.New(agentLaneRefusal(lane))
+	}
 	return Input{Kind: KindAgent, Repo: AdhocRepo, Lane: lane, Account: account, LaneCap: cfg.LaneMaxRuns[lane], StepInput: stepInput}, nil
 }
 
+// agentLaneRefusal says why a lane-started run on an agent lane is refused.
+func agentLaneRefusal(lane string) string {
+	return fmt.Sprintf("lane %q runs an agent, so it takes no lane-started runs: agent work starts only from an issue labelled %s; only lanes with `agent: false` take lane-started runs", lane, ReadyLabel)
+}
+
 // runAgent launches one step and reports what it left. It never publishes anything. A non-zero
-// exit, a timeout, an OOM kill and a cancel are results; only a launch error is an error.
+// exit, a timeout, an OOM kill and a cancel are results; only a launch error is an error. A lane
+// that runs an agent (not in NoAgent) is refused before anything is launched: whoever pushed the
+// event, agent work starts only from a triaged issue.
 func (h Handler) runAgent(ctx context.Context, runID string, in Input) (Output, error) {
 	out := Output{Run: runID, Kind: KindAgent}
+	if !h.NoAgent[in.Lane] {
+		out.Status, out.Reason = StatusRefused, agentLaneRefusal(in.Lane)
+		return out, nil
+	}
 	res, err := h.Launcher.Launch(ctx, launcher.Step{Run: runID, Name: agentStep, Lane: in.Lane, Input: in.StepInput})
 	if err != nil {
 		return out, err

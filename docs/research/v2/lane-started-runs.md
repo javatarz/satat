@@ -1,6 +1,7 @@
 # Lane-started runs: marking lanes, and what #129 should change
 
-Design note for #132 (2026-10-25). The flow it fits into is in
+Design note for #132 (2026-10-25). Status: built in #129 (the `agent` lane key, the worker and
+CLI refusal, `agent: false` on `smoke`, `sleep` and `check-python`, and ADR 0030 restated). The flow it fits into is in
 [design.md](../../design.md#the-flow-end-to-end), and the section on lane-started runs is
 [there too](../../design.md#lane-started-runs).
 

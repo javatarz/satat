@@ -69,7 +69,40 @@ var fast = pollTimings{Lookup: time.Millisecond, LookupTimeout: time.Second, Wai
 func testConfig() config.Config {
 	return config.Config{
 		Accounts:    map[string]string{"smoke": "none"},
-		LaneMaxRuns: map[string]int{"smoke": 1},
+		LaneMaxRuns: map[string]int{"smoke": 1, "claude": 1},
+		NoAgent:     map[string]bool{"smoke": true},
+	}
+}
+
+// The CLI refuses an agent lane before it pushes anything.
+func TestRunRefusesAnAgentLaneWithoutPushing(t *testing.T) {
+	f := &fakeHatchet{}
+	cfg := testConfig()
+	cfg.Accounts["claude"] = "claude-subscription"
+	var out bytes.Buffer
+	err := agentRun(context.Background(), f, cfg, "claude", nil, true, &out, fast)
+	if err == nil || !strings.Contains(err.Error(), `"claude"`) || !strings.Contains(err.Error(), "agent: false") {
+		t.Fatalf("err %v", err)
+	}
+	if len(f.pushed) != 0 {
+		t.Errorf("pushed %d events", len(f.pushed))
+	}
+}
+
+// A refusal recorded by the worker (an event pushed by something other than this CLI) is printed
+// with its reason and exits non-zero.
+func TestWaitPrintsARefusal(t *testing.T) {
+	f := &fakeHatchet{rows: []RunRow{{ID: "r1", State: "COMPLETED"}}, outputs: map[string]*workflows.Output{
+		"r1": {Run: "r1", Kind: workflows.KindAgent, Status: workflows.StatusRefused, Reason: "lane \"claude\" runs an agent"},
+	}}
+	var out bytes.Buffer
+	err := followRun(context.Background(), f, "r1", &out, time.Millisecond)
+	var code exitCode
+	if !errors.As(err, &code) || code != 1 {
+		t.Fatalf("err %v, want exit 1", err)
+	}
+	if !strings.Contains(out.String(), "status: refused") || !strings.Contains(out.String(), "reason: lane \"claude\" runs an agent") {
+		t.Errorf("output:\n%s", out.String())
 	}
 }
 
