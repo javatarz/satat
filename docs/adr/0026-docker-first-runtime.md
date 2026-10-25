@@ -7,7 +7,9 @@ decision is not reversed, but it is no longer the first runtime. Amends the lapt
 [ADR 0022](0022-v2-platform-requirement-decisions.md) (NN1, "k3d on a laptop") and the
 "Provision-deploy split" in `AGENTS.md`. [ADR 0023](0023-hatchet-queue-and-workflow-engine.md)
 is unchanged, with one clarification below. Where the Docker API is exposed to is decided in
-[ADR 0027](0027-docker-api-access.md).
+[ADR 0027](0027-docker-api-access.md). Amended 2026-10-25: the laptop runs trusted
+repos, not only the owner's, and the egress proxy is a hostname allowlist with no secrets (see
+ADR 0025 and #99).
 
 ## Context
 
@@ -64,14 +66,14 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
   replaces it if real repos need more), default seccomp, `--memory`, `--cpus` and `--pids-limit` from
   the lane config, no Docker socket and no host path in any step container.
   `runtime: runsc` is allowed per lane where installed. It is not required (#110 is not on
-  the critical path for a laptop that runs only the owner's repos, per ADR 0022).
+  the critical path for a laptop that runs only trusted repos, per ADR 0022).
 - **Lane = config, not a CRD.** A lane is an image, limits, a network and an allowed-backends
   list in `satat.yaml`. It is the equivalent of a `SandboxTemplate`.
 - **Network.** One user-defined Docker network per lane, marked internal, so a step reaches
-  only the containers attached to it: an egress proxy, and LiteLLM once a lane uses it. The proxy (hostname
-  allowlist, and the token injection in ADR 0025) comes after the prototype. Until it exists,
-  steps get a plain bridge network with no hostname allowlist, and only the owner's repos
-  may be pointed at it.
+  only the containers attached to it: an egress proxy, and LiteLLM once a lane uses it. The proxy is a
+  hostname allowlist only: no TLS interception, no secrets and no token injection (ADR 0025). It
+  is part of v0.2 (#99). Until it exists, steps get a plain bridge network with no hostname
+  allowlist, and only the owner's repos may be pointed at it.
 - **Concurrency cap.** A deploy-time value: the Docker VM's memory, minus the platform share
   (measured in the prototype, expected below ADR 0024's 2.4 GiB because k3s is gone), divided
   by the per-step memory limit. #109 calibrates the per-step values on real steps.
@@ -84,9 +86,9 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
 - Two launcher implementations to keep behaviourally equal. A shared conformance test (start,
   exit code, logs, cancel, adopt after re-delivery, cleanup after a crash) runs against both.
 - Docker gives weaker isolation than gVisor on Kubernetes: steps share the Docker VM's
-  kernel. Acceptable because the laptop runs only the owner's repos and Docker Desktop (or
-  colima) puts a VM between the containers and macOS. Not acceptable as a default for other
-  people's repos.
+  kernel. Acceptable because the laptop runs only trusted repos and Docker Desktop (or
+  colima) puts a VM between the containers and macOS. Not acceptable for untrusted
+  repos: they need gVisor or Kata (#166, #110).
 - No network-policy start-up gap and no Kubernetes RBAC to design. A Docker API path to the
   worker is a larger single point of trust than the claim-only RBAC in ADR 0024, which is why
   ADR 0027 exists.
