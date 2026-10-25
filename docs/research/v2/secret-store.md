@@ -180,9 +180,14 @@ read the named entries, keep the values in memory, renew or log in again. Third-
 (LiteLLM) need a value as a file or env var; the usual answer is OpenBao Agent rendering a
 template beside them with its own identity. Not tried here.
 
-### Transitional gap: the Claude token
+### The Claude token (amended 2026-10-25)
 
-Until the injecting proxy exists, the Claude lane cannot work without the token in its
+Target: an LLM gateway proxy holds the token and gives each step a short-lived virtual key
+(ADR 0032, `secrets-decisions.md` section 3). LiteLLM is the first candidate; any proxy with
+the same properties will do. Whether it can use the subscription OAuth token upstream is
+unproven (card GATEWAY_SPIKE).
+
+Until then on Compose, the Claude lane cannot work without the token in its
 container. The launcher (worker identity) would read `claude-oauth-token` and pass it in, as it
 does today. That breaks "use, never see" for one secret, already accepted as a prototype
 shortcut in ADR 0026. The store design does not change when the proxy lands: the grant moves
@@ -289,7 +294,8 @@ So on k3d the seal key Secret, and OpenBao's Raft volume, survive stop and start
   through it. `kubectl exec` is the fallback.
 - A colima restart (as opposed to `compose down` / `up`). Not run, to avoid stopping the
   running Satat stack. Named volumes live in the VM disk, so it should survive.
-- OpenBao Agent rendering a file for LiteLLM.
+- OpenBao Agent rendering a file for the gateway proxy, and the proxy using the OAuth token
+  upstream (card GATEWAY_SPIKE).
 - Raft snapshot and restore (`bao operator raft snapshot`), if re-initialising per environment
   ever stops being acceptable.
 - Anything on EKS; from AWS docs only.

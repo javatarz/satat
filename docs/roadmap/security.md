@@ -39,5 +39,6 @@ Next, in order:
    check confirms it.
 4. Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
    `scripts/compose-up.sh` stops calling `op`.
-5. The injecting proxy (ADR 0025) takes the Claude token. Until then the Claude step still
-   holds it: the one known break of "use, never see".
+5. An LLM gateway proxy takes the Claude token and issues each step a short-lived virtual key
+   (ADR 0032). Until then the Compose Claude step still holds the token: the one known break of
+   "use, never see". No interim path on Kubernetes.
