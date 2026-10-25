@@ -4,13 +4,16 @@
 // Environment: the Hatchet client settings (HATCHET_CLIENT_TOKEN, HATCHET_CLIENT_HOST_PORT,
 // HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST, SATAT_PUSH_TOKEN, SATAT_GITHUB_TOKEN (read-only, to
 // check an issue is labelled ready-for-agent before running it), and every name a lane lists in
-// pass_env. SATAT_CONFIG overrides the path of satat.yaml.
+// pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_INTAKE_REPOS (comma-separated
+// owner/name) turns on the GitHub webhook intake for those repos only.
 package main
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/hatchet-dev/hatchet/pkg/cmdutils"
@@ -96,10 +99,37 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	w, err := hc.NewWorker("satat-worker", hatchet.WithWorkflows(wf), hatchet.WithSlots(cfg.Limits.Global))
+	workflowsToRun := []hatchet.WorkflowBase{wf}
+	// Webhook intake is on only when repos are named: it queues nothing for an unlisted repo.
+	if repos := splitList(os.Getenv("SATAT_INTAKE_REPOS")); len(repos) > 0 {
+		workflowsToRun = append(workflowsToRun, workflows.RegisterIntake(hc, workflows.Intake{
+			Config: cfg, Allowed: repos, Events: eventPusher{hc},
+		}))
+		log.Info("webhook intake on", "repos", repos)
+	} else {
+		log.Info("webhook intake off: SATAT_INTAKE_REPOS is empty")
+	}
+	w, err := hc.NewWorker("satat-worker", hatchet.WithWorkflows(workflowsToRun...), hatchet.WithSlots(cfg.Limits.Global+2)) // Hatchet enforces the cap; spare slots keep intake from waiting behind steps
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}
 	log.Info("worker starting", "workflow", spec.Name, "global_cap", cfg.Limits.Global, "execution_timeout", spec.ExecutionTimeout)
 	return w.StartBlocking(ctx)
+}
+
+func splitList(s string) []string {
+	var out []string
+	for _, p := range strings.Split(s, ",") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// eventPusher adapts Hatchet's events client (whose Push takes options) to workflows.EventPusher.
+type eventPusher struct{ hc *hatchet.Client }
+
+func (e eventPusher) Push(ctx context.Context, key string, payload any) error {
+	return e.hc.Events().Push(ctx, key, payload)
 }
