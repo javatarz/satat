@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/launcher"
@@ -52,10 +53,94 @@ func newLauncher(t *testing.T, api *client.Client, lanes []launcher.Lane, opts .
 			t.Logf("cleanup reap: %v", err)
 		}
 		for _, lane := range lanes {
+			removeCaches(cctx, api, lane.Name)
 			_, _ = api.NetworkRemove(cctx, laneNetwork(lane.Name), client.NetworkRemoveOptions{})
 		}
 	})
 	return l
+}
+
+// removeCaches removes the cache volumes of one test lane. The step reaper leaves caches alone,
+// and a real lane's caches on the same daemon must survive the tests.
+func removeCaches(ctx context.Context, api *client.Client, lane string) {
+	vols, err := api.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelLane+"="+lane)})
+	if err != nil {
+		return
+	}
+	for _, v := range vols.Items {
+		if v.Labels[labelManaged] == "true" {
+			_, _ = api.VolumeRemove(ctx, v.Name, client.VolumeRemoveOptions{Force: true})
+		}
+	}
+}
+
+// chownVolume makes a volume writable by the step user, as copy-up from an image with the
+// directory owned by 10001 would; busybox has no /cache to copy.
+func chownVolume(t *testing.T, api *client.Client, name string) {
+	t.Helper()
+	ctx := context.Background()
+	c, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Config:     &container.Config{Image: pinned, User: "0:0", Cmd: []string{"chown", "10001:10001", "/v"}},
+		HostConfig: &container.HostConfig{Mounts: []mount.Mount{{Type: mount.TypeVolume, Source: name, Target: "/v"}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _, _ = api.ContainerRemove(ctx, c.ID, client.ContainerRemoveOptions{Force: true}) }()
+	if _, err := api.ContainerStart(ctx, c.ID, client.ContainerStartOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	w := api.ContainerWait(ctx, c.ID, client.ContainerWaitOptions{Condition: container.WaitConditionNotRunning})
+	select {
+	case r := <-w.Result:
+		if r.StatusCode != 0 {
+			t.Fatalf("chown exited %d", r.StatusCode)
+		}
+	case err := <-w.Error:
+		t.Fatal(err)
+	}
+}
+
+// A persistent cache outlives the step and is found again by the next step of the same scope,
+// and only by it.
+func TestPersistentCacheIsSharedWithinAScopeOnly(t *testing.T) {
+	api := dockerAPI(t)
+	lane := shLane("keep", `cat /cache/a/marker 2>/dev/null || echo none; echo "$SATAT_RUN" > /cache/a/marker 2>/dev/null; true`)
+	lane.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}}
+	lane.PersistCaches = true
+	l := newLauncher(t, api, []launcher.Lane{lane})
+	ctx := context.Background()
+
+	n, _ := normalizeLane(lane)
+	first := launcher.Step{Run: "keep1", Name: "s", Lane: "keep", CacheScope: "repoa"}
+	seed := cacheVolumes(n, first)[0].opts
+	if err := l.createVolume(ctx, seed); err != nil {
+		t.Fatal(err)
+	}
+	chownVolume(t, api, seed.Name)
+
+	run := func(s launcher.Step) string {
+		t.Helper()
+		res, err := l.Launch(ctx, s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(res.Stdout))
+	}
+	if got := run(first); got != "none" {
+		t.Fatalf("first step saw %q in a new cache", got)
+	}
+	if got := run(launcher.Step{Run: "keep2", Name: "s", Lane: "keep", CacheScope: "repoa"}); got != "keep1" {
+		t.Errorf("second step of the same scope saw %q, want keep1", got)
+	}
+	if got := run(launcher.Step{Run: "keep3", Name: "s", Lane: "keep", CacheScope: "repob"}); got != "none" {
+		t.Errorf("a step of another scope saw %q", got)
+	}
+	for _, name := range []string{"satat-cache-keep-repoa-a", "satat-cache-keep-repob-a"} {
+		if _, err := api.VolumeInspect(ctx, name, client.VolumeInspectOptions{}); err != nil {
+			t.Errorf("persistent cache %s did not survive its step: %v", name, err)
+		}
+	}
 }
 
 func TestConformance(t *testing.T) {

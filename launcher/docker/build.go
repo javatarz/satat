@@ -24,6 +24,7 @@ const (
 var (
 	idRE        = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
 	cacheNameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+	scopeRE     = regexp.MustCompile(`^[a-z0-9]{1,32}$`)
 )
 
 const maxCaches = 16
@@ -83,7 +84,7 @@ func normalizeLane(l launcher.Lane) (launcher.Lane, error) {
 		return l, fmt.Errorf("lane %q: %w", l.Name, err)
 	}
 	// The floor is checked on a sample request so a lane that can never launch fails now.
-	probe, err := buildRequest(l, launcher.Step{Run: "probe", Name: "probe", Lane: l.Name}, func(string) (string, bool) { return "x", true })
+	probe, err := buildRequest(l, launcher.Step{Run: "probe", Name: "probe", Lane: l.Name, CacheScope: "probe"}, func(string) (string, bool) { return "x", true })
 	if err != nil {
 		return l, err
 	}
@@ -123,22 +124,40 @@ func cachePaths(l launcher.Lane) []string {
 
 // cacheVolume is the volume behind one of a lane's caches for one step.
 type cacheVolume struct {
-	opts client.VolumeCreateOptions
-	path string
+	opts    client.VolumeCreateOptions
+	path    string
+	persist bool
 }
 
-// cacheVolumes names the step's cache volumes. Each is the step's own and goes with it. The
-// builder mounts them and Launch creates them from this one list, so the two cannot disagree.
+// cacheKeyPrefix names a persistent cache key's volumes: satat-cache-<lane>-<scope>-.
+func cacheKeyPrefix(lane, scope string) string {
+	return resourcePrefix + "cache-" + lane + "-" + scope + "-"
+}
+
+// cacheVolumes names the step's cache volumes. The builder mounts them and Launch creates them
+// from this one list, so the two cannot disagree. A per-step cache is named after the step and
+// goes with it. A persistent one is named after its lane and the step's cache scope, the only
+// runtime value that reaches a volume name, and it can only pick a name under that fixed prefix.
 func cacheVolumes(l launcher.Lane, s launcher.Step) []cacheVolume {
 	var out []cacheVolume
 	for _, c := range l.Caches {
-		out = append(out, cacheVolume{path: c.Path, opts: client.VolumeCreateOptions{
+		cv := cacheVolume{path: c.Path, persist: l.PersistCaches, opts: client.VolumeCreateOptions{
 			Name: containerName(s.Run, s.Name) + "-cache-" + c.Name,
 			Labels: map[string]string{
 				labelManaged: "true", labelKind: kindCache, labelLane: l.Name,
 				labelRun: s.Run, labelStep: s.Name, labelCache: c.Name,
 			},
-		}})
+		}}
+		if l.PersistCaches {
+			cv.opts = client.VolumeCreateOptions{
+				Name: cacheKeyPrefix(l.Name, s.CacheScope) + c.Name,
+				Labels: map[string]string{
+					labelManaged: "true", labelKind: kindCache, labelLane: l.Name,
+					labelScope: s.CacheScope, labelCache: c.Name,
+				},
+			}
+		}
+		out = append(out, cv)
 	}
 	return out
 }
@@ -148,6 +167,12 @@ func cacheVolumes(l launcher.Lane, s launcher.Step) []cacheVolume {
 func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (string, bool)) (request, error) {
 	if !idRE.MatchString(s.Run) || !idRE.MatchString(s.Name) {
 		return request{}, fmt.Errorf("run %q and step %q must be simple identifiers", s.Run, s.Name)
+	}
+	if s.CacheScope != "" && !scopeRE.MatchString(s.CacheScope) {
+		return request{}, fmt.Errorf("cache scope %q must be 1 to 32 lower-case letters and digits", s.CacheScope)
+	}
+	if l.PersistCaches && len(l.Caches) > 0 && s.CacheScope == "" {
+		return request{}, fmt.Errorf("lane %q keeps caches per repo, so a step needs a cache scope", l.Name)
 	}
 
 	env := []string{

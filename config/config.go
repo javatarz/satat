@@ -70,7 +70,9 @@ type laneFile struct {
 
 // cachesFile is a lane's cache list: cache name to the path the step sees it at (ADR 0033).
 type cachesFile struct {
-	Paths map[string]string `yaml:"paths"`
+	// Persist keeps the caches between steps, one set per (lane, repo). Off by default.
+	Persist bool              `yaml:"persist"`
+	Paths   map[string]string `yaml:"paths"`
 }
 
 // Load reads and parses the file at path.
@@ -161,6 +163,7 @@ func (lf laneFile) lane(name string) (launcher.Lane, error) {
 	for _, n := range sortedKeys(lf.Caches.Paths) {
 		l.Caches = append(l.Caches, launcher.Cache{Name: n, Path: lf.Caches.Paths[n]})
 	}
+	l.PersistCaches = lf.Caches.Persist
 	if lf.Timeout != "" {
 		if l.Timeout, err = time.ParseDuration(lf.Timeout); err != nil || l.Timeout <= 0 {
 			errs = append(errs, fmt.Errorf("timeout %q is not a positive duration", lf.Timeout))

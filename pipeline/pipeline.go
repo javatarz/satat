@@ -57,7 +57,9 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		return rep, err
 	}
-	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{Run: o.Run, Name: StepName, Lane: o.Lane, Input: input})
+	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
+		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, CacheScope: launcher.CacheScope(o.Repo),
+	})
 	if err != nil {
 		return rep, err
 	}

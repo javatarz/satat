@@ -20,6 +20,7 @@ const (
 	labelLane    = "satat.lane"
 	labelKind    = "satat.kind"
 	labelCache   = "satat.cache"
+	labelScope   = "satat.scope"
 
 	// Volume kinds. The step reaper removes only input volumes; caches have their own reaper.
 	kindInput = "input"
@@ -255,6 +256,9 @@ func ValidateVolume(o client.VolumeCreateOptions) error {
 	case kindCache:
 		if o.Labels[labelLane] == "" || o.Labels[labelCache] == "" {
 			bad("a cache volume needs its lane and cache labels")
+		}
+		if sc, ok := o.Labels[labelScope]; ok && !scopeRE.MatchString(sc) {
+			bad("cache scope %q is not allowed", sc)
 		}
 	default:
 		bad("volume kind %q is not known", k)
