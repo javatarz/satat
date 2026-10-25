@@ -429,7 +429,7 @@ func TestPlaceholdersForRequiredVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := f.calls[0].env
-	for _, name := range []string{"POSTGRES_PASSWORD", "HATCHET_CLIENT_TOKEN", "FOO", "SATAT_PUSH_TOKEN"} {
+	for _, name := range []string{"POSTGRES_PASSWORD", "HATCHET_CLIENT_TOKEN", "FOO", "SATAT_GITHUB_TOKEN", "SATAT_PUSH_TOKEN"} {
 		if _, set := os.LookupEnv(name); set {
 			continue
 		}

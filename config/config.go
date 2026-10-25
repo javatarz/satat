@@ -50,8 +50,9 @@ type Deploy struct {
 // SecretFromEnv says a secret's value is already in the caller's environment.
 const SecretFromEnv = "env"
 
-// WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps: the push
-// token, and the read token it checks issues and clones repos with (no step holds either).
+// WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps: the
+// GitHub write token for the pusher, and the read-only token it checks an issue is labelled
+// ready-for-agent, polls and clones repos with. No step holds either.
 var WorkerSecrets = []string{"SATAT_GITHUB_TOKEN", "SATAT_PUSH_TOKEN"}
 
 // WorkerEnv is the worker's own static environment in compose.yaml. A lane may not pass any of
@@ -94,6 +95,24 @@ type PollRepo struct {
 
 // DefaultPollCron is every five minutes.
 const DefaultPollCron = "*/5 * * * *"
+
+// OptionalEnvNames is every lane's optional_env, sorted and unique, less any name that is also a
+// secret: the worker passes them on when they are set, and the platform runs without them.
+func (c Config) OptionalEnvNames() []string {
+	secret := map[string]bool{}
+	for _, n := range c.SecretNames() {
+		secret[n] = true
+	}
+	seen := map[string]bool{}
+	for _, l := range c.Lanes {
+		for _, n := range l.OptionalEnv {
+			if !secret[n] {
+				seen[n] = true
+			}
+		}
+	}
+	return sortedKeys(seen)
+}
 
 // CacheReaper is the cache reaper's policy (ADR 0033): a persistent cache unused for longer than
 // MaxUnused is evicted, and over MaxBytes in all, the least recently used go first.
@@ -230,6 +249,11 @@ func Parse(r io.Reader) (Config, error) {
 		for _, n := range l.PassEnv {
 			if slices.Contains(WorkerEnv, n) {
 				errs = append(errs, fmt.Errorf("lane %q: pass_env must not list %s, which is the worker's own environment", name, n))
+			}
+		}
+		for _, n := range l.OptionalEnv {
+			if slices.Contains(WorkerEnv, n) {
+				errs = append(errs, fmt.Errorf("lane %q: optional_env must not list %s, which is the worker's own environment", name, n))
 			}
 		}
 		c.Lanes = append(c.Lanes, l)

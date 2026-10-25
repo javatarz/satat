@@ -400,3 +400,10 @@ func TestPassEnvRefusesWorkerEnv(t *testing.T) {
 		}
 	}
 }
+
+func TestOptionalEnvMustNotBeWorkerEnv(t *testing.T) {
+	msg := parseErr(t, lane("    optional_env: [DOCKER_HOST]\n"))
+	if !strings.Contains(msg, "optional_env") || !strings.Contains(msg, "DOCKER_HOST") {
+		t.Fatalf("error should name optional_env and the variable: %s", msg)
+	}
+}

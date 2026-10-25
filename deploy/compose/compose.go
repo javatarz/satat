@@ -77,10 +77,10 @@ type Target struct {
 
 var _ deploy.Target = (*Target)(nil)
 
-// Render returns compose.yaml. Only the worker's secret environment varies with cfg.
+// Render returns compose.yaml. Only the worker's secret and optional environment vary with cfg.
 func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	var buf bytes.Buffer
-	data := struct{ WorkerEnv []string }{WorkerEnv: cfg.SecretNames()}
+	data := struct{ WorkerEnv, OptionalEnv []string }{WorkerEnv: cfg.SecretNames(), OptionalEnv: cfg.OptionalEnvNames()}
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("render compose.yaml: %w", err)
 	}

@@ -165,7 +165,9 @@ you would label `ready-for-agent` yourself.
 | Pusher (checks, push, draft PR) | `pusher/` | worker |
 | Eval harness | `eval/`, `cmd/satat-eval` | your machine |
 | Hand triggers | `cmd/satat-enqueue`, `cmd/satat-step` | your machine |
-| Platform | `compose.yaml` | Docker |
+| Worker liveness and readiness (`/livez`, `/readyz`) | `health/` | worker |
+| Deploy adapter (`satat deploy`) and on-demand agent runs (`satat agent`) | `deploy/`, `cmd/satat` | your machine |
+| Platform | `compose.yaml`, generated from `deploy/compose/compose.yaml.tmpl` and `satat.yaml` | Docker |
 
 The Compose project has four services: `postgres`, `hatchet-lite`, `docker-proxy` and `worker`.
 Ports bind to `127.0.0.1`. All images are pinned by digest.
@@ -554,6 +556,10 @@ The v0.1 stack (OpenHands Canvas on EC2) lives on the
 | [0025](adr/0025-github-token-broker.md) | GitHub credentials: machine-user token in the store, worker-side clone, pusher; no broker in v0.2, App later |
 | [0026](adr/0026-docker-first-runtime.md) | Docker first behind the launcher interface; the hardening floor; lanes |
 | [0027](adr/0027-docker-api-access.md) | Only the worker reaches the Docker API, built from lane config |
+| [0028](adr/0028-infrastructure-adapter-compose-first.md) | Infrastructure adapter, Compose first: `satat deploy up/down/status`, generated `compose.yaml`, `deploy.secrets` (proposed) |
+| [0029](adr/0029-worker-health.md) | Worker liveness and readiness include Hatchet; agents have no health endpoint (proposed) |
+| [0030](adr/0030-on-demand-agent-runs.md) | On-demand one-shot agent runs through Hatchet: `satat agent run/ls/rm` (proposed) |
+| [0032](adr/0032-secret-store.md) | Secrets live in OpenBao, read per component identity |
 | [0033](adr/0033-lane-toolchain-and-build-caches.md) | Lean lane image; mise installs toolchains at step start; persistent per-repo cache volumes; toolchain and registry egress |
 
 Research behind them is in [docs/research/v2/](research/v2/), in particular
