@@ -418,3 +418,126 @@ func TestOptionalEnvIsPassedOnlyWhenSet(t *testing.T) {
 		t.Errorf("optional env not handled as set-only:\n%s", got)
 	}
 }
+
+func egressLane() launcher.Lane {
+	l := testLane()
+	l.Name = "e"
+	l.Internal = true
+	l.Egress = &launcher.Egress{Image: pinned, Allow: []string{"github.com", "*.example.org"}}
+	return l
+}
+
+func TestEgressLaneStepGetsTheProxyAndNothingElse(t *testing.T) {
+	lane, err := normalizeLane(egressLane())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := buildRequest(lane, launcher.Step{Run: "r1", Name: "s1", Lane: "e"}, func(string) (string, bool) { return "v", true })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRequest(r.config, r.host, r.networking, nil); err != nil {
+		t.Fatalf("the step of an egress lane must pass the floor: %v", err)
+	}
+	env := strings.Join(r.config.Env, "\n")
+	for _, want := range []string{"HTTPS_PROXY=http://egress:3128", "https_proxy=http://egress:3128", "HTTP_PROXY=http://egress:3128", "NO_PROXY=localhost,127.0.0.1,::1"} {
+		if !strings.Contains(env, want) {
+			t.Errorf("step env lacks %s", want)
+		}
+	}
+	if len(r.networking.EndpointsConfig) != 1 {
+		t.Errorf("the step must be on its lane network only: %v", r.networking.EndpointsConfig)
+	}
+	// A lane without egress gets no proxy settings.
+	plain, _ := normalizeLane(testLane())
+	r, _ = buildRequest(plain, launcher.Step{Run: "r1", Name: "s1", Lane: "t"}, func(string) (string, bool) { return "v", true })
+	if strings.Contains(strings.Join(r.config.Env, "\n"), "PROXY") {
+		t.Error("a lane without egress got proxy settings")
+	}
+}
+
+func TestEgressLaneIsRefusedWhenItCouldBeBypassedOrIsUnpinned(t *testing.T) {
+	for name, tc := range map[string]struct {
+		mutate func(l *launcher.Lane)
+		want   string
+	}{
+		"open network": {func(l *launcher.Lane) { l.Internal = false }, "internal: true"},
+		"unpinned":     {func(l *launcher.Lane) { l.Egress.Image = "satat-egress:dev" }, "digest"},
+		"empty list":   {func(l *launcher.Lane) { l.Egress.Allow = nil }, "empty"},
+		"ip literal":   {func(l *launcher.Lane) { l.Egress.Allow = []string{"10.0.0.1"} }, "not a host name"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			l := egressLane()
+			tc.mutate(&l)
+			_, err := normalizeLane(l)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestEgressProxyRequestPassesItsFloorAndTheFloorRefuses(t *testing.T) {
+	lane, err := normalizeLane(egressLane())
+	if err != nil {
+		t.Fatal(err)
+	}
+	good := func() (*container.Config, *container.HostConfig, *network.NetworkingConfig) {
+		_, c, h, n := egressRequest(lane)
+		return c, h, n
+	}
+	if c, h, n := good(); ValidateEgressRequest(c, h, n) != nil {
+		t.Fatalf("the proxy request must pass: %v", ValidateEgressRequest(c, h, n))
+	}
+	for name, tc := range map[string]struct {
+		mutate func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig)
+		want   string
+	}{
+		"privileged": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) { h.Privileged = true }, "unprivileged"},
+		"root":       {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) { c.User = "0:0" }, "non-root"},
+		"bind": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) {
+			h.Binds = []string{"/:/h"}
+		}, "mounts nothing"},
+		"port": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) {
+			h.PublishAllPorts = true
+		}, "publish"},
+		"writable": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) {
+			h.ReadonlyRootfs = false
+		}, "read-only"},
+		"host net": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) {
+			h.NetworkMode = "host"
+		}, "lane network"},
+		"third net": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) {
+			n.EndpointsConfig["bridge"] = &network.EndpointSettings{}
+		}, "exactly its lane network"},
+		"unpinned": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) { c.Image = "x:latest" }, "digest"},
+		"no limit": {func(c *container.Config, h *container.HostConfig, n *network.NetworkingConfig) { h.Memory = 0 }, "limits"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			c, h, n := good()
+			tc.mutate(c, h, n)
+			err := ValidateEgressRequest(c, h, n)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestImagePinAcceptsADigestOrAnImageIDButNotATag(t *testing.T) {
+	h := strings.Repeat("a", 64)
+	for ref, ok := range map[string]bool{
+		"busybox@sha256:" + h:           true,
+		"busybox:1.37@sha256:" + h:      true,
+		"sha256:" + h:                   true,
+		"busybox:latest":                false,
+		"busybox":                       false,
+		"sha256:abc":                    false,
+		"x-sha256:" + h:                 false,
+		"busybox@sha256:" + h + "extra": false,
+	} {
+		if digestRE.MatchString(ref) != ok {
+			t.Errorf("digestRE(%q) = %v, want %v", ref, !ok, ok)
+		}
+	}
+}

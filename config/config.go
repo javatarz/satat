@@ -17,6 +17,7 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/javatarz/satat/egress"
 	"github.com/javatarz/satat/launcher"
 )
 
@@ -77,7 +78,18 @@ type file struct {
 	Limits      limitsFile          `yaml:"limits"`
 	CacheReaper cacheReaperFile     `yaml:"cache_reaper"`
 	Poller      pollerFile          `yaml:"poller"`
+	Egress      egressFile          `yaml:"egress"`
 	Lanes       map[string]laneFile `yaml:"lanes"`
+}
+
+// egressFile is the proxy shared by every lane that sets egress: the image it runs.
+type egressFile struct {
+	Image string `yaml:"image"`
+}
+
+// laneEgressFile is one lane's allowlist: the hosts a step may reach through the proxy.
+type laneEgressFile struct {
+	Allow []string `yaml:"allow"`
 }
 
 type pollerFile struct {
@@ -103,21 +115,22 @@ type limitsFile struct {
 }
 
 type laneFile struct {
-	Image       string     `yaml:"image"`
-	User        string     `yaml:"user"`
-	Command     []string   `yaml:"command"`
-	PassEnv     []string   `yaml:"pass_env"`
-	OptionalEnv []string   `yaml:"optional_env"`
-	Memory      string     `yaml:"memory"`
-	CPUs        float64    `yaml:"cpus"`
-	Pids        int64      `yaml:"pids"`
-	Workspace   string     `yaml:"workspace"`
-	Internal    bool       `yaml:"internal"`
-	Runtime     string     `yaml:"runtime"`
-	Timeout     string     `yaml:"timeout"`
-	Account     string     `yaml:"account"`
-	MaxRuns     int        `yaml:"max_runs"`
-	Caches      cachesFile `yaml:"caches"`
+	Image       string          `yaml:"image"`
+	User        string          `yaml:"user"`
+	Command     []string        `yaml:"command"`
+	PassEnv     []string        `yaml:"pass_env"`
+	OptionalEnv []string        `yaml:"optional_env"`
+	Memory      string          `yaml:"memory"`
+	CPUs        float64         `yaml:"cpus"`
+	Pids        int64           `yaml:"pids"`
+	Workspace   string          `yaml:"workspace"`
+	Internal    bool            `yaml:"internal"`
+	Runtime     string          `yaml:"runtime"`
+	Timeout     string          `yaml:"timeout"`
+	Account     string          `yaml:"account"`
+	MaxRuns     int             `yaml:"max_runs"`
+	Caches      cachesFile      `yaml:"caches"`
+	Egress      *laneEgressFile `yaml:"egress"`
 }
 
 // cachesFile is a lane's cache list: cache name to the path the step sees it at (ADR 0033).
@@ -170,7 +183,7 @@ func Parse(r io.Reader) (Config, error) {
 	}
 	for _, name := range sortedKeys(f.Lanes) {
 		lf := f.Lanes[name]
-		l, err := lf.lane(name)
+		l, err := lf.lane(name, f.Egress)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("lane %q: %w", name, err))
 			continue
@@ -265,7 +278,7 @@ func (cf cacheReaperFile) parse() (CacheReaper, error) {
 	return r, errors.Join(errs...)
 }
 
-func (lf laneFile) lane(name string) (launcher.Lane, error) {
+func (lf laneFile) lane(name string, proxy egressFile) (launcher.Lane, error) {
 	l := launcher.Lane{
 		Name:        name,
 		Image:       lf.Image,
@@ -279,6 +292,21 @@ func (lf laneFile) lane(name string) (launcher.Lane, error) {
 	}
 	var errs []error
 	var err error
+	if lf.Egress != nil {
+		if proxy.Image == "" {
+			errs = append(errs, errors.New("egress: the top-level egress.image (the proxy image) is required"))
+		}
+		if !lf.Internal {
+			errs = append(errs, errors.New("egress: needs internal: true, or the step could bypass the proxy"))
+		}
+		if len(lf.Egress.Allow) == 0 {
+			errs = append(errs, errors.New("egress.allow is empty: leave egress out for a lane with no network"))
+		}
+		if _, err := egress.ParseAllowlist(lf.Egress.Allow); err != nil {
+			errs = append(errs, fmt.Errorf("egress.allow: %w", err))
+		}
+		l.Egress = &launcher.Egress{Image: proxy.Image, Allow: lf.Egress.Allow}
+	}
 	if l.MemoryBytes, err = parseSize(lf.Memory); err != nil {
 		errs = append(errs, fmt.Errorf("memory: %w", err))
 	}

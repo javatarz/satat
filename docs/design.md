@@ -120,7 +120,7 @@ flowchart LR
    uncommitted is committed as `Satat`. Then it rehearses the push: `HEAD` goes to a throwaway
    local bare repo, so git runs the repo's own `pre-push` hook (pre-commit, husky, a plain
    script) with no credentials in its environment and git limited to local transports. Blocking
-   other egress is the container's job ([ADR 0033](adr/0033-lane-toolchain-and-build-caches.md)),
+   other egress is the lane's egress proxy's job (#169, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md)),
    and the [managed settings](#guarding-the-repos-hooks) stop the agent setting `core.hooksPath` or
    passing `--no-verify` (#174). If the hook fails, its
    output goes back to the agent in a follow-up `claude -p`, at most 3 times (a stand-in for the
@@ -168,7 +168,9 @@ you would label `ready-for-agent` yourself.
 | Platform | `compose.yaml` | Docker |
 
 The Compose project has four services: `postgres`, `hatchet-lite`, `docker-proxy` and `worker`.
-Ports bind to `127.0.0.1`. All images are pinned by digest.
+The worker also starts one egress proxy container per lane that sets `egress` (see Network below),
+from the image `scripts/build-egress-image.sh` builds. Ports bind to `127.0.0.1`. All images are
+pinned by digest.
 
 ## Lane-started runs
 
@@ -271,10 +273,38 @@ requires:
 
 `/workspace` is memory-backed, so it counts against the lane's `memory`.
 
-**Network.** Each lane gets its own Docker network. `internal: true` removes the route out. The
-`claude` lane has `internal: false` because it must reach Anthropic and GitHub, so it has open
-egress. That is acceptable only because the prototype serves the owner's own repos. An egress
-proxy with a hostname allowlist is not built ([ADR 0026](adr/0026-docker-first-runtime.md)).
+**Network.** Each lane gets its own Docker network. `internal: true` removes the route out, and
+every lane in `satat.yaml` has it. A lane that needs hosts sets `egress.allow` (the `claude` lane
+does): the launcher then starts one proxy container per lane, `satat-egress-<lane>`, on the lane's
+network and on `satat-egress-out`, a plain bridge, and gives the step `HTTP_PROXY` and
+`HTTPS_PROXY` pointing at it. The step has no other route, and the lane network's embedded DNS
+does not resolve outside names, so the proxy is the only way out (#169).
+
+The proxy (`egress/`, built into `images/egress`, run from `scripts/build-egress-image.sh`'s
+digest) is a hostname allowlist and nothing more, as ADR 0025 decided: no TLS interception, no
+secret, no token injection, no identity. It sees the host name and port of a `CONNECT` (or the
+absolute URL of a plain HTTP request) and answers 403 unless the lane's list names both. It fails
+closed:
+
+- A name matches itself, or `*.suffix` matches every sub-domain of the suffix but not the suffix.
+  A bare entry allows ports 443 and 80; `host:port` allows only that port.
+- An address literal is never a host, in any notation, so `1.1.1.1` and `0x7f.1` are refused
+  without being parsed. The config loader refuses them in the list too.
+- The proxy resolves the name itself, refuses it if any address is loopback, private,
+  link-local (cloud metadata), CGNAT, multicast or reserved, then connects to the resolved
+  address and checks the socket's address again. A name that points at the host, the Docker API
+  proxy or another container (DNS rebinding) gets a 403.
+- The proxy container is hardened like a step (non-root, no capabilities, read-only root, no
+  mounts, limits) and its request is checked by `ValidateEgressRequest`. The step reaper leaves it:
+  it is part of the lane, like the network. The launcher checks it at every launch and replaces it
+  when the image or the list in `satat.yaml` changed. A lane network left open by an earlier
+  configuration is replaced, not reused.
+
+A refusal is logged: `docker logs satat-egress-claude`. What the allowlist cannot do: the hosts it
+names accept uploads (a registry publish, a gist on `github.com`), so an agent steered by an
+issue can still exfiltrate what it can read to an allowed host; only the credentials are kept out
+(no GitHub token, and the Claude token until #155). A step also reaches the proxy and the other
+steps of its lane. What remains is in [ADR 0026](adr/0026-docker-first-runtime.md).
 
 **Who may reach the Docker API.** Only the worker, and only through `docker-proxy`
 (`DOCKER_HOST=tcp://docker-proxy:2375`, [ADR 0027](adr/0027-docker-api-access.md)). The proxy

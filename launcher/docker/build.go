@@ -83,6 +83,9 @@ func normalizeLane(l launcher.Lane) (launcher.Lane, error) {
 	if err := checkCaches(l); err != nil {
 		return l, fmt.Errorf("lane %q: %w", l.Name, err)
 	}
+	if err := checkEgress(l); err != nil {
+		return l, fmt.Errorf("lane %q: %w", l.Name, err)
+	}
 	// The floor is checked on a sample request so a lane that can never launch fails now.
 	probe, err := buildRequest(l, launcher.Step{Run: "probe", Name: "probe", Lane: l.Name, CacheScope: "probe"}, func(string) (string, bool) { return "x", true })
 	if err != nil {
@@ -181,6 +184,9 @@ func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (stri
 		"SATAT_STEP=" + s.Name,
 		"SATAT_INPUT=" + inputDir + "/input.json",
 		"SATAT_OUTPUT=" + outputDir,
+	}
+	if l.Egress != nil {
+		env = append(env, proxyEnv()...)
 	}
 	for _, n := range l.PassEnv {
 		v, ok := lookupEnv(n)

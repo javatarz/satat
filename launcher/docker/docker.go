@@ -86,32 +86,36 @@ func New(api *client.Client, lanes []launcher.Lane, opts ...Option) (*Launcher, 
 // Setup creates each lane's network and pulls each lane's image if it is missing.
 func (l *Launcher) Setup(ctx context.Context) error {
 	for _, lane := range l.lanes {
-		name := laneNetwork(lane.Name)
-		if _, err := l.api.NetworkInspect(ctx, name, client.NetworkInspectOptions{}); err != nil {
-			if !cerrdefs.IsNotFound(err) {
-				return fmt.Errorf("inspect network %s: %w", name, err)
+		if err := l.ensureNetwork(ctx, laneNetwork(lane.Name), lane.Internal, map[string]string{labelManaged: "true", labelLane: lane.Name}); err != nil {
+			return err
+		}
+		if lane.Egress != nil {
+			if err := l.pullIfMissing(ctx, lane.Egress.Image); err != nil {
+				return fmt.Errorf("lane %q: the egress proxy image is missing and could not be pulled: run scripts/build-egress-image.sh and paste the digest it prints into egress.image in satat.yaml: %w", lane.Name, err)
 			}
-			_, err := l.api.NetworkCreate(ctx, name, client.NetworkCreateOptions{
-				Driver:   "bridge",
-				Internal: lane.Internal,
-				Labels:   map[string]string{labelManaged: "true", labelLane: lane.Name},
-			})
-			if err != nil && !cerrdefs.IsConflict(err) {
-				return fmt.Errorf("create network %s: %w", name, err)
+			if err := l.ensureEgress(ctx, lane); err != nil {
+				return err
 			}
 		}
-		if _, err := l.api.ImageInspect(ctx, lane.Image); err != nil {
-			if !cerrdefs.IsNotFound(err) {
-				return fmt.Errorf("inspect image %s: %w", lane.Image, err)
-			}
-			pull, err := l.api.ImagePull(ctx, lane.Image, client.ImagePullOptions{})
-			if err != nil {
-				return fmt.Errorf("pull image %s: %w", lane.Image, err)
-			}
-			if err := pull.Wait(ctx); err != nil {
-				return fmt.Errorf("pull image %s: %w", lane.Image, err)
-			}
+		if err := l.pullIfMissing(ctx, lane.Image); err != nil {
+			return err
 		}
+	}
+	return nil
+}
+
+func (l *Launcher) pullIfMissing(ctx context.Context, ref string) error {
+	if _, err := l.api.ImageInspect(ctx, ref); err == nil {
+		return nil
+	} else if !cerrdefs.IsNotFound(err) {
+		return fmt.Errorf("inspect image %s: %w", ref, err)
+	}
+	pull, err := l.api.ImagePull(ctx, ref, client.ImagePullOptions{})
+	if err != nil {
+		return fmt.Errorf("pull image %s: %w", ref, err)
+	}
+	if err := pull.Wait(ctx); err != nil {
+		return fmt.Errorf("pull image %s: %w", ref, err)
 	}
 	return nil
 }
@@ -125,6 +129,11 @@ func (l *Launcher) Launch(ctx context.Context, step launcher.Step) (launcher.Res
 	req, err := buildRequest(lane, step, l.lookupEnv)
 	if err != nil {
 		return launcher.Result{}, err
+	}
+	// The proxy is checked at every launch, not only at Setup: it may have been removed, or the
+	// lane's network replaced, since.
+	if err := l.ensureEgress(ctx, lane); err != nil {
+		return launcher.Result{}, fmt.Errorf("egress proxy for lane %q: %w", lane.Name, err)
 	}
 	if err := ValidateRequest(req.config, req.host, req.networking, cachePaths(lane)); err != nil {
 		return launcher.Result{}, fmt.Errorf("refusing to create %s: %w", req.name, err)
