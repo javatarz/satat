@@ -177,6 +177,15 @@ func TestCollectFailsClosed(t *testing.T) {
 	yes := true
 	good := rest.V1TaskSummary{DisplayName: "satat-issue-abc", Input: map[string]interface{}{"repo": "me/a", "issue": map[string]interface{}{"number": float64(4)}}}
 	set := map[string]bool{}
+	// The live listing wraps the input and names runs "run-<ms>"; the workflow name is separate.
+	wfName := workflows.Name
+	wrapped := rest.V1TaskSummary{DisplayName: "run-1", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"repo": "me/w", "issue": map[string]interface{}{"number": float64(9)}}, "triggered_by": "event"}}
+	if err := collect(set, []rest.V1TaskSummary{wrapped}); err != nil || !set["me/w#9"] {
+		t.Errorf("wrapped live row: set %v, err %v", set, err)
+	}
+	if err := collect(map[string]bool{}, []rest.V1TaskSummary{{DisplayName: "run-2", WorkflowName: &wfName}}); err == nil {
+		t.Error("a satat-issue row with no readable input must fail closed")
+	}
 	if err := collect(set, []rest.V1TaskSummary{good, {DisplayName: "satat-poll-x"}}); err != nil || !set["me/a#4"] {
 		t.Fatalf("got %v, %v", err, set)
 	}

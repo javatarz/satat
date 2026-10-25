@@ -337,6 +337,36 @@ lane timeout plus 15 minutes, and the worker has as many slots as `limits.global
 are sized for a laptop VM of about 5.8 GiB; see
 [docker-prototype.md](research/v2/docker-prototype.md).
 
+### One run per issue
+
+A redelivered webhook, a label removed and re-added, or an intake retry must not start a second
+`satat-issue` run (#182). Two layers, both fail closed:
+
+- **Intake** lists the issues that have a run (the poller's `HatchetRuns`) and queues nothing for an
+  issue that has one, whatever its status. A failed run is retried by a person with `satat-enqueue`,
+  the same rule as the poller. If the runs cannot be listed, intake errors and Hatchet retries it.
+- **The workflow** has a fifth concurrency expression, `input.repo + '#' + string(input.issue.number)`
+  with `CANCEL_NEWEST` and a limit of 1 (`Spec.DedupeKey`). It closes the window the first layer
+  cannot: two deliveries that both see no run before either run exists. The newest is cancelled and
+  the run in flight is never touched. Hatchet chains the strategies, so the key is registered
+  first: checked live, a duplicate queued behind a cap is then cancelled while it waits, whereas
+  with the key last both duplicates ran in turn. It stops overlap only, not a re-run after the
+  first run finished (intake's check covers that).
+  `MapIssue` lower-cases the repo, so the key and the intake check agree on case.
+
+Consequences: a run Hatchet cancelled as a duplicate, and any cancelled or failed run, counts as "has
+a run", so the webhook will not re-run that issue for 30 days (`poller.RunHistory`); use
+`satat-enqueue`. The skip shows as the reason on the intake result and in the worker log.
+
+Verified live on Hatchet Lite v0.110.5: the expression compiles, `string()` of the number gives
+`7`, two back-to-back runs for one issue leave one run and one cancelled, and a malformed
+expression fails registration. The run listing needs `include_payloads=true` and its input comes
+wrapped in an `input` envelope (`poller/hatchet.go` handles both).
+
+Not verified live: how the dedupe key interacts with the back-off retries below. A retry stays
+inside the same run; if Hatchet rechecks the concurrency slot on retry, a duplicate arriving in that
+gap is the one cancelled, which fails safe.
+
 ## Claude rate-limit back-off
 
 A step that dies on the subscription rate or usage limit is retried, not failed. The worker

@@ -57,7 +57,7 @@ type Poller struct {
 const Pending = 30 * time.Minute
 
 // Key names an issue in Runs and in the poller's own memory.
-func Key(repo string, number int) string { return fmt.Sprintf("%s#%d", repo, number) }
+func Key(repo string, number int) string { return workflows.IssueKey(repo, number) }
 
 // Result counts what one poll did.
 type Result struct {

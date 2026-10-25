@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -95,6 +96,18 @@ type EventPusher interface {
 	Push(ctx context.Context, key string, payload any) error
 }
 
+// Runs reports which issues have ever had a satat-issue run, as IssueKey keys. poller.HatchetRuns
+// is the real one.
+type Runs interface {
+	Issues(ctx context.Context) (map[string]bool, error)
+}
+
+// IssueKey names an issue in Runs: "owner/name#N", with the repo lower-cased because GitHub
+// ignores case there.
+func IssueKey(repo string, number int) string {
+	return fmt.Sprintf("%s#%d", strings.ToLower(repo), number)
+}
+
 // Intake maps webhook deliveries to issue events. The signature is checked by Hatchet's webhook,
 // not here.
 type Intake struct {
@@ -102,9 +115,21 @@ type Intake struct {
 	Allowed []string
 	Lane    string
 	Events  EventPusher
+	// Runs is how intake sees an issue that already has a run. It is required: a nil Runs fails
+	// closed, because a redelivery would then start a second run (#182).
+	Runs Runs
+	// Log, when set, records each skipped duplicate. The skip is otherwise visible only as the
+	// reason in the intake run's result.
+	Log *slog.Logger
 }
 
-// Handle takes one delivery to a result. The worker re-checks the issue's labels at run start
+// Handle takes one delivery to a result. An issue that already has a run, of any status, is not
+// queued again: a redelivery, a label removed and re-added, or a retry of this task after the
+// push would otherwise start a second run. Like the poller, it leaves a failed run to a person
+// (satat-enqueue). Any run counts, including one Hatchet cancelled as a duplicate and one that was
+// cancelled or failed: such an issue stays blocked here for RunHistory (30 days). If the runs cannot be listed it queues nothing and fails, so Hatchet retries.
+// A delivery racing the first one's run creation is caught by the workflow's own per-issue
+// concurrency key (DedupeKey), which is the first concurrency check. The worker re-checks the issue's labels at run start
 // (Handler.Run), so a stale delivery cannot launch anything.
 func (i Intake) Handle(ctx context.Context, p WebhookPayload) (IntakeResult, error) {
 	lane := i.Lane
@@ -117,6 +142,19 @@ func (i Intake) Handle(ctx context.Context, p WebhookPayload) (IntakeResult, err
 	}
 	if !ok {
 		return IntakeResult{Reason: reason}, nil
+	}
+	if i.Runs == nil {
+		return IntakeResult{}, errors.New("no run lister configured: cannot tell whether the issue already has a run")
+	}
+	ran, err := i.Runs.Issues(ctx)
+	if err != nil {
+		return IntakeResult{}, fmt.Errorf("list runs: %w", err)
+	}
+	if ran[IssueKey(in.Repo, in.Issue.Number)] {
+		if i.Log != nil {
+			i.Log.Info("intake skipped: issue already has a run", "issue", IssueKey(in.Repo, in.Issue.Number))
+		}
+		return IntakeResult{Reason: "already has a run", Repo: in.Repo, Issue: in.Issue.Number}, nil
 	}
 	if err := i.Events.Push(ctx, EventIssue, in); err != nil {
 		return IntakeResult{}, fmt.Errorf("queue %s#%d: %w", in.Repo, in.Issue.Number, err)

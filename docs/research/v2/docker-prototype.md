@@ -158,7 +158,7 @@ Security limits of this slice:
   not cover that.
 - The #175 rule (Satat's machine user must not be the labeller) is deferred to #175. Nothing checks the
   sender yet; Satat never applies `ready-for-agent` today.
-- Redeliveries of one delivery are not deduplicated: a redelivered event queues a second run for the issue.
+- Redeliveries of one delivery were not deduplicated: a redelivered event queued a second run for the issue. Fixed in #182 (intake skips an issue that has a run; a per-issue CANCEL_NEWEST key backs it). The live check is still owed; see design.md.
 
 Setup, once, in the Hatchet dashboard (Webhooks, new): source GitHub, the webhook secret from 1Password, event
 key expression `'github:issues'` (a constant: GitHub's event type is a header, and the mapper checks the

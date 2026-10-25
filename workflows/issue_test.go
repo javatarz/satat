@@ -52,6 +52,8 @@ func TestRegisterRefusesAnUnsafeSpec(t *testing.T) {
 		"five caps":             func(s *Spec) { s.Caps = append(s.Caps, Cap{Expression: "input.x", Max: 1}) },
 		"wrong expression":      func(s *Spec) { s.Caps[2].Expression = "input.repository" },
 		"swapped caps":          func(s *Spec) { s.Caps[1], s.Caps[2] = s.Caps[2], s.Caps[1] },
+		"no dedupe key":         func(s *Spec) { s.DedupeKey = "" },
+		"wrong dedupe key":      func(s *Spec) { s.DedupeKey = "input.repo" },
 		"zero limit":            func(s *Spec) { s.Caps[0].Max = 0 },
 		"no schedule timeout":   func(s *Spec) { s.ScheduleTimeout = 0 },
 		"default 5 minute wait": func(s *Spec) { s.ScheduleTimeout = 5 * time.Minute },
@@ -366,4 +368,11 @@ type fakeCloner struct{}
 
 func (fakeCloner) Clone(context.Context, string, string) (*pipeline.Checkout, error) {
 	return &pipeline.Checkout{Tar: strings.NewReader(""), BaseSHA: "b", Commands: map[string]string{"setup": "s", "test": "t"}}, nil
+}
+
+func TestMapIssueLowerCasesTheRepo(t *testing.T) {
+	in, err := MapIssue(cfg(), "JavaTarz/Satat", "main", "claude", runner.Issue{Number: 3})
+	if err != nil || in.Repo != "javatarz/satat" {
+		t.Errorf("%+v %v", in, err)
+	}
 }
