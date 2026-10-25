@@ -27,8 +27,8 @@
 - The agent never pushes, so when it finishes the harness runs a **push rehearsal** in the same
   container: a push to a throwaway local repo that fires the repo's `pre-push` hook (#168). A
   failure goes back to the agent, up to a retry cap (#19).
-- Managed Claude settings in the lane stop the agent skipping hooks (#174). It is a guard, not a
-  boundary.
+- Managed Claude settings in the lane stop the agent skipping hooks (#174, built; see
+  [design](../design.md#guarding-the-repos-hooks)). It is a guard, not a boundary.
 - The judge and the reviewer, and the state machine around them, come later, once evals can tune them.
 
 ## Next

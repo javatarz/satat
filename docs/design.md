@@ -121,7 +121,8 @@ flowchart LR
    local bare repo, so git runs the repo's own `pre-push` hook (pre-commit, husky, a plain
    script) with no credentials in its environment and git limited to local transports. Blocking
    other egress is the container's job ([ADR 0033](adr/0033-lane-toolchain-and-build-caches.md)),
-   and an agent that sets `core.hooksPath` in `.git/config` skips the hooks (#174). If the hook fails, its
+   and the [managed settings](#guarding-the-repos-hooks) stop the agent setting `core.hooksPath` or
+   passing `--no-verify` (#174). If the hook fails, its
    output goes back to the agent in a follow-up `claude -p`, at most 3 times (a stand-in for the
    retry cap of #19); a hook that never passes fails the run. The pusher runs no hooks. The runner writes `result.json` (status `changes`,
    `no_changes` or `failed`), `transcript.jsonl`, and, if there are commits, `changes.patch` for
@@ -316,6 +317,53 @@ known gap: the planned fix is an LLM gateway proxy that issues each step a short
 ([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md), #155). Until
 OpenBao exists the worker reads `github-read-token` from its environment as
 `SATAT_GITHUB_TOKEN`.
+
+## Guarding the repo's hooks
+
+The repo's own git hooks are the gate ([inner loop](roadmap/inner-loop.md)), so the agent must not
+skip them. The lane image ships Claude Code **managed settings** (#174), the one settings level the
+agent cannot override. Three files, all root-owned on the read-only root filesystem, while the agent
+runs as uid 10001:
+
+- `/etc/claude-code/managed-settings.json` (source: `images/claude/managed-settings.json`). It keeps
+  the subscription-login rules of #102 and adds deny rules for `git commit --no-verify`,
+  `git commit -n` and `git push --no-verify`, and for edits to `.claude/settings*.json`, the policy
+  and the hook. A deny rule wins over any allow rule.
+- A PreToolUse hook on `Bash`, `/usr/local/lib/satat/hooks/guard-git-hooks.js` (source:
+  `images/claude/hooks/`). It reads the whole command and blocks what a deny pattern misses:
+  `-c core.hooksPath=...`, `git config core.hooksPath`, `GIT_CONFIG_*` overrides, `HUSKY=0`,
+  `SKIP=...`, `PRE_COMMIT_ALLOW_NO_CONFIG`, `LEFTHOOK`, `git commit-tree`, `git update-ref`,
+  `git fast-import`, `-n` in combined short flags (`-anm`), writes to `.git/hooks` and
+  `.git/config`, and shell writes to Claude settings or the policy files. It fails closed on input
+  it cannot parse. `git push -n` is a dry run and passes.
+
+Tests: `images/claude/image_test.go` (hook table: bypass forms and benign commands) and
+`image_docker_test.go` (as the agent user in the lane image, every shell route to modify the policy
+and hook fails; the hook command from the settings runs and blocks). The Docker tests use
+`SATAT_CLAUDE_IMAGE` or `satat-claude:dev` and skip if it is absent.
+
+### Limits of the hook guard
+
+This guards against the agent skipping hooks by habit or after a prompt injection, in trusted repos.
+It is not a boundary against a determined agent with a shell. CI on the draft PR and the push
+rehearsal (#168) are the backstops.
+
+- Deny patterns and the hook match the command **text**. a command assembled at run
+  time (`g=git; $g commit --no-ver""ify`), `eval`, base64, aliases (`git config alias.x`)
+  and a script the agent writes and then runs are not seen. A script that calls `git commit
+  --no-verify` runs without the hook seeing its contents.
+- A Python or Node script can write `.claude/settings.local.json` or any workspace file: the
+  workspace is writable and the deny rules cover Claude's file tools and recognised shell commands,
+  not a script. Only the root-owned files are immutable. Repo-level settings do not override
+  managed ones, so a planted file cannot loosen the deny rules.
+- Hooks can be skipped without any flag: `GIT_DIR` or `--git-dir` pointing at another repository,
+  `git -c` forms the regex does not know, deleting the hook files in the repo's own hook directory
+  (`.husky/`, `.pre-commit-config.yaml`) or committing a hook that does nothing. The push rehearsal
+  runs whatever hooks the branch contains, so a weakened hook weakens the gate; review catches that.
+- Hook text matching has false positives: `--no-verify` or `core.hooksPath` inside a commit message
+  is blocked. The agent is told why and can reword.
+- Verified by a human, not in CI: that `claude -p` in the lane refuses the commands end to end and
+  that `claude doctor` lists the managed source. The tests cover the files, the hook and its wiring.
 
 ## Concurrency caps
 
