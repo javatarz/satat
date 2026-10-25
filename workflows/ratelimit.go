@@ -24,8 +24,11 @@ const (
 	// the reset the stream reported, so 20 outlasts several five-hour windows.
 	MaxBackoffRetries = 20
 
-	// OpenLimit is the per-minute limit of an open account: far above what the caps allow, so the
-	// rate limit only ever bites when it is closed to 0.
+	// OpenLimit is the per-second limit of an open account: far above what the caps allow, so the
+	// rate limit only ever bites when it is closed to 0. The window is one second, not a minute,
+	// because the Hatchet scheduler caches limits and re-reads them once per window: with a minute
+	// window a close or reopen took up to a minute to bite, and the immediate retry of the step that
+	// closed the lane ran straight through.
 	OpenLimit = 1_000_000
 
 	// resetMargin is added to the reported reset so the retry does not land on the boundary.
@@ -150,7 +153,7 @@ type Gate interface {
 // reopens it by timer at the reset. The timers live in the worker: Open must run at start, so a
 // restart never leaves a lane closed (the next rate-limited step closes it again).
 type Limiter struct {
-	// Put sets the rate limit of a key per minute. HatchetPut is the real one.
+	// Put sets the rate limit of a key per second. HatchetPut is the real one.
 	Put func(key string, limit int) error
 	// Now and AfterFunc exist for tests.
 	Now       func() time.Time
@@ -168,7 +171,7 @@ type closure struct {
 // HatchetPut returns a Put that upserts the limit through the Hatchet client.
 func HatchetPut(c *hatchet.Client) func(string, int) error {
 	return func(key string, limit int) error {
-		return c.RateLimits().Upsert(features.CreateRatelimitOpts{Key: key, Limit: limit, Duration: hatchet.Minute})
+		return c.RateLimits().Upsert(features.CreateRatelimitOpts{Key: key, Limit: limit, Duration: hatchet.Second})
 	}
 }
 
