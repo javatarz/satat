@@ -3,14 +3,14 @@
   "allowedProviders": ["anthropic"],
   "permissions": {
     "deny": [
-      "Bash(git commit --no-verify*)",
-      "Bash(git commit * --no-verify*)",
+      "Bash(git commit --no-ve*)",
+      "Bash(git commit * --no-ve*)",
       "Bash(git commit -n)",
       "Bash(git commit -n *)",
       "Bash(git commit * -n)",
       "Bash(git commit * -n *)",
-      "Bash(git push --no-verify*)",
-      "Bash(git push * --no-verify*)",
+      "Bash(git push --no-ve*)",
+      "Bash(git push * --no-ve*)",
       "Edit(/etc/claude-code/**)",
       "Write(/etc/claude-code/**)",
       "Edit(/usr/local/lib/satat/**)",
@@ -26,6 +26,7 @@
         "hooks": [
           {
             "type": "command",
+            "onFailure": "block",
             "command": "/usr/local/bin/node /usr/local/lib/satat/hooks/guard-git-hooks.js"
           }
         ]
