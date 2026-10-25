@@ -24,7 +24,13 @@ The team is spread across time zones and everyone has a day job, so we work asyn
 
 - Find an issue, or open one, and assign yourself so others know it's taken.
 - Link dependencies ("Depends on #N") so people working the same weekend don't collide.
-- `ready-for-agent` means an issue is fully specified and Satat may pick it up. The other
+- `ready-for-agent` means an issue is fully specified and Satat may pick it up. Before it starts,
+  Satat checks the repo is ready for it (`.satat/commands.yaml`, a write-only machine user, a
+  merge-protecting ruleset, and a token that reaches only the listed repos). If not, it comments
+  once and moves the issue to `needs-info`: fix what the comment lists, then add `ready-for-agent`
+  again. `just check-repo owner/name` shows the same result without touching an issue. The token-reach
+  check counts as listed only the repos in `SATAT_INTAKE_REPOS` and `poller.repos`, so to try a
+  sandbox repo, list it there first (and list every other repo the machine user can reach). The other
   labels are in [triage labels](docs/agents/triage-labels.md).
 - Bigger efforts are planned as a wayfinder map: one `wayfinder:map` issue with child tickets.
   `scripts/next-issue.sh` lists the next unblocked, unassigned ticket on the newest map.

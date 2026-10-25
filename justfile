@@ -18,6 +18,10 @@ setup:
 doctor:
     @scripts/doctor.sh
 
+# Print whether a repo is ready for Satat, as the worker checks it before an issue (reads only; opts: --base B, --issue N)
+check-repo *args:
+    @scripts/check-repo.sh {{args}}
+
 # Bring the platform up: Hatchet, the worker's token, then the worker
 run: doctor
     #!/usr/bin/env bash

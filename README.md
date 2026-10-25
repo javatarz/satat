@@ -52,7 +52,7 @@ watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#r
 
 ```
 satat/
-├── cmd/            # satat-worker, satat-runner, satat-enqueue, satat-step, satat-eval
+├── cmd/            # satat-worker, satat-runner, satat-enqueue, satat-step, satat-eval, satat-check-repo
 ├── workflows/      # the Hatchet workflow `satat-issue` and its concurrency caps
 ├── pipeline/       # issue to draft PR: launch a step, then publish
 ├── launcher/       # launcher interface, Docker backend, hardening floor, conformance suite

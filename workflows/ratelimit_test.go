@@ -215,7 +215,7 @@ func TestARateLimitedStepClosesTheLaneAndRetries(t *testing.T) {
 	p, g := &fakePub{}, &fakeGate{}
 	in := input
 	in.Account = "claude-subscription"
-	out, err := Handler{Launcher: l, Pusher: p, Issues: ready(), Allowed: listed, Gate: g, Now: func() time.Time { return t0 }}.Run(context.Background(), "r", in)
+	out, err := Handler{Cloner: fakeCloner{}, Launcher: l, Pusher: p, Issues: ready(), Allowed: listed, Ready: passes{}, Reporter: &fakeReporter{}, Gate: g, Now: func() time.Time { return t0 }}.Run(context.Background(), "r", in)
 	var rl *RateLimitError
 	if !errors.As(err, &rl) {
 		t.Fatalf("want a RateLimitError, got %v", err)
@@ -231,7 +231,7 @@ func TestARateLimitedStepClosesTheLaneAndRetries(t *testing.T) {
 func TestACloseFailureIsNotAPlainRateLimit(t *testing.T) {
 	l := &fakeLauncher{res: limitedResult()}
 	g := &fakeGate{err: errors.New("hatchet down")}
-	_, err := Handler{Launcher: l, Issues: ready(), Allowed: listed, Gate: g, Now: func() time.Time { return t0 }}.Run(context.Background(), "r", input)
+	_, err := Handler{Cloner: fakeCloner{}, Launcher: l, Issues: ready(), Allowed: listed, Ready: passes{}, Reporter: &fakeReporter{}, Gate: g, Now: func() time.Time { return t0 }}.Run(context.Background(), "r", input)
 	var rl *RateLimitError
 	if err == nil || errors.As(err, &rl) {
 		t.Fatalf("want a non-retryable plain error, got %v", err)
@@ -242,7 +242,7 @@ func TestAnOrdinaryFailureDoesNotCloseTheLane(t *testing.T) {
 	b, _ := json.Marshal(runner.Result{Status: "failed", Error: "claude reported an error result"})
 	l := &fakeLauncher{res: launcher.Result{ExitCode: 1, Files: map[string][]byte{"result.json": b}}}
 	g := &fakeGate{}
-	_, err := Handler{Launcher: l, Issues: ready(), Allowed: listed, Gate: g}.Run(context.Background(), "r", input)
+	_, err := Handler{Cloner: fakeCloner{}, Launcher: l, Issues: ready(), Allowed: listed, Ready: passes{}, Reporter: &fakeReporter{}, Gate: g}.Run(context.Background(), "r", input)
 	var rl *RateLimitError
 	if err == nil || errors.As(err, &rl) || g.n != 0 {
 		t.Fatalf("err %v, gate calls %d", err, g.n)
