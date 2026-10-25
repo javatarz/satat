@@ -23,7 +23,7 @@ import (
 // Matching ignores case.
 var defaultProtected = []string{
 	// CI
-	".github/workflows", ".github/actions", ".github/codeowners",
+	".github/workflows", ".github/actions", "codeowners",
 	".gitlab-ci.yml", ".gitlab-ci.yaml", ".gitlab", ".circleci", ".travis.yml", ".drone.yml",
 	".woodpecker", ".woodpecker.yml", ".buildkite", "azure-pipelines.yml", ".azure-pipelines",
 	"bitbucket-pipelines.yml", "appveyor.yml", ".appveyor.yml", "jenkinsfile", "cloudbuild.yaml",
@@ -34,7 +34,7 @@ var defaultProtected = []string{
 	".rustfmt.toml", "clippy.toml", ".shellcheckrc", ".gitleaks.toml", ".gitleaksignore",
 	// Hooks, and the files that make git run or fetch things
 	".githooks", ".husky", ".git-hooks", ".lefthook", "lefthook.yml", "lefthook.yaml",
-	"lefthook-local.yml", ".gitmodules", ".git",
+	"lefthook-local.yml", ".gitmodules", ".gitattributes", ".git",
 	// Satat's own config
 	".satat",
 }
@@ -64,9 +64,9 @@ type rule struct {
 	anchored bool
 }
 
-func newRule(s string) (rule, error) {
+func newRule(s string, forceAnchored bool) (rule, error) {
 	text := strings.TrimSpace(s)
-	anchored := strings.Contains(strings.Trim(text, "/"), "/") || strings.HasPrefix(text, "/")
+	anchored := forceAnchored || strings.Contains(strings.Trim(text, "/"), "/") || strings.HasPrefix(text, "/")
 	segs := foldSegments(text)
 	if len(segs) == 0 {
 		return rule{}, fmt.Errorf("empty path %q", s)
@@ -138,7 +138,8 @@ func foldRune(r rune) rune {
 
 // protected reports the rule that covers name. A path is protected when it matches an `add` rule,
 // or matches a default rule and no `allow` rule: allowing `.github/workflows/release.yml` frees
-// that file only, and allowing `.github/workflows` frees the directory.
+// that file only, and allowing `.github/workflows` frees the directory. Allow rules are always
+// anchored at the repo root, so `.editorconfig` frees the root file and not `pkg/.editorconfig`.
 func (p *protectedPolicy) protected(name string) (string, bool) {
 	segs := foldSegments(name)
 	if len(segs) == 0 {
@@ -162,6 +163,32 @@ func (p *protectedPolicy) protected(name string) (string, bool) {
 	return "", false
 }
 
+// covers reports whether dir is the repo root or a parent directory of something protected, such
+// as `.github` for `.github/workflows`. A symlink to it reaches protected paths.
+func (p *protectedPolicy) covers(dir []string) bool {
+	if len(dir) == 0 {
+		return true
+	}
+	for _, rs := range [][]rule{p.add, p.def} {
+		for _, r := range rs {
+			if !r.anchored || len(r.segs) <= len(dir) {
+				continue
+			}
+			ok := true
+			for i, d := range dir {
+				if m, _ := path.Match(r.segs[i], d); !m {
+					ok = false
+					break
+				}
+			}
+			if ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // buildPolicy applies the repo's section to the default.
 func buildPolicy(sec protectedSection) (*protectedPolicy, error) {
 	if len(sec.Add)+len(sec.Allow) > maxProtectedRules {
@@ -172,9 +199,10 @@ func buildPolicy(sec protectedSection) (*protectedPolicy, error) {
 		from []string
 		to   *[]rule
 		key  string
-	}{{defaultProtected, &p.def, "default"}, {sec.Add, &p.add, "protected.add"}, {sec.Allow, &p.allow, "protected.allow"}} {
+		anch bool
+	}{{defaultProtected, &p.def, "default", false}, {sec.Add, &p.add, "protected.add", false}, {sec.Allow, &p.allow, "protected.allow", true}} {
 		for _, s := range c.from {
-			r, err := newRule(s)
+			r, err := newRule(s, c.anch)
 			if err != nil {
 				return nil, fmt.Errorf("%s: %v", c.key, err)
 			}
@@ -274,19 +302,39 @@ func (p *Pusher) checkProtected(ctx context.Context, repoDir string, req Request
 	if err != nil {
 		return err
 	}
-	raw, err := p.gitOut(ctx, repoDir, "diff", "--raw", "--no-abbrev", "--no-renames", "-z", req.BaseSHA, req.HeadSHA)
+	type change struct{ newMode, newSHA, name string }
+	var changes []change
+	diff := func(from, to string) error {
+		raw, err := p.gitOut(ctx, repoDir, "diff", "--raw", "--no-abbrev", "--no-renames", "-z", from, to)
+		if err != nil {
+			return err
+		}
+		toks := strings.Split(raw, "\x00")
+		for i := 0; i+1 < len(toks); i += 2 {
+			f := strings.Fields(strings.TrimPrefix(toks[i], ":"))
+			if len(f) < 5 {
+				return fmt.Errorf("unexpected git diff output %q", toks[i])
+			}
+			changes = append(changes, change{newMode: f[1], newSHA: f[3], name: toks[i+1]})
+		}
+		return nil
+	}
+	// The net diff, and each commit against each of its parents: a commit that adds a protected
+	// file and a later one that removes it still ships the content in history.
+	if err := diff(req.BaseSHA, req.HeadSHA); err != nil {
+		return err
+	}
+	revs, err := p.gitOut(ctx, repoDir, "rev-list", "--parents", req.BaseSHA+".."+req.HeadSHA)
 	if err != nil {
 		return err
 	}
-	type change struct{ newMode, newSHA, name string }
-	var changes []change
-	toks := strings.Split(raw, "\x00")
-	for i := 0; i+1 < len(toks); i += 2 {
-		f := strings.Fields(strings.TrimPrefix(toks[i], ":"))
-		if len(f) < 5 {
-			return fmt.Errorf("unexpected git diff output %q", toks[i])
+	for _, line := range strings.Split(revs, "\n") {
+		f := strings.Fields(line)
+		for _, parent := range f[min(1, len(f)):] {
+			if err := diff(parent, f[0]); err != nil {
+				return err
+			}
 		}
-		changes = append(changes, change{newMode: f[1], newSHA: f[3], name: toks[i+1]})
 	}
 
 	// Paths the base already has as symlinks at a protected location: their targets are protected
@@ -319,7 +367,7 @@ func (p *Pusher) checkProtected(ctx context.Context, repoDir string, req Request
 				return err
 			}
 			if resolved, ok := resolveLink(c.name, target); ok {
-				if _, hit := pol.protected(resolved); hit {
+				if _, hit := pol.protected(resolved); hit || pol.covers(foldSegments(resolved)) {
 					add(c.name + " (a symlink to " + resolved + ")")
 				}
 			}

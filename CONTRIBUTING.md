@@ -140,7 +140,7 @@ readers of `commands:` ignore other keys). The pusher refuses a bundle that chan
 path, so the agent cannot edit what judges it. The default list covers CI config
 (`.github/workflows`, `.gitlab-ci.yml`, `.circleci`, ...), lint and format config
 (`.pre-commit-config.yaml`, `.editorconfig`, `.golangci.*`, `.eslintrc*`, ...), hook directories,
-`.gitmodules` and `.satat/`. Tests are not protected by default; add the ones that judge your
+`.gitmodules`, `.gitattributes`, CODEOWNERS and `.satat/`. Tests are not protected by default; add the ones that judge your
 code.
 
 ```yaml
@@ -149,8 +149,9 @@ protected:
   allow: [.editorconfig]           # default paths the agent may change in this repo
 ```
 
-An entry without a slash matches that name at any depth; one with a slash is anchored at the repo
-root and covers everything under it. `*`, `?` and `[...]` work within a name, and case is ignored.
+An `add` entry without a slash matches that name at any depth; one with a slash is anchored at the
+repo root and covers everything under it. `allow` entries are always anchored at the root, so
+`.editorconfig` frees the root file only; list a nested one by its path. `*`, `?` and `[...]` work within a name, and case is ignored.
 `add` wins over `allow`. The pusher reads this from the base commit, so a change in the agent's own
 branch never widens what it may touch. A malformed `protected:` section makes the pusher refuse
 every push until it is fixed.

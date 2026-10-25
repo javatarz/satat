@@ -85,9 +85,15 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if o.Pusher == nil || rep.Runner == nil || rep.Launch.ExitCode != 0 || rep.Runner.Status != "changes" {
 		return rep, nil
 	}
+	// The base is the commit the worker cloned, never what the step reports: the pusher reads the
+	// protected-paths policy from it, and the step's result.json is the agent's own word.
+	if rep.Runner.BaseSHA != ck.BaseSHA {
+		rep.PushErr = &pusher.Refusal{Reason: fmt.Sprintf("the step reports base %q but the worker cloned %q", rep.Runner.BaseSHA, ck.BaseSHA)}
+		return rep, nil
+	}
 	out, err := o.Pusher.Push(ctx, pusher.Request{
 		Repo: o.Repo, Base: o.Base, Run: o.Run,
-		BaseSHA: rep.Runner.BaseSHA, HeadSHA: rep.Runner.HeadSHA,
+		BaseSHA: ck.BaseSHA, HeadSHA: rep.Runner.HeadSHA,
 		Bundle: rep.Launch.Files["changes.bundle"],
 		Issue:  o.Issue.Number, Summary: Summary(rep.Runner),
 	})
