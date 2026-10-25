@@ -25,6 +25,8 @@ const (
 	// Volume kinds. The step reaper removes only input volumes; caches have their own reaper.
 	kindInput = "input"
 	kindCache = "cache"
+	// kindCacheUse marks one use of a persistent cache key; see caches.go.
+	kindCacheUse = "cache-use"
 
 	// resourcePrefix names every container, volume and network the launcher creates.
 	resourcePrefix = "satat-"
@@ -259,6 +261,10 @@ func ValidateVolume(o client.VolumeCreateOptions) error {
 		}
 		if sc, ok := o.Labels[labelScope]; ok && !scopeRE.MatchString(sc) {
 			bad("cache scope %q is not allowed", sc)
+		}
+	case kindCacheUse:
+		if o.Labels[labelLane] == "" || !scopeRE.MatchString(o.Labels[labelScope]) {
+			bad("a cache use marker needs its lane and a valid scope")
 		}
 	default:
 		bad("volume kind %q is not known", k)

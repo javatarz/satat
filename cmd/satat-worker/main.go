@@ -75,6 +75,13 @@ func run() error {
 		longest = 30 * time.Minute
 	}
 	go l.RunReaper(ctx, 5*time.Minute, 2*longest+time.Hour)
+	// Caches outlive steps and have their own reaper (ADR 0033). Sizing walks every volume, so it
+	// runs hourly.
+	go l.RunCacheReaper(ctx, time.Hour, docker.CachePolicy{
+		MaxUnused: cfg.CacheReaper.MaxUnused,
+		MaxBytes:  cfg.CacheReaper.MaxBytes,
+		StepAge:   2*longest + time.Hour,
+	})
 
 	hc, err := hatchet.NewClient()
 	if err != nil {
