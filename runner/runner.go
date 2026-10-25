@@ -35,16 +35,20 @@ type Issue struct {
 
 // Result is written to result.json. Status is "changes", "no_changes" or "failed".
 type Result struct {
-	Run            string            `json:"run"`
-	Repo           string            `json:"repo"`
-	Issue          int               `json:"issue"`
-	Status         string            `json:"status"`
-	Error          string            `json:"error,omitempty"`
-	Branch         string            `json:"branch,omitempty"`
-	BaseSHA        string            `json:"base_sha,omitempty"`
-	HeadSHA        string            `json:"head_sha,omitempty"`
-	Commits        int               `json:"commits"`
-	ClaudeExit     int               `json:"claude_exit"`
+	Run        string `json:"run"`
+	Repo       string `json:"repo"`
+	Issue      int    `json:"issue"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+	Branch     string `json:"branch,omitempty"`
+	BaseSHA    string `json:"base_sha,omitempty"`
+	HeadSHA    string `json:"head_sha,omitempty"`
+	Commits    int    `json:"commits"`
+	ClaudeExit int    `json:"claude_exit"`
+	// Rehearsal is "passed", "failed", "skipped" (no commits) or "error"; RehearsalRuns counts
+	// the pushes tried (#168).
+	Rehearsal      string            `json:"rehearsal,omitempty"`
+	RehearsalRuns  int               `json:"rehearsal_runs,omitempty"`
 	AuthMethod     string            `json:"auth_method,omitempty"`
 	ClaudeResult   json.RawMessage   `json:"claude_result,omitempty"` // the final "result" event
 	RateLimitEvent []json.RawMessage `json:"rate_limit_events,omitempty"`
@@ -216,12 +220,18 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		claudeEnv = append(withoutKeys(claudeEnv, k), kv)
 	}
 
-	claudeErr := runClaude(ctx, cfg, claudeEnv, repoDir, in, res)
+	claudeErr := runClaude(ctx, cfg, claudeEnv, repoDir, Prompt(in), false, res)
 
 	// Commit whatever is left, as Satat, whether or not claude finished cleanly: the diff is
 	// what a reviewer needs to see.
 	if err := commitLeftovers(ctx, cfg, identity, repoDir, in); err != nil {
 		return errors.Join(claudeErr, err)
+	}
+	// The agent never pushes, so the repo's pre-push hooks would never run. Rehearse the push
+	// into a local sink; a failure goes back to the agent (#168). The commits are still
+	// bundled below, so a reviewer can see where it got stuck.
+	if claudeErr == nil {
+		claudeErr = rehearse(ctx, cfg, claudeEnv, identity, repoDir, in, res)
 	}
 	if res.HeadSHA, err = gitOut(ctx, cfg, repoDir, "rev-parse", "HEAD"); err != nil {
 		return errors.Join(claudeErr, err)
@@ -303,8 +313,14 @@ func ClaudeArgs(maxTurns int) []string {
 	}
 }
 
-func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Input, res *Result) error {
-	tf, err := os.Create(filepath.Join(cfg.OutDir, "transcript.jsonl"))
+// runClaude runs one claude session. A follow-up (the rehearsal feedback) appends to the
+// transcript instead of replacing it.
+func runClaude(ctx context.Context, cfg Config, env []string, dir, prompt string, followUp bool, res *Result) error {
+	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
+	if followUp {
+		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
+	}
+	tf, err := os.OpenFile(filepath.Join(cfg.OutDir, "transcript.jsonl"), flags, 0o600)
 	if err != nil {
 		return err
 	}
@@ -315,7 +331,7 @@ func runClaude(ctx context.Context, cfg Config, env []string, dir string, in Inp
 	}
 	cmd := exec.CommandContext(ctx, cfg.Claude, ClaudeArgs(turns)...)
 	cmd.Env, cmd.Dir = env, dir
-	cmd.Stdin = strings.NewReader(Prompt(in))
+	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Stderr = cfg.Log
 	pipe, err := cmd.StdoutPipe()
 	if err != nil {

@@ -23,6 +23,16 @@ echo "$*" > "$rec/args"
 env > "$rec/env"
 cat > "$rec/stdin"
 pwd > "$rec/cwd"
+if grep -q '<hook-output>' "$rec/stdin"; then
+	# A follow-up session, started because the pre-push rehearsal failed.
+	cat "$rec/stdin" >> "$rec/followups"
+	echo followup >> "$rec/followup-count"
+	if [ "$FAKE_FOLLOW" = fix ]; then
+		echo ok > ok.txt; git add ok.txt; git -c user.name=a -c user.email=a@b commit -q -m "Satisfy the hook"
+	fi
+	echo '{"type":"result","is_error":false,"result":"fixed it"}'
+	exit 0
+fi
 echo '{"type":"system","subtype":"init"}'
 echo '{"type":"rate_limit_event","status":"allowed"}'
 case "$FAKE_MODE" in

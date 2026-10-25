@@ -110,7 +110,11 @@ flowchart LR
    (`ANTHROPIC_API_KEY` and others make it refuse to start), clones the repo with the read
    token (depth 50), creates branch `satat/<run>`, and runs `claude -p` headless on the issue
    with a fixed prompt that fences the issue text as untrusted data. Anything the agent left
-   uncommitted is committed as `Satat`. The runner writes `result.json` (status `changes`,
+   uncommitted is committed as `Satat`. Then it rehearses the push: `HEAD` goes to a throwaway
+   local bare repo, so git runs the repo's own `pre-push` hook (pre-commit, husky, a plain
+   script) with no network and no credentials in its environment. If the hook fails, its
+   output goes back to the agent in a follow-up `claude -p`, at most 3 times (a stand-in for the
+   retry cap of #19); a hook that never passes fails the run. The pusher runs no hooks. The runner writes `result.json` (status `changes`,
    `no_changes` or `failed`), `transcript.jsonl`, and, if there are commits, `changes.patch` for
    humans and `changes.bundle` for the pusher. It never pushes.
 6. **Read back.** The launcher reads the files the step left in `$SATAT_OUTPUT` after it exits

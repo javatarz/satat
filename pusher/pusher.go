@@ -362,6 +362,10 @@ func (p *Pusher) gitOutAuth(ctx context.Context, dir string, args ...string) (st
 const tokenVar = "SATAT_PUSH_TOKEN"
 
 func (p *Pusher) run(ctx context.Context, dir string, auth bool, args ...string) (string, error) {
+	// The pusher runs no repo code: the agent's commits can carry hook scripts and tool configs,
+	// and a hook installed from a template or the environment must not run here either. The
+	// rehearsal in the agent's container is where the repo's hooks run (#168).
+	args = append([]string{"-c", "core.hooksPath=" + os.DevNull}, args...)
 	if auth {
 		helper := `!f() { echo username=x-access-token; echo "password=$` + tokenVar + `"; }; f`
 		args = append([]string{"-c", "credential.helper=" + helper}, args...)
@@ -377,7 +381,7 @@ func (p *Pusher) run(ctx context.Context, dir string, auth bool, args ...string)
 	if err := cmd.Run(); err != nil {
 		name := args[0]
 		for i, a := range args {
-			if a == "-c" || strings.HasPrefix(a, "credential.helper=") {
+			if a == "-c" || strings.HasPrefix(a, "credential.helper=") || strings.HasPrefix(a, "core.hooksPath=") {
 				continue
 			}
 			if i > 0 && args[i-1] == "-c" {
