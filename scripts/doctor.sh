@@ -138,7 +138,7 @@ check_pre_commit() {
   fi
 }
 
-# main requires signed commits. Not needed by `just run`, only to get a PR merged.
+# Signing is optional. Not needed by `just run`.
 check_signing() {
   local reason
   if reason="$(scripts/check-signing-config.sh --brief 2>&1)"; then

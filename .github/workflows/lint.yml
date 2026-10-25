@@ -31,7 +31,4 @@ jobs:
         run: just --list
 
       - name: Run pre-commit
-        # commit-signing-config checks the local git config; the runner has no signing key.
-        env:
-          SKIP: commit-signing-config
         run: pipx run pre-commit run --all-files --show-diff-on-failure

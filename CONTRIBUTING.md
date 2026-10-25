@@ -47,23 +47,23 @@ trying things, and we never let the product stop working while we do.
 
 ## Pull requests
 
-### Linear history, merged from the command line
+### Linear history
 
-**There are no merge commits and no squashing.** Every commit in your PR lands on `main` exactly
-as you signed it, so:
+**There are no merge commits and no squashing.** PRs are rebase-merged, so every commit in your
+PR lands on `main`, in order, so:
 
 - Each commit must build and pass the checks on its own.
 - Each commit message is written for `main`, not for your reviewer. "Fix review comments" and
   "WIP" commits have to be folded into the commits they fix before you merge.
 - Keep the history in the order a reader should follow it.
 
-Merge from the command line, not with GitHub's merge button. The button's "Rebase and merge"
-creates new, unsigned commits, which `main` rejects. Rebase your branch onto `origin/main`, make
-sure every commit is signed, wait for the checks, then fast-forward `main`:
+Merge with GitHub's "Rebase and merge" button or from the command line. We prefer the command
+line, because it keeps your commits and their signatures as they are, but neither is required.
+GitHub's button creates new commits, so they are not signed:
 
 ```sh
 git fetch origin
-git rebase origin/main        # only if main moved; then re-sign (see Signed commits)
+git rebase origin/main        # only if main moved
 git push origin <branch>:main
 ```
 
@@ -85,8 +85,7 @@ The PR closes by itself once its commits are on `main`.
 
 - Every change goes through a pull request, not straight to `main`. Satat's agents learn from
   the same PRs, tests and checks we write.
-- `main` requires signed commits that GitHub shows as Verified. Set up
-  [signing](#signed-commits) before your first commit.
+- Signing your commits is encouraged, not required. See [signed commits](#signed-commits).
 - Humans may merge their own PRs. Tag a reviewer when you want one.
 - Agent PRs need a human's approval before they merge, at least until our evals are strong
   enough to trust them (#124). Satat only opens draft PRs
@@ -123,16 +122,15 @@ for it there.
 
 ## Signed commits
 
-`main` only accepts commits GitHub shows as Verified. Your PR's commits land on `main` as they
-are, so every one has to be signed, not just the last one. Three checks tell you early:
+`main` doesn't require signed commits, but signed commits show as Verified on GitHub and tell a
+reader who wrote them. Two checks flag unsigned commits early:
 
-- **On commit**, the pre-commit hook fails if git isn't set up to sign
-  (`scripts/check-signing-config.sh`). `just doctor` warns about the same thing.
 - **On push**, the pre-push hook fails if a commit you're about to push is unsigned or has a bad
-  signature (`scripts/check-signed-push.sh`).
+  signature (`scripts/check-signed-push.sh`). `just doctor` warns if git isn't set up to sign.
 - **On the PR**, the `signed-commits` check fails for any commit GitHub doesn't show as Verified
   and says why: `unsigned`, `unknown_key` (the key isn't on your GitHub account) or `bad_email`
-  and similar (the commit email isn't a verified email on your GitHub account).
+  and similar (the commit email isn't a verified email on your GitHub account). It isn't a
+  required check, so it doesn't block a merge.
 
 `just setup` installs the hooks. If you set up before the push hook existed, run it again.
 
