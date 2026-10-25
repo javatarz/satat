@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Check that git will sign the commits made in this repo. main requires signed commits.
+# Check that git will sign the commits made in this repo (signing is encouraged, not required).
 #
 # A pre-commit hook runs before the commit exists, so this checks configuration only:
 # commit.gpgsign must be true and a signing key must be configured for gpg.format.
@@ -20,7 +20,7 @@ problem() {
   cat >&2 <<EOF
 commit signing: $1
 
-main requires signed commits. Set up signing before you commit, for example with an SSH key:
+Signing is not required, but signed commits show as Verified. For example, with an SSH key:
 
   git config commit.gpgsign true
   git config gpg.format ssh

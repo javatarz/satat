@@ -62,17 +62,6 @@ repos:
         stages: [commit-msg]
         always_run: true
 
-      # main requires signed commits. The commit does not exist yet, so this checks git config.
-      # CI skips it (SKIP in lint.yml): runners have no signing key; signed-commits.yml checks PRs.
-      - id: commit-signing-config
-        name: Commit signing configured
-        description: Fail when git is not set up to sign commits
-        entry: scripts/check-signing-config.sh
-        language: system
-        stages: [pre-commit]
-        pass_filenames: false
-        always_run: true
-
       - id: signed-commits-push
         name: Pushed commits are signed
         description: Fail when a commit about to be pushed is unsigned or badly signed

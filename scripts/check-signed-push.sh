@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # pre-push hook: fail if a commit about to be pushed is unsigned or has a bad signature.
-# main requires signed commits, and finding out on the PR means re-signing and force-pushing.
+# Unsigned commits do not show as Verified, and fixing them after the PR is open means re-signing and force-pushing.
 #
 # Checks every commit reachable from the pushed ref that is not already on a remote-tracking
 # branch (and not reachable from the ref being replaced on the remote), so commits that are
@@ -62,7 +62,7 @@ fi
 
 if [ "${#unsigned[@]}" -gt 0 ]; then
   cat >&2 <<EOF
-signed commits: ${#unsigned[@]} commit(s) about to be pushed are not signed. main requires signed commits:
+signed commits: ${#unsigned[@]} commit(s) about to be pushed are not signed:
 $(printf '  %s\n' "${unsigned[@]}")
 
 Set up signing (scripts/check-signing-config.sh says what is missing), then re-sign the commits
