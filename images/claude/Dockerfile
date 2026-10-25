@@ -49,7 +49,10 @@ RUN groupadd --gid 10001 satat && useradd --uid 10001 --gid 10001 --no-create-ho
 # writable until the launcher mounts a disk volume on /cache. This image must therefore be merged
 # together with the launcher cache-mount slice of #120: on its own, go/pip/npm/mvn/corepack fail
 # with read-only or permission errors. Ownership here only seeds fresh named volumes.
-RUN mkdir -p /cache/go-mod /cache/go-build /cache/pip /cache/npm /cache/maven /cache/gradle /cache/corepack \
+# /cache/tmp is the scratch dir: the /tmp and /workspace tmpfs mounts are noexec, and go run/test,
+# Maven's jansi native library and similar tools must execute what they write, so TMPDIR points at
+# the exec-capable cache volume instead.
+RUN mkdir -p /cache/go-mod /cache/go-build /cache/pip /cache/npm /cache/maven /cache/gradle /cache/corepack /cache/tmp \
   && chown -R 10001:10001 /cache
 USER 10001:10001
 ENV JAVA_HOME=/opt/java/openjdk \
@@ -62,6 +65,9 @@ ENV JAVA_HOME=/opt/java/openjdk \
   MAVEN_ARGS=-Dmaven.repo.local=/cache/maven \
   GRADLE_USER_HOME=/cache/gradle \
   COREPACK_HOME=/cache/corepack \
-  COREPACK_ENABLE_DOWNLOAD_PROMPT=0
+  COREPACK_ENABLE_DOWNLOAD_PROMPT=0 \
+  TMPDIR=/cache/tmp \
+  GOTMPDIR=/cache/tmp \
+  JAVA_TOOL_OPTIONS=-Djava.io.tmpdir=/cache/tmp
 ENV DISABLE_AUTOUPDATER=1 CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1
 ENTRYPOINT ["/usr/local/bin/satat-runner"]
