@@ -63,7 +63,10 @@ services:
       NETWORKS: 1
       VOLUMES: 1
       IMAGES: 1     # image inspect/pull; build and push are not covered by this flag
-      SYSTEM: 1     # /system/df only: the cache reaper reads volume sizes and use counts (ADR 0033)
+      # /system/df only: the cache reaper reads volume sizes and use counts (ADR 0033). The proxy cannot
+      # keep /system read-only, the daemon has no write route there; TestSystemRoutesAreReadOnly guards
+      # that (ADR 0027).
+      SYSTEM: 1
       POST: 1
       # Everything else (EXEC, BUILD, SWARM, SECRETS, SERVICES, ...) stays at the image default of 0.
     volumes:
