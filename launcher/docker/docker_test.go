@@ -197,7 +197,10 @@ func TestContainerAndVolumeAreRemovedAfterEveryOutcome(t *testing.T) {
 	if left := names(t, api); len(left) != 0 {
 		t.Errorf("containers left behind: %v", left)
 	}
-	vols, err := api.VolumeList(context.Background(), client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelManaged+"=true")})
+	// Scoped to this test's run: the daemon may hold persistent caches from real runs, which are managed too.
+	vols, err := api.VolumeList(context.Background(), client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelManaged+"=true", labelRun+"=clean"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,7 +316,10 @@ func TestCachesAreDiskVolumesAtTheirPaths(t *testing.T) {
 			t.Errorf("cache mount is not disk-backed: %q", ln)
 		}
 	}
-	vols, err := api.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelKind+"="+kindCache)})
+	// Scoped to this step's run: the daemon may hold persistent caches from real runs, which are kind=cache too.
+	vols, err := api.VolumeList(ctx, client.VolumeListOptions{
+		Filters: make(client.Filters).Add("label", labelKind+"="+kindCache, labelRun+"=ct"),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
