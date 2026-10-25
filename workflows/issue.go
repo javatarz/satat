@@ -301,7 +301,7 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 		}
 		caps = append(caps, hc)
 	}
-	keyExpr, units := AccountKeyExpr, 1
+	keyExpr, units, window := AccountKeyExpr, 1, hatchet.Second
 	wf := client.NewWorkflow(spec.Name,
 		hatchet.WithWorkflowEvents(spec.Events...),
 		hatchet.WithWorkflowConcurrency(caps...),
@@ -330,8 +330,11 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 		// re-delivered task finds the earlier attempt's container (the launcher adopts it), so
 		// retrying other failures would only repeat them.
 		hatchet.WithRetries(MaxBackoffRetries),
+		// A few seconds between attempts: the scheduler applies a closed lane up to a second after
+		// Close, so an instant retry could still run. Verified against Hatchet Lite v0.110.5.
+		hatchet.WithRetryBackoff(5, 5),
 		// The retry waits on the account's rate limit, which the Gate closes until the reset.
-		hatchet.WithRateLimits(&hatchet.RateLimit{KeyExpr: &keyExpr, Units: &units}),
+		hatchet.WithRateLimits(&hatchet.RateLimit{Key: keyExpr, KeyExpr: &keyExpr, Units: &units, Duration: &window}),
 	)
 	return wf, nil
 }
