@@ -6,6 +6,9 @@ package launcher
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"strings"
 	"time"
 )
 
@@ -32,8 +35,12 @@ type Lane struct {
 	WorkspaceBytes int64 // size of the tmpfs at /workspace; counts against MemoryBytes
 
 	// Caches are disk-backed directories for build tools' downloads and outputs (ADR 0033). Each
-	// step gets its own, empty and removed with the step.
+	// step gets its own, empty and removed with the step, unless PersistCaches is set.
 	Caches []Cache
+	// PersistCaches keeps the caches between steps, one set per (lane, Step.CacheScope), never
+	// shared across repos. A step can leave a poisoned artifact or a token in a cache for the
+	// next step of the same repo, which is why it is opt-in (ADR 0033, stage 2).
+	PersistCaches bool
 
 	// Internal puts the lane on a network with no route out except to containers attached to it.
 	Internal bool
@@ -62,6 +69,17 @@ type Step struct {
 	// Input is non-secret data placed at /etc/satat/input.json. A step writes its results under
 	// the directory named by $SATAT_OUTPUT.
 	Input []byte
+	// CacheScope selects the persistent caches a step gets in a lane with PersistCaches: one
+	// scope per repo, from CacheScope(repo). It is lower-case letters and digits only, and is
+	// required in such a lane and ignored in others.
+	CacheScope string
+}
+
+// CacheScope is the cache scope for a repo ("owner/name"): a hash, so the repo name never
+// reaches a backend flag, and case-folded, because GitHub names are case-insensitive.
+func CacheScope(repo string) string {
+	sum := sha256.Sum256([]byte(strings.ToLower(repo)))
+	return hex.EncodeToString(sum[:16])
 }
 
 // Result is what a finished step left behind. A non-zero ExitCode is a result, not an error.

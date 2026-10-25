@@ -62,6 +62,9 @@ func TestChangesArePublished(t *testing.T) {
 	if in["repo"] != "a/b" || in["base"] != "main" {
 		t.Errorf("step input: %s", l.got.Input)
 	}
+	if l.got.CacheScope != launcher.CacheScope("a/b") {
+		t.Errorf("cache scope = %q, want the repo's", l.got.CacheScope)
+	}
 }
 
 func TestNothingIsPublishedUnlessThereAreChanges(t *testing.T) {

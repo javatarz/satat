@@ -205,6 +205,60 @@ func TestCachesAreStepVolumes(t *testing.T) {
 	}
 }
 
+// A persistent cache is named by lane and scope only, with no run or step in it, so the next step
+// of the same repo finds it.
+func TestPersistentCachesAreKeyedByLaneAndScope(t *testing.T) {
+	l := cacheLane()
+	l.PersistCaches = true
+	lane, err := normalizeLane(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := buildRequest(lane, launcher.Step{Run: "r1", Name: "s1", Lane: "t", CacheScope: "abc123"}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRequest(r.config, r.host, r.networking, cachePaths(lane)); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.host.Mounts[1].Source; got != "satat-cache-t-abc123-go-mod" {
+		t.Errorf("persistent cache volume = %q", got)
+	}
+	for _, cv := range cacheVolumes(lane, launcher.Step{Run: "r2", Name: "s2", CacheScope: "abc123"}) {
+		if !cv.persist || cv.opts.Labels[labelScope] != "abc123" || cv.opts.Labels[labelRun] != "" {
+			t.Errorf("%s: persist %v labels %v", cv.opts.Name, cv.persist, cv.opts.Labels)
+		}
+		if err := ValidateVolume(cv.opts); err != nil {
+			t.Errorf("%s: %v", cv.opts.Name, err)
+		}
+	}
+}
+
+// The scope is the one runtime value that reaches a volume name, so it is held to a fixed shape.
+func TestCacheScopeIsChecked(t *testing.T) {
+	l := cacheLane()
+	l.PersistCaches = true
+	lane, err := normalizeLane(l)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, sc := range []string{"", "../x", "a-b", "ABC", "a b", "a/b", "a.b", strings.Repeat("a", 33), "x;rm"} {
+		if _, err := buildRequest(lane, launcher.Step{Run: "r", Name: "s", CacheScope: sc}, nil); err == nil {
+			t.Errorf("cache scope %q was accepted", sc)
+		}
+	}
+	// A lane without persistent caches still refuses a malformed scope rather than ignoring it.
+	plain, _ := normalizeLane(testLane())
+	if _, err := buildRequest(plain, launcher.Step{Run: "r", Name: "s", CacheScope: "../x"}, nil); err == nil {
+		t.Error("a malformed scope was accepted by a lane without caches")
+	}
+	o := cacheVolumes(lane, launcher.Step{Run: "r", Name: "s", CacheScope: "ok"})[0].opts
+	o.Labels[labelScope] = "Not-OK"
+	if err := ValidateVolume(o); err == nil || !strings.Contains(err.Error(), "scope") {
+		t.Errorf("ValidateVolume accepted a bad scope label: %v", err)
+	}
+}
+
 func TestCacheDeclarationsAreChecked(t *testing.T) {
 	cases := map[string]struct {
 		caches []launcher.Cache
