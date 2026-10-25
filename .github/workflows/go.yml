@@ -4,7 +4,14 @@ on:
   pull_request:
   push:
     branches: [main]
-    paths: ["**.go", "go.mod", "go.sum", "compose.yaml", "scripts/check-compose-socket.sh", ".github/workflows/go.yml"]
+    paths:
+      - "**.go"
+      - "go.mod"
+      - "go.sum"
+      - "compose.yaml"
+      - "scripts/check-compose-socket.sh"
+      - "images/worker/**"
+      - ".github/workflows/go.yml"
 
 permissions:
   contents: read
@@ -32,3 +39,13 @@ jobs:
 
       - name: Only docker-proxy mounts the Docker socket
         run: scripts/check-compose-socket.sh
+
+      # Catches a package the worker imports but the image build does not copy.
+      - name: Build the worker image
+        env:
+          HATCHET_CLIENT_TOKEN: unused
+          CLAUDE_CODE_OAUTH_TOKEN: unused
+          SATAT_GITHUB_TOKEN: unused
+          SATAT_PUSH_TOKEN: unused
+          POSTGRES_PASSWORD: unused
+        run: docker compose build worker

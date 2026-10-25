@@ -7,13 +7,9 @@ FROM ${GO_IMAGE} AS build
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-COPY config ./config
-COPY launcher ./launcher
-COPY pipeline ./pipeline
-COPY pusher ./pusher
-COPY runner ./runner
-COPY workflows ./workflows
-COPY cmd/satat-worker ./cmd/satat-worker
+# Everything the module's Go packages need, so a new import cannot break the build (see
+# Dockerfile.dockerignore for what is let through).
+COPY . .
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/satat-worker ./cmd/satat-worker
 # The pusher refuses to publish unscanned changes, so the scanner ships with it.
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/zricethezav/gitleaks/v8@v8.30.1
