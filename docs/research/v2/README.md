@@ -12,6 +12,7 @@ starting with [ADR 0021](../../adr/0021-adopt-platform-plumbing.md).
 | [platform-ram-spike.md](platform-ram-spike.md) | Measured RAM and CPU of k3s, Hatchet, Postgres and LiteLLM and how many step pods fit, across three VM sizes |
 | [intake-triggers.md](intake-triggers.md) | Intake for webhooks, cron and alerts: Hatchet built-ins versus gateways and integration platforms |
 | [octo-sts-fit.md](octo-sts-fit.md) | Whether octo-sts can mint per-step GitHub tokens on k3s, what self-hosting involves, and the alternatives. Recommends a Satat token broker |
+| [lane-started-runs.md](lane-started-runs.md) | How a lane is marked as running an agent, why lane-started runs are refused on agent lanes, and what #129 should change |
 | [notes/](notes/) | Raw per-topic research with full citations, used as input to the files above. Notes may describe options that were later rejected |
 
 The current architecture is kept in the onboarding guide
