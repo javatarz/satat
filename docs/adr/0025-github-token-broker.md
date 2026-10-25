@@ -11,6 +11,9 @@ version, which had the pod receive a token from the broker. Supersedes the ident
 PAT stays in force for the v0.1 Canvas stack. Expected to become the GitHub section of a wider
 secrets ADR.
 
+Amended 2026-10-25 for v0.2: no broker, a machine-user token and a worker-side clone (see
+Decision). The original App and broker design is kept below as the later option.
+
 ## Context
 
 Step pods on Kubernetes (ADR 0024) need to read repos and propose changes. Anything an agent
@@ -22,6 +25,47 @@ GitHub gives no way to shorten an installation token's one-hour lifetime, and no
 setting separates "push a branch" from "merge" (both need `contents: write`).
 
 ## Decision
+
+**v0.2 (amended 2026-10-25, #99 grilling): no broker, a machine-user token, and a pusher that runs no repo code.**
+Every repo Satat serves is trusted (the operator's own, or collaborators' that the operator lists in
+`satat.yaml`). Untrusted repos need kernel isolation and belong to the Kubernetes map (#166, #110).
+
+- **No broker. Nothing mints tokens.** Credentials are static entries in OpenBao
+  ([ADR 0032](0032-secret-store.md)), each readable by one component identity. The store holds
+  custody and the policy; it does not mint.
+- **Push credential:** a fine-grained token for a GitHub machine user, entry `github-push-token`,
+  readable by the pusher only. Scope: the listed repos, `contents: write` and `pull_requests:
+  write` and `issues: write`, no workflows or administration. Commits and the PR come from the
+  machine user, unsigned. The pusher is the **only component that writes to GitHub**: it also posts
+  the readiness comment and relabels an issue that cannot start.
+- **Read credential:** a separate read-only token, entry `github-read-token`, readable by the
+  worker only. The worker uses it for the `ready-for-agent` check and **clones the repo into the
+  step's volume before the container starts**. The step container holds no GitHub credential, and
+  no proxy injects one.
+- **The pusher is a separate service and runs no repo code.** It receives the bundle, clones
+  fresh, fetches the bundle into one allowed ref, checks its shape, scans with gitleaks, refuses
+  `.github/workflows`, pushes `satat/<run>` and opens a **draft** PR. It runs no hooks, tests or
+  build scripts, because the agent wrote them and the pusher holds a credential. Checks that run
+  repo code (lint, tests, pre-commit) run **before** the pusher, in a step with no credentials
+  (the inner loop). A failure goes back to the agent, and the pusher never sees it.
+- **Egress is a hostname allowlist and holds no secrets.** No TLS interception and no token
+  injection. It has no OpenBao identity. Reaching `github.com` without a credential pushes nothing.
+- **Repos are deploy config, and each is checked before any issue starts** (#175). `satat.yaml`
+  lists the repos. Before starting an issue the worker checks the repo's prerequisites: a valid
+  `.satat/commands.yaml` on the base branch, a token that can read and create branches and PRs
+  without admin or bypass, merge protection (below) and who labelled the issue. If a check fails
+  the issue is not started. Satat comments once, moves the label from `ready-for-agent` to
+  `needs-info` so it is not picked up again, and a human re-adds `ready-for-agent` after the fix.
+  This replaces the "onboarding gate" below with a per-issue check.
+- **Merge protection by ruleset** (below) applies unchanged. The machine user has no bypass entry.
+- **Upgrade path:** a GitHub App with per-push installation tokens, or an OpenBao plugin that mints
+  them (unverified on OpenBao), changes only what the pusher reads from the store. It does not
+  change who may push or how a step looks. Use it where a machine user is not possible, such as a
+  repo in an organisation that will not allow the token.
+
+## Later: GitHub App, broker and injecting proxy
+
+The original decision of 2026-10-16, not built in v0.2.
 
 **A Satat-owned GitHub App.** Permissions: contents, pull requests, issues, metadata. No
 administration, workflows or secrets. Commits and PRs come from `<slug>[bot]`, which GitHub
@@ -65,6 +109,13 @@ check re-runs on a schedule, and a repo that no longer passes is paused.
 
 ## Consequences
 
+- v0.2: the pusher's token is long-lived (up to a year) and limited to the repos chosen when it
+  was created, not per push. A leak could push branches and open PRs on those repos, and the
+  rulesets still block a merge without checks and a human approval. The store's per-identity
+  policy and a pusher that runs no repo code are what keep it from leaking.
+- v0.2: commits are unsigned and show as the machine user, not a bot with a Verified badge.
+- v0.2: each deployment needs its own machine user and token.
+- The rest of this list describes the later App design.
 - One more Satat component (broker) and a proxy or pusher as its only callers. The broker needs
   no TokenReview: the launcher already knows each step's repo, so callers ask for "this repo,
   these permissions, this step".
@@ -81,6 +132,10 @@ check re-runs on a schedule, and a repo that no longer passes is paused.
 
 ## Not verified
 
+- v0.2: that a fine-grained token for the machine user can be limited to the repos listed in
+  other organisations (the organisation has to allow it).
+- Later: an OpenBao plugin that mints installation tokens (the community Vault plugin is not
+  confirmed to work on OpenBao).
 - A proxy that does TLS interception and header overwrite for `git push`, `gh` and the GitHub
   API (spike on Infisical Agent Vault, iron-proxy, or a custom Go proxy).
 - That GitHub rejects the merge API call for the App under the ruleset, with the App absent
