@@ -82,8 +82,10 @@ human moves an issue from `needs-triage` to `ready-for-agent`, and only `ready-f
 issues reach the agent.
 
 Every way in produces the same issue event: `satat-enqueue` by hand today, a poller (#135) and
-later a webhook. The worker checks `ready-for-agent` when the run starts (#134), so every
-way in is gated, whoever pushed the event.
+later a webhook. The worker checks `ready-for-agent` when the run starts (#134), and then checks
+the repo is ready (#175: a valid `.satat/commands.yaml`, access, merge protection). If it is not,
+the issue is not started, Satat comments once and sets `needs-info`. Every way in is gated,
+whoever pushed the event.
 The direction for the one exception is [lane-started runs](../design.md#lane-started-runs),
 only on lanes that run no agent: platform smoke tests, and perhaps eval lanes. Nothing in
 config marks those lanes yet (#129).
@@ -142,7 +144,7 @@ flowchart LR
 
 | Workflow | Starts with | Ends with | Status | Themes |
 |---|---|---|---|---|
-| Issue to draft PR | A human labels an issue `ready-for-agent` | A draft PR that a human merges | Shaping (#112, #135) | [Inner loop](inner-loop.md), [interchangeable agents](interchangeable-agents.md) |
+| Issue to draft PR | A human labels an issue `ready-for-agent` | A draft PR that a human merges | Shaping (#112, #135, #175) | [Inner loop](inner-loop.md), [interchangeable agents](interchangeable-agents.md) |
 | Feature breakdown | A feature or spec | Draft issues waiting for a human to accept them | Idea | [Per-codebase workflows](per-codebase-workflows.md) |
 | Production signal to issue | An alert or drift in the running system | A diagnosis as a draft issue | Idea | [Signal-driven intake](signal-driven-intake.md), [observability](observability.md) |
 | Harness self-improvement | A schedule | An issue with a hypothesis about the harness | Idea | [Observability](observability.md), [memory](memory.md) |
@@ -151,12 +153,16 @@ flowchart LR
 
 ## Sequencing: why this order
 
-1. **Thin slice end to end** (v0.2): issue to draft PR on Docker, horizontally scalable.
-2. **Evals**: a code-based benchmark, so any change can be
-   [measured](https://karun.me/blog/2025/11/06/intelligent-engineering-building-skills-and-shaping-principles/#learn-fast-adapt-continuously).
-3. **Observability**: traces, cost per turn, conversation capture.
-4. **Ratchet behaviour**: skills, verification, hooks, security. Tighten one problem at a time.
-5. **Maybe replace the off-the-shelf agent**: only once evals are strong and reviews feel optional.
+v0.2 ([#99](https://github.com/javatarz/satat/issues/99)) is the thin slice, and it is secure, measurable and
+observable: a human-labelled issue becomes a draft PR through Claude Code on Docker. Its work runs in
+parallel tracks (the slice, security, measuring), with evals allowed to land a little late. After
+v0.2:
+
+1. **Ratchet behaviour**: skills, verification, hooks. Tighten one problem at a time, measured by
+   the evals ([why measure](https://karun.me/blog/2025/11/06/intelligent-engineering-building-skills-and-shaping-principles/#learn-fast-adapt-continuously)).
+2. **More agents and scale**: OpenCode and Pi, per-account usage, Kubernetes and more than one
+   machine (#166).
+3. **Maybe replace the off-the-shelf agent**: only once evals are strong and reviews feel optional.
 
 You can't tune behaviour without the data to see where it fails: install monitoring before
 doing performance fixes. Behavioural work done first is no different from what a single
@@ -166,18 +172,18 @@ developer already does with Claude Code today.
 
 | Theme | Status | Related |
 |---|---|---|
-| [Inner loop as a state machine](inner-loop.md) | Shaping | #112 |
-| [Interchangeable agents](interchangeable-agents.md) | Idea | ADR 0022 |
+| [Inner loop as a state machine](inner-loop.md) | Shaping (hooks as the gate decided) | #112, #168, #174, #19 |
+| [Interchangeable agents](interchangeable-agents.md) | Idea (after v0.2) | ADR 0022 |
 | [Model and provider neutrality](provider-neutrality.md) | Idea | ADR 0016, ADR 0022, #94 |
 | [Model routing](model-routing.md) | Shaping | ADR 0016 |
-| [Runtime scaling tiers](runtime-scaling.md) | Decided (near term) | ADR 0024, ADR 0026, #130 |
-| [Per-codebase workflows](per-codebase-workflows.md) | Idea | |
+| [Runtime scaling tiers](runtime-scaling.md) | Decided (near term) | ADR 0024, ADR 0026, #166 |
+| [Per-codebase workflows](per-codebase-workflows.md) | Decided (where config lives) | #167, #175, #176 |
 | [Skill distribution](skill-distribution.md) | Idea | |
-| [Observability and conversation capture](observability.md) | Idea | #82, ADR 0022 |
+| [Observability and conversation capture](observability.md) | Backlog | #82, #83, ADR 0022 |
 | [Memory](memory.md) | Idea | |
-| [Evals](evals.md) | Shaping | |
+| [Evals](evals.md) | Backlog | #172 |
 | [Self-documenting repos](self-documenting-repos.md) | Shaping | |
-| [Security](security.md) | Decided (secret store), Backlog (parts) | ADR 0025, ADR 0032, #97, #143, #153 |
+| [Security](security.md) | Decided (secret store), Backlog (parts) | ADR 0025, ADR 0032, #97, #143, #166 |
 | [Signal-driven intake](signal-driven-intake.md) | Idea | ADR 0023 |
 
 Sources are the team calls on 2026-10-16 and 2026-10-21.

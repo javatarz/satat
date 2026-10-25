@@ -19,6 +19,18 @@
   Agents that write faster need
   [sharper review](https://karun.me/blog/2025/11/06/intelligent-engineering-building-skills-and-shaping-principles/#smarter-ai-needs-smarter-guardrails).
 
+## Decided for v0.2 (2026-10-25)
+
+- The repo's own hooks are the gate. `setup` in `.satat/commands.yaml` installs them in the agent's
+  container, so every commit runs `pre-commit`. `test` is a faster loop the agent may run between
+  commits; the harness never runs it as a gate.
+- The agent never pushes, so when it finishes the harness runs a **push rehearsal** in the same
+  container: a push to a throwaway local repo that fires the repo's `pre-push` hook (#168). A
+  failure goes back to the agent, up to a retry cap (#19).
+- Managed Claude settings in the lane stop the agent skipping hooks (#174). It is a guard, not a
+  boundary.
+- The judge and the reviewer, and the state machine around them, come later, once evals can tune them.
+
 ## Next
 
 Document the FSM, and separately how the components talk to each other.
