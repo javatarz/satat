@@ -93,11 +93,17 @@ func run() error {
 	if err != nil {
 		return fmt.Errorf("hatchet client: %w", err)
 	}
+	// A run starts only in a repo the intake or the poller lists.
+	allowed := splitList(os.Getenv("SATAT_INTAKE_REPOS"))
+	for _, r := range cfg.Poller.Repos {
+		allowed = append(allowed, r.Name)
+	}
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
 	wf, err := workflows.Register(hc, spec, workflows.Handler{
 		Launcher: l,
 		Pusher:   &pusher.Pusher{Token: token},
 		Issues:   pipeline.GitHubIssues{Token: readToken},
+		Allowed:  allowed,
 	})
 	if err != nil {
 		return err
