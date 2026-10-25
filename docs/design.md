@@ -348,10 +348,14 @@ This guards against the agent skipping hooks by habit or after a prompt injectio
 It is not a boundary against a determined agent with a shell. CI on the draft PR and the push
 rehearsal (#168) are the backstops.
 
-- Deny patterns and the hook match the command **text**. a command assembled at run
-  time (`g=git; $g commit --no-ver""ify`), `eval`, base64, aliases (`git config alias.x`)
-  and a script the agent writes and then runs are not seen. A script that calls `git commit
-  --no-verify` runs without the hook seeing its contents.
+- Deny patterns and the hook match the command **text**. The hook tokenizes it (so quoting tricks
+  like `git commit "-n"` and long-option abbreviations like `--no-veri`, which git accepts, are
+  caught) and looks inside `sh -c`, `bash -c` and `eval` strings, nested. It does not see a command
+  assembled at run time (`g=git; $g commit ...`), `python -c` or `node -e` strings, `xargs` or
+  `find -exec`, aliases (`git config alias.x`), base64, or a script the agent writes and then runs.
+  Those pass.
+- The hook fails closed on bad input, and the settings set `onFailure: block` so a crash, a timeout
+  or a missing script also blocks the call (otherwise only exit 2 does).
 - A Python or Node script can write `.claude/settings.local.json` or any workspace file: the
   workspace is writable and the deny rules cover Claude's file tools and recognised shell commands,
   not a script. Only the root-owned files are immutable. Repo-level settings do not override
@@ -360,8 +364,10 @@ rehearsal (#168) are the backstops.
   `git -c` forms the regex does not know, deleting the hook files in the repo's own hook directory
   (`.husky/`, `.pre-commit-config.yaml`) or committing a hook that does nothing. The push rehearsal
   runs whatever hooks the branch contains, so a weakened hook weakens the gate; review catches that.
-- Hook text matching has false positives: `--no-verify` or `core.hooksPath` inside a commit message
-  is blocked. The agent is told why and can reword.
+- Trade-off: a false positive costs the agent one retry, a bypass costs the gate, so the hook
+  leans to blocking. Words inside a quoted commit message are not matched (`-m "use SKIP=1"`,
+  `git log --grep=update-ref` pass), but `core.hooksPath` and `.git/hooks` anywhere in the text are
+  blocked, as is any `--no-ve...` option on a git command. The agent is told why and can reword.
 - Verified by a human, not in CI: that `claude -p` in the lane refuses the commands end to end and
   that `claude doctor` lists the managed source. The tests cover the files, the hook and its wiring.
 

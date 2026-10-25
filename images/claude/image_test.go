@@ -68,13 +68,28 @@ func TestGuardBlocksHookSkipping(t *testing.T) {
 		"git -C sub commit -n -m x",
 		"git add -A && git commit -n -m x",
 		"git add -A; git commit -n -m x",
+		// abbreviations git accepts
+		"git commit --no-veri -m x",
+		"git commit --no-verif -m x",
+		"git push --no-veri",
+		"git push --no-verif origin HEAD",
+		// quoting and shell wrappers
+		"git commit \"--no-verify\" -m x",
+		"git commit \"-n\" -m x",
+		"git \"commit\" -n -m x",
+		"bash -c 'git commit --no-verify -m x'",
+		"sh -c \"git commit -n -m x\"",
+		"bash -lc 'HUSKY=0 git commit -m x'",
+		"sh -c 'SKIP=all git commit -m x'",
+		"eval 'git commit --no-verify -m x'",
+		"bash -c \"bash -c 'git commit -n'\"",
+		"SKIP=\"x\" git commit -m x",
 		// variants
 		"HUSKY_SKIP_HOOKS=1 git commit -m x",
 		"LEFTHOOK=0 git commit -m x",
 		"GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0=/dev/null git commit -m x",
 		"GIT_CONFIG_PARAMETERS=\"'core.hooksPath=/x'\" git commit -m x",
 		"git -c core.hookspath=/dev/null commit -m x",
-		"sh -c 'git commit --no-verify -m x'",
 		"git config core.hooksPath \"$(mktemp -d)\"",
 		"echo '[core]\nhooksPath=/dev/null' >> .git/config",
 		"sed -i 's/x/y/' .git/config",
@@ -126,6 +141,17 @@ func TestGuardBlocksHookSkipping(t *testing.T) {
 		"npm test -- -n",
 		"go test ./...",
 		"HUSKY=1 git commit -m x",
+		"git commit -m \"use SKIP=1 or HUSKY=0 never\"",
+		"git commit -m 'run git update-ref by hand'",
+		"git commit -m \"mention --no-verify in docs\"",
+		"git log --grep=update-ref",
+		"git log --grep commit-tree",
+		"git commit -mn",
+		"git commit -am\"fix -n\"",
+		"git commit -m \"SKIP=1\"",
+		"bash -c 'git commit -m x'",
+		"sh -c 'ls -n'",
+		"git log --no-merges",
 		"skip=1 make test",
 	}
 	for _, cmd := range allowed {
@@ -169,8 +195,9 @@ type managedSettings struct {
 		PreToolUse []struct {
 			Matcher string `json:"matcher"`
 			Hooks   []struct {
-				Type    string `json:"type"`
-				Command string `json:"command"`
+				Type      string `json:"type"`
+				Command   string `json:"command"`
+				OnFailure string `json:"onFailure"`
 			} `json:"hooks"`
 		} `json:"PreToolUse"`
 	} `json:"hooks"`
@@ -197,7 +224,7 @@ func TestManagedSettingsContent(t *testing.T) {
 	}
 	deny := strings.Join(s.Permissions.Deny, "\n")
 	for _, want := range []string{
-		"Bash(git commit --no-verify*)", "Bash(git commit -n *)", "Bash(git push --no-verify*)",
+		"Bash(git commit --no-ve*)", "Bash(git commit -n *)", "Bash(git push --no-ve*)",
 		"Edit(**/.claude/settings*.json)", "Edit(/etc/claude-code/**)",
 	} {
 		if !strings.Contains(deny, want) {
@@ -206,5 +233,10 @@ func TestManagedSettingsContent(t *testing.T) {
 	}
 	if len(s.Hooks.PreToolUse) != 1 || s.Hooks.PreToolUse[0].Matcher != "Bash" {
 		t.Fatalf("want one PreToolUse hook on Bash, got %+v", s.Hooks.PreToolUse)
+	}
+	// Only exit 2 blocks by default; a crash, a timeout or a missing script would let the call
+	// through, so the hook must be set to block on failure.
+	if h := s.Hooks.PreToolUse[0].Hooks; len(h) != 1 || h[0].OnFailure != "block" {
+		t.Errorf("hook must set onFailure=block, got %+v", h)
 	}
 }
