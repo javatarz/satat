@@ -2,7 +2,8 @@
 
 This is the tour for someone new to the repo. It describes what runs on `main` now, the v0.2
 Docker prototype (#112). Things that are planned but not built are in
-[What is not built](#what-is-not-built), each with the ADR or issue that owns it. For direction
+[What is not built](#what-is-not-built), each with the ADR or issue that owns it. The flow and
+lane-started runs also show their planned parts in place, marked as planned. For direction
 see the [roadmap](roadmap/README.md); for the reasons behind a choice, the [ADRs](#adrs-and-research).
 
 ## What Satat is
@@ -18,38 +19,69 @@ Claude subscription token. The prototype is pointed only at the owner's own repo
 
 ## The flow, end to end
 
+Every way in ends in one `satat:issue` event. From there the worker gates, queues, launches and
+publishes the run. Solid boxes exist on `main` today. Dashed boxes are planned, with the issue
+that owns them.
+
 ```mermaid
 flowchart LR
-  enq["satat-enqueue<br/>(hand trigger)"] -- "event satat:issue" --> hatchet[(Hatchet Lite<br/>+ Postgres)]
-  hatchet -- "workflow satat-issue<br/>caps + queue" --> worker
+  enq["satat-enqueue<br/>by hand"]
+  poll["poller: Hatchet cron<br/>queues ready-for-agent issues<br/>(planned, #135)"]
+  hook["webhook<br/>(planned, #112 slice 6)"]
+  lanerun["lane-started run<br/>satat agent run &lt;lane&gt;<br/>lanes with no agent only<br/>(planned, #129)"]
+
+  queue[("Hatchet Lite + Postgres<br/>queue and four caps:<br/>global, lane, repo, account")]
+
+  enq -- "event satat:issue" --> queue
+  poll -- "event satat:issue" --> queue
+  hook -- "event satat:issue" --> queue
+  lanerun -. "own event, same workflow<br/>and caps" .-> queue
 
   subgraph worker["worker container (trusted)"]
-    wf[workflow task] --> launch[Docker launcher]
-    wf --> push["pusher<br/>(only holder of the write token)"]
+    ready{"issue still labelled<br/>ready-for-agent?<br/>(planned, #134)"}
+    launch["Docker launcher"]
+    push["pusher<br/>(only holder of the write token)"]
   end
 
+  queue -- "caps allow:<br/>workflow satat-issue starts" --> ready
+  ready -- "no" --> skip["run skipped,<br/>reason recorded"]
+  ready -- "yes" --> launch
+  queue -. "lane-started run:<br/>no issue, no check" .-> launch
   launch -- "Docker API via<br/>docker-proxy" --> step
 
-  subgraph step["one-shot step container (untrusted), Claude lane image"]
-    runner["satat-runner<br/>clone, run claude, commit"]
+  subgraph step["one-shot step container (untrusted)"]
+    runner["satat-runner<br/>clone, run the agent, commit"]
   end
 
-  step -- "result.json + changes.bundle<br/>read back, container removed" --> wf
+  step -- "if changes:<br/>result.json + changes.bundle" --> push
   push -- "push satat/RUN, open draft PR<br/>body ends: Satat-Run: RUN" --> gh[(GitHub)]
+
+  classDef planned fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
+  class poll,hook,lanerun,ready,skip planned
 ```
 
-1. **Intake.** Today a person runs `go run ./cmd/satat-enqueue --repo owner/name --issue N`. It
-   reads the issue with the `gh` CLI, looks up the lane's caps in `satat.yaml`
-   (`workflows.MapIssue`) and pushes the Hatchet event `satat:issue`. The workflow does not
-   check labels: the `ready-for-agent` convention in [CONTRIBUTING.md](../CONTRIBUTING.md) is
-   enforced by whoever runs the command. Webhook intake is not built.
-2. **Queue.** Hatchet Lite (with Postgres) holds the event and starts the workflow
-   `satat-issue` (`workflows/issue.go`) on the worker when the caps allow
-   ([concurrency caps](#concurrency-caps)). The Hatchet run ID becomes the Satat run ID.
-3. **One step, one container.** The workflow task calls `pipeline.Run`, which launches one step
+1. **Ways in.** Today there is one: a person runs
+   `go run ./cmd/satat-enqueue --repo owner/name --issue N`. It reads the issue with the `gh` CLI,
+   looks up the lane's caps in `satat.yaml` (`workflows.MapIssue`) and pushes the Hatchet event
+   `satat:issue`. Two more are planned, and both push the same event: a poller, which is a
+   Hatchet cron in the worker that queues `ready-for-agent` issues on the repos in `satat.yaml`
+   (#135), and a webhook (#112 slice 6). Because they share the event, everything after this
+   step is the same whichever way a run came in.
+2. **Queue.** Hatchet Lite (with Postgres) holds the event. The workflow `satat-issue`
+   (`workflows/issue.go`) starts on the worker only when all four
+   [concurrency caps](#concurrency-caps) allow it. Over-cap work waits and is not dropped. The
+   Hatchet run ID becomes the Satat run ID.
+3. **Readiness check (planned, #134).** When the run starts, the worker will re-read the issue's
+   labels and skip the run, recording why, unless the issue has `ready-for-agent`. It belongs in
+   the worker, not in each way in, so that every way in is gated the same way and a label removed
+   while the run waited behind a cap is honoured. Only a human moves an issue to
+   `ready-for-agent` ([roadmap](roadmap/README.md#how-it-fits-together)). **Today nothing checks
+   labels:** `satat-enqueue` queues any issue, and whoever runs it keeps the convention in
+   [CONTRIBUTING.md](../CONTRIBUTING.md).
+4. **One step, one container.** The workflow task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the
    [launcher](#the-launcher). Input is `{repo, base, issue}`. It holds no secrets.
-4. **Runner.** Inside the container the entrypoint is `satat-runner` (`runner/runner.go`). It
+5. **Runner.** Inside the container the entrypoint is `satat-runner` (`runner/runner.go`). It
    checks that no variable would route Claude Code off the subscription token
    (`ANTHROPIC_API_KEY` and others make it refuse to start), clones the repo with the read
    token (depth 50), creates branch `satat/<run>`, and runs `claude -p` headless on the issue
@@ -57,22 +89,28 @@ flowchart LR
    uncommitted is committed as `Satat`. The runner writes `result.json` (status `changes`,
    `no_changes` or `failed`), `transcript.jsonl`, and, if there are commits, `changes.patch` for
    humans and `changes.bundle` for the pusher. It never pushes.
-5. **Read back.** The launcher reads the files the step left in `$SATAT_OUTPUT` after it exits
+6. **Read back.** The launcher reads the files the step left in `$SATAT_OUTPUT` after it exits
    and removes the container and its input volume.
-6. **Publish.** If the step exited 0 with status `changes`, the worker's [pusher](#why-the-write-token-lives-only-in-the-pusher)
+7. **Publish.** If the step exited 0 with status `changes`, the worker's [pusher](#why-the-write-token-lives-only-in-the-pusher)
    checks the bundle, pushes `satat/<run>` and opens a draft PR. The PR body links the issue
    (`Resolves #N`), quotes the agent's summary as untrusted text, and ends with a
    `Satat-Run: <run>` line, which is how a PR is traced back to its Hatchet run. This is a line
    in the PR body, not a git commit trailer. The workflow output reports the status, branch and
    PR URL in the Hatchet dashboard (`http://localhost:8888`).
-7. **Failure is visible.** A failed step, a timeout, an out-of-memory kill or a refused push
+8. **Failure is visible.** A failed step, a timeout, an out-of-memory kill or a refused push
    makes the Hatchet run fail. A step that changes nothing is a normal result with no PR.
    Hatchet retries are off (`WithRetries(0)`): a re-delivered task finds the earlier attempt's
    container instead (see the launcher).
 
-There is also a hand path that skips Hatchet: `go run ./cmd/satat-step --repo ... --issue N
-[--push]` runs the same `pipeline.Run` directly and saves the output under
-`docs/scratch/runs/<run>`. Both use the same code, so they behave the same.
+A [lane-started run](#lane-started-runs) is the one planned exception to "every way in is an
+issue". It is allowed only on lanes that run no agent, so agent work never skips the readiness
+check.
+
+There is also a hand path for developers that skips Hatchet: `go run ./cmd/satat-step --repo ...
+--issue N [--push]` runs the same `pipeline.Run` directly and saves the output under
+`docs/scratch/runs/<run>`. Both use the same code, so they behave the same. It is not a way in:
+it bypasses the queue, the caps and, once it exists, the readiness check. Use it only on an issue
+you would label `ready-for-agent` yourself.
 
 ### Pieces and where they live
 
@@ -94,6 +132,53 @@ There is also a hand path that skips Hatchet: `go run ./cmd/satat-step --repo ..
 The Compose project has four services: `postgres`, `hatchet-lite`, `docker-proxy` and `worker`.
 Ports bind to `127.0.0.1`. All images are pinned by digest.
 
+## Lane-started runs
+
+**Planned, not built.** #129 proposes them as `satat agent run <lane> [--input] [--wait]`, with
+`ls` and `rm`, in its ADR 0030 (proposed). This section says where they fit in the flow above.
+
+A lane-started run starts from a lane instead of an issue. The operator names a lane and passes
+JSON, which the worker places at `/etc/satat/input.json`. It goes through the same workflow and
+the same four caps as an issue run, so the two kinds queue behind each other. It launches one
+step, keeps a small scrubbed result (exit status, the last 4 KiB of output, the output file
+names) and never publishes. There is no issue, so there is no readiness check.
+
+**Only on lanes that run no agent.** A lane-started run is for checking the platform and for
+lanes that run a fixed command:
+
+- `smoke`, and the `sleep` lane #129 adds, for platform smoke tests. The pre-flight `doctor`
+  (#133) could use a `smoke` run as its end-to-end check.
+- `check-python` and other eval lanes, which run held-out tests over a set of files, could use
+  them too. Today `satat-eval` calls the launcher directly instead.
+
+Lanes that run an agent, such as `claude`, refuse lane-started runs, because agent work must
+start from a triaged issue. On `claude`, a lane-started run would have the agent do real work
+from input nobody triaged, spend the subscription, and then throw the work away, because nothing
+publishes it. Issue runs are the mirror image: they only make sense on a lane that runs an agent.
+
+**How a lane is marked.** A lane that runs no agent says `agent: false`; absent means the lane
+runs an agent:
+
+```yaml
+lanes:
+  claude:            # no `agent` key: runs an agent, so issue runs only
+    ...
+  smoke:
+    agent: false     # runs no agent, so lane-started runs only
+    ...
+```
+
+The key is one optional boolean on the lane. The worker refuses a lane-started run on a lane
+without `agent: false`. The default is the safe side: a new lane that leaves the key out counts
+as an agent lane, so the mistake shows up as a refused lane-started run, not as an agent working
+from made-up input. The check runs in the worker at run start, like the readiness check, so
+every event is gated whoever pushed it. The CLI checks as well, but only to fail early with a
+clear message. Refusing an issue run on a lane with `agent: false` is an optional follow-up to
+the worker check in #134.
+
+What #129 should change to fit this, and the other ways of marking a lane that were considered,
+are in [lane-started runs](research/v2/lane-started-runs.md).
+
 ## The launcher
 
 `launcher.Launcher` (`launcher/launcher.go`) is the seam between workflows and a runtime:
@@ -113,7 +198,8 @@ the names of the environment variables it may receive. Lanes come from `satat.ya
 text, workflow input and agent output cannot change one
 ([ADR 0027](adr/0027-docker-api-access.md)). `satat.yaml` has three lanes: `claude` (the real
 one), `smoke` (a busybox placeholder) and `check-python` (runs a command over a set of files
-with no network, used by the eval harness).
+with no network, used by the eval harness). Only `claude` runs an agent. Nothing marks that in
+`satat.yaml` yet; the planned `agent: false` key is in [lane-started runs](#lane-started-runs).
 
 **Behaviour.**
 
@@ -270,7 +356,10 @@ Do not read these as features. They are decided or planned, not present:
 
 | Not built | Where it is tracked |
 |---|---|
-| Webhook intake that starts a run when an issue is labelled (slice 6). Today a human runs `satat-enqueue`. | [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
+| Readiness check: the worker skips a run unless the issue has `ready-for-agent` at run start. Today nothing checks labels. | #134 |
+| Poller: a Hatchet cron that queues `ready-for-agent` issues on the repos in `satat.yaml`. Today a human runs `satat-enqueue`. | #135 |
+| Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
+| Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. | #120 |
 | Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |
 | Egress proxy with a hostname allowlist and credential injection, so a step holds no token | [ADR 0025](adr/0025-github-token-broker.md), [ADR 0026](adr/0026-docker-first-runtime.md) |
