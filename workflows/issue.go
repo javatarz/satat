@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
@@ -29,6 +30,13 @@ const (
 	MinScheduleTimeout = 24 * time.Hour
 	// ScheduleTimeout is what Define sets. 720 h was accepted in the spike.
 	ScheduleTimeout = 720 * time.Hour
+
+	// ReadyLabel is the label a human puts on an issue to let Satat run it (the roadmap's triage
+	// rule). The worker re-reads it at run start, so every way in is gated by it.
+	ReadyLabel = "ready-for-agent"
+	// StatusSkipped is the output status of a run that did not launch because the issue was not
+	// ready. It is a normal result, not a failure, so it is not retried.
+	StatusSkipped = "skipped"
 )
 
 // Input is the run input. It is also what the concurrency expressions read, so the caps that
@@ -51,6 +59,8 @@ type Output struct {
 	Reused   bool   `json:"reused,omitempty"`
 	ExitCode int    `json:"exit_code"`
 	Commits  int    `json:"commits"`
+	// Reason says why a run was skipped.
+	Reason string `json:"reason,omitempty"`
 }
 
 // MapIssue builds a run input from config. It is the only place caps are looked up.
@@ -130,15 +140,33 @@ func (s Spec) Validate() error {
 	return errors.Join(errs...)
 }
 
+// IssueReader reads an issue's current state. pipeline.GitHubIssues is the real one.
+type IssueReader interface {
+	Issue(ctx context.Context, repo string, number int) (pipeline.IssueState, error)
+}
+
 // Handler does the work of one run. It is the part of the workflow that does not depend on Hatchet.
 type Handler struct {
 	Launcher launcher.Launcher
 	Pusher   pipeline.Publisher
+	// Issues gates each run: only an open issue labelled ReadyLabel runs. A nil reader fails
+	// closed: nothing is launched.
+	Issues IssueReader
 }
 
-// Run takes one input to a result. A step that fails, or a change that cannot be published, is an
-// error so the run shows as failed; a step that changes nothing is a normal result.
+// Run takes one input to a result. An issue that is not ready at run start (closed, a pull
+// request, or without ReadyLabel) is skipped, which is a normal result; if it cannot be read,
+// nothing is launched and the run fails. A step that fails, or a change that cannot be published,
+// is an error so the run shows as failed; a step that changes nothing is a normal result.
 func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error) {
+	reason, err := h.notReady(ctx, in)
+	if err != nil {
+		err = fmt.Errorf("not launched: cannot read %s#%d: %w", in.Repo, in.Issue.Number, err)
+		return Output{Run: runID}, errors.Join(err, h.stopEarlierAttempt(ctx, runID))
+	}
+	if reason != "" {
+		return Output{Run: runID, Status: StatusSkipped, Reason: reason}, h.stopEarlierAttempt(ctx, runID)
+	}
 	rep, err := pipeline.Run(ctx, pipeline.Options{
 		Launcher: h.Launcher, Pusher: h.Pusher,
 		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue,
@@ -157,6 +185,39 @@ func (h Handler) Run(ctx context.Context, runID string, in Input) (Output, error
 		return out, failure(rep)
 	}
 	return out, nil
+}
+
+// notReady re-reads the issue, because it can change while the run waits behind a cap. It returns
+// why the issue must not run, or "" when it may.
+func (h Handler) notReady(ctx context.Context, in Input) (string, error) {
+	if h.Issues == nil {
+		return "", errors.New("no issue reader configured")
+	}
+	st, err := h.Issues.Issue(ctx, in.Repo, in.Issue.Number)
+	if err != nil {
+		return "", err
+	}
+	ref := fmt.Sprintf("%s#%d", in.Repo, in.Issue.Number)
+	switch {
+	case st.PullRequest:
+		return ref + " is a pull request, not an issue", nil
+	case !st.Open:
+		return ref + " is closed", nil
+	case !slices.Contains(st.Labels, ReadyLabel):
+		return fmt.Sprintf("%s is not labelled %s", ref, ReadyLabel), nil
+	}
+	return "", nil
+}
+
+// stopEarlierAttempt cancels this run's step when the gate stops the run. A re-delivered task
+// (the worker restarted mid-step) would otherwise never reach Launch to adopt the container an
+// earlier attempt started, and it would keep running, holding tokens and outside the caps. With
+// no such container it does nothing.
+func (h Handler) stopEarlierAttempt(ctx context.Context, runID string) error {
+	if err := h.Launcher.Cancel(ctx, runID, pipeline.StepName); err != nil {
+		return fmt.Errorf("could not stop an earlier attempt's step: %w", err)
+	}
+	return nil
 }
 
 func failure(rep pipeline.Report) error {

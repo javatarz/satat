@@ -10,6 +10,7 @@ import (
 
 	"github.com/javatarz/satat/config"
 	"github.com/javatarz/satat/launcher"
+	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/pusher"
 	"github.com/javatarz/satat/runner"
 )
@@ -98,13 +99,22 @@ type fakeLauncher struct {
 	res launcher.Result
 	err error
 	got launcher.Step
+	n   int
+	// running is a container an earlier attempt left; Cancel stops it.
+	running   bool
+	cancelled []string
 }
 
 func (f *fakeLauncher) Launch(_ context.Context, s launcher.Step) (launcher.Result, error) {
+	f.n++
 	f.got = s
 	return f.res, f.err
 }
-func (f *fakeLauncher) Cancel(context.Context, string, string) error { return nil }
+func (f *fakeLauncher) Cancel(_ context.Context, run, name string) error {
+	f.cancelled = append(f.cancelled, run+"/"+name)
+	f.running = false
+	return nil
+}
 
 type fakePub struct {
 	out pusher.Outcome
@@ -124,9 +134,119 @@ func result(status string) launcher.Result {
 
 var input = Input{Repo: "a/b", Base: "main", Lane: "claude", Issue: runner.Issue{Number: 1, Title: "t"}}
 
+// fakeIssues stands in for GitHub: it returns the issue as it is when the run starts.
+type fakeIssues struct {
+	st     pipeline.IssueState
+	err    error
+	repo   string
+	number int
+}
+
+func (f *fakeIssues) Issue(_ context.Context, repo string, number int) (pipeline.IssueState, error) {
+	f.repo, f.number = repo, number
+	return f.st, f.err
+}
+
+func openIssue(labels ...string) *fakeIssues {
+	return &fakeIssues{st: pipeline.IssueState{Open: true, Labels: labels}}
+}
+
+// ready is a fresh fake for an open issue labelled ReadyLabel.
+func ready() *fakeIssues { return openIssue("bug", ReadyLabel) }
+
+func TestAnIssueThatIsNotReadyIsSkipped(t *testing.T) {
+	cases := map[string]struct {
+		gh   *fakeIssues
+		want string
+	}{
+		"no label":     {openIssue("needs-triage"), "not labelled " + ReadyLabel},
+		"closed":       {&fakeIssues{st: pipeline.IssueState{Labels: []string{ReadyLabel}}}, "is closed"},
+		"pull request": {&fakeIssues{st: pipeline.IssueState{Open: true, PullRequest: true, Labels: []string{ReadyLabel}}}, "pull request"},
+	}
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			l, p := &fakeLauncher{res: result("changes")}, &fakePub{}
+			out, err := Handler{Launcher: l, Pusher: p, Issues: tc.gh}.Run(context.Background(), "r", input)
+			if err != nil || out.Status != StatusSkipped || !strings.Contains(out.Reason, tc.want) {
+				t.Fatalf("out %+v err %v; want a skip mentioning %q", out, err, tc.want)
+			}
+			if l.n != 0 || p.n != 0 {
+				t.Errorf("launched %d, pushed %d; want neither", l.n, p.n)
+			}
+			if tc.gh.repo != "a/b" || tc.gh.number != 1 {
+				t.Errorf("read %s#%d", tc.gh.repo, tc.gh.number)
+			}
+		})
+	}
+}
+
+func TestAnIssueWithTheLabelRuns(t *testing.T) {
+	l := &fakeLauncher{res: result("no_changes")}
+	out, err := Handler{Launcher: l, Pusher: &fakePub{}, Issues: ready()}.Run(context.Background(), "r", input)
+	if err != nil || out.Status != "no_changes" || l.n != 1 {
+		t.Fatalf("out %+v err %v launches %d", out, err, l.n)
+	}
+	if len(l.cancelled) != 0 {
+		t.Errorf("a run that passes the gate must not cancel anything: %v", l.cancelled)
+	}
+}
+
+// The issue was labelled when it was queued, and the label was removed while the run waited
+// behind a cap: the worker reads the issue at run start, so the run is skipped.
+func TestALabelRemovedWhileQueuedIsHonoured(t *testing.T) {
+	gh := openIssue(ReadyLabel)
+	in, err := MapIssue(cfg(), "a/b", "main", "claude", runner.Issue{Number: 1, Title: "t"}) // enqueue
+	if err != nil {
+		t.Fatal(err)
+	}
+	gh.st.Labels = []string{"needs-info"} // a human takes it back while it waits
+	l := &fakeLauncher{res: result("changes")}
+	out, err := Handler{Launcher: l, Pusher: &fakePub{}, Issues: gh}.Run(context.Background(), "r", in)
+	if err != nil || out.Status != StatusSkipped || l.n != 0 {
+		t.Fatalf("out %+v err %v launches %d; want a skip with no launch", out, err, l.n)
+	}
+}
+
+func TestUnreadableIssuesFailClosed(t *testing.T) {
+	cases := map[string]IssueReader{
+		"github error": &fakeIssues{err: errors.New("503 Service Unavailable")},
+		"no reader":    nil,
+	}
+	for name, gh := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := &fakeLauncher{res: result("changes")}
+			out, err := Handler{Launcher: l, Pusher: &fakePub{}, Issues: gh}.Run(context.Background(), "r", input)
+			if err == nil || !strings.Contains(err.Error(), "not launched") || out.Status == StatusSkipped {
+				t.Fatalf("out %+v err %v; want a failed run", out, err)
+			}
+			if l.n != 0 {
+				t.Errorf("launched %d times; want none", l.n)
+			}
+		})
+	}
+}
+
+// A re-delivered task (the worker restarted mid-step) that the gate stops never reaches Launch,
+// so it must stop the container the earlier attempt left running.
+func TestAStoppedRunCancelsAnEarlierAttempt(t *testing.T) {
+	cases := map[string]IssueReader{
+		"skipped":    openIssue(),
+		"read error": &fakeIssues{err: errors.New("503")},
+	}
+	for name, gh := range cases {
+		t.Run(name, func(t *testing.T) {
+			l := &fakeLauncher{running: true}
+			Handler{Launcher: l, Pusher: &fakePub{}, Issues: gh}.Run(context.Background(), "run-9", input)
+			if l.running || strings.Join(l.cancelled, ",") != "run-9/"+pipeline.StepName {
+				t.Errorf("cancelled %v, still running %v; want run-9's step stopped", l.cancelled, l.running)
+			}
+		})
+	}
+}
+
 func TestHandlerPublishesAndReports(t *testing.T) {
 	l, p := &fakeLauncher{res: result("changes")}, &fakePub{out: pusher.Outcome{PRURL: "https://x/pull/1"}}
-	out, err := Handler{Launcher: l, Pusher: p}.Run(context.Background(), "run-1", input)
+	out, err := Handler{Launcher: l, Pusher: p, Issues: ready()}.Run(context.Background(), "run-1", input)
 	if err != nil || out.PRURL != "https://x/pull/1" || out.Status != "changes" || out.Branch != "satat/x" || p.n != 1 {
 		t.Fatalf("out %+v err %v pushes %d", out, err, p.n)
 	}
@@ -136,7 +256,7 @@ func TestHandlerPublishesAndReports(t *testing.T) {
 }
 
 func TestNoChangesIsASuccess(t *testing.T) {
-	out, err := Handler{Launcher: &fakeLauncher{res: result("no_changes")}, Pusher: &fakePub{}}.Run(context.Background(), "r", input)
+	out, err := Handler{Launcher: &fakeLauncher{res: result("no_changes")}, Pusher: &fakePub{}, Issues: ready()}.Run(context.Background(), "r", input)
 	if err != nil || out.Status != "no_changes" {
 		t.Fatalf("out %+v err %v", out, err)
 	}
@@ -164,7 +284,7 @@ func TestFailuresFailTheRun(t *testing.T) {
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			_, err := Handler{Launcher: tc.l, Pusher: tc.p}.Run(context.Background(), "r", input)
+			_, err := Handler{Launcher: tc.l, Pusher: tc.p, Issues: ready()}.Run(context.Background(), "r", input)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("error = %v, want one mentioning %q", err, tc.want)
 			}
