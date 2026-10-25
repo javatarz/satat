@@ -19,10 +19,14 @@ func main() {
 		InputPath: os.Getenv("SATAT_INPUT"),
 		OutDir:    os.Getenv("SATAT_OUTPUT"),
 		WorkDir:   "/workspace",
-		Claude:    "claude",
-		Git:       "git",
-		Env:       os.Environ(),
-		Log:       os.Stderr,
+		// Absolute paths: PATH has the mise shims first (images/claude/Dockerfile). The claude
+		// npm package installs a native binary (bin/claude.exe), so a repo-pinned node does not
+		// change how claude itself runs.
+		Claude: "/usr/local/bin/claude",
+		Mise:   "/usr/local/bin/mise",
+		Git:    "/usr/bin/git",
+		Env:    os.Environ(),
+		Log:    os.Stderr,
 	}
 	if err := runner.Run(ctx, cfg); err != nil {
 		fmt.Fprintln(os.Stderr, "satat-runner:", err)

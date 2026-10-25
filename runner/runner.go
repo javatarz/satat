@@ -48,6 +48,7 @@ type Result struct {
 	AuthMethod     string            `json:"auth_method,omitempty"`
 	ClaudeResult   json.RawMessage   `json:"claude_result,omitempty"` // the final "result" event
 	RateLimitEvent []json.RawMessage `json:"rate_limit_events,omitempty"`
+	Toolchain      *Toolchain        `json:"toolchain,omitempty"`
 	DurationMS     int64             `json:"duration_ms"`
 }
 
@@ -58,8 +59,16 @@ type Config struct {
 	InputPath string
 	OutDir    string
 	WorkDir   string
-	Claude    string // path of the claude binary
-	Git       string
+	// Claude is the absolute path of the claude binary. It must be absolute: the runner's PATH
+	// has the mise shims first, and a repo-pinned tool must not be able to shadow claude.
+	Claude string
+	Git    string
+	// Mise is the absolute path of the mise binary that prepares the repo's toolchains before
+	// claude starts (ADR 0033).
+	Mise string
+	// MiseTimeout bounds the toolchain step. Zero means $SATAT_MISE_TIMEOUT, else
+	// DefaultMiseTimeout.
+	MiseTimeout time.Duration
 	// CloneURL builds the URL to clone. Defaults to https://github.com/<repo>.git.
 	CloneURL func(repo string) string
 	Env      []string // the runner's environment, as os.Environ
@@ -151,6 +160,15 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	if env[cloneVar] == "" {
 		return fmt.Errorf("%s is not set", cloneVar)
 	}
+	for _, b := range []struct{ name, path string }{{"claude", cfg.Claude}, {"mise", cfg.Mise}} {
+		if !filepath.IsAbs(b.path) {
+			return fmt.Errorf("%s binary %q must be an absolute path", b.name, b.path)
+		}
+	}
+	toolTimeout, err := miseTimeout(cfg, env)
+	if err != nil {
+		return err
+	}
 
 	// The clone token goes to git only; claude's environment never has it.
 	// Commits the agent makes default to Satat's identity, set in the environment rather than git
@@ -160,7 +178,8 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 	if err != nil {
 		return err
 	}
-	claudeEnv := append(withoutKeys(cfg.Env, append([]string{cloneVar, nameVar, emailVar}, identityKeys...)...), identity...)
+	// PATH has the mise shims first, so the agent's Bash tool runs the repo-pinned toolchains.
+	claudeEnv := withToolchainEnv(append(withoutKeys(cfg.Env, append([]string{cloneVar, nameVar, emailVar}, identityKeys...)...), identity...))
 
 	method, err := authMethod(ctx, cfg, claudeEnv)
 	if err != nil {
@@ -185,6 +204,10 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		return err
 	}
 	if res.BaseSHA, err = gitOut(ctx, cfg, repoDir, "rev-parse", "HEAD"); err != nil {
+		return err
+	}
+
+	if err := prepareToolchain(ctx, cfg, repoDir, toolTimeout, res); err != nil {
 		return err
 	}
 
