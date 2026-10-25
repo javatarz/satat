@@ -53,7 +53,7 @@ func TestImageManagedFilesAreRootOwnedAndImmutable(t *testing.T) {
 	// Ownership and mode: root-owned, no group or other write bit, and the agent is not root.
 	code, out := asAgent(t, img, `test "$(id -u)" != 0 || exit 9
 for f in `+strings.Join(files, " ")+`; do
-  stat -c '%u %a %n' "$f" || exit 1
+	stat -c '%u %a %n' "$f" || exit 1
 done
 stat -c '%u %a %n' /etc/claude-code /usr/local/lib/satat /usr/local/lib/satat/hooks`)
 	if code != 0 {
