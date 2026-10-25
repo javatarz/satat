@@ -51,19 +51,20 @@ type limitsFile struct {
 }
 
 type laneFile struct {
-	Image     string   `yaml:"image"`
-	User      string   `yaml:"user"`
-	Command   []string `yaml:"command"`
-	PassEnv   []string `yaml:"pass_env"`
-	Memory    string   `yaml:"memory"`
-	CPUs      float64  `yaml:"cpus"`
-	Pids      int64    `yaml:"pids"`
-	Workspace string   `yaml:"workspace"`
-	Internal  bool     `yaml:"internal"`
-	Runtime   string   `yaml:"runtime"`
-	Timeout   string   `yaml:"timeout"`
-	Account   string   `yaml:"account"`
-	MaxRuns   int      `yaml:"max_runs"`
+	Image       string   `yaml:"image"`
+	User        string   `yaml:"user"`
+	Command     []string `yaml:"command"`
+	PassEnv     []string `yaml:"pass_env"`
+	OptionalEnv []string `yaml:"optional_env"`
+	Memory      string   `yaml:"memory"`
+	CPUs        float64  `yaml:"cpus"`
+	Pids        int64    `yaml:"pids"`
+	Workspace   string   `yaml:"workspace"`
+	Internal    bool     `yaml:"internal"`
+	Runtime     string   `yaml:"runtime"`
+	Timeout     string   `yaml:"timeout"`
+	Account     string   `yaml:"account"`
+	MaxRuns     int      `yaml:"max_runs"`
 }
 
 // Load reads and parses the file at path.
@@ -131,14 +132,15 @@ func Parse(r io.Reader) (Config, error) {
 
 func (lf laneFile) lane(name string) (launcher.Lane, error) {
 	l := launcher.Lane{
-		Name:     name,
-		Image:    lf.Image,
-		User:     lf.User,
-		Command:  lf.Command,
-		PassEnv:  lf.PassEnv,
-		CPUs:     lf.CPUs,
-		Internal: lf.Internal,
-		Runtime:  lf.Runtime,
+		Name:        name,
+		Image:       lf.Image,
+		User:        lf.User,
+		Command:     lf.Command,
+		PassEnv:     lf.PassEnv,
+		OptionalEnv: lf.OptionalEnv,
+		CPUs:        lf.CPUs,
+		Internal:    lf.Internal,
+		Runtime:     lf.Runtime,
 	}
 	var errs []error
 	var err error
