@@ -1,0 +1,6 @@
+# Build context for the worker image: only what `go build` reads, so a new package under any
+# directory is picked up by `COPY . .` without editing the Dockerfile.
+*
+!go.mod
+!go.sum
+!**/*.go
