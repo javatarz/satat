@@ -171,8 +171,8 @@ func TestRefusals(t *testing.T) {
 		edit  func(*Request)
 		want  string
 	}{
-		"workflow file":       {files: map[string]string{".github/workflows/ci.yml": "on: push\n"}, want: "does not edit workflows"},
-		"workflow file cased": {files: map[string]string{".GitHub/Workflows/x.yml": "on: push\n"}, want: "does not edit workflows"},
+		"workflow file":       {files: map[string]string{".github/workflows/ci.yml": "on: push\n"}, want: "protected paths"},
+		"workflow file cased": {files: map[string]string{".GitHub/Workflows/x.yml": "on: push\n"}, want: "protected paths"},
 		"secret in the diff":  {files: map[string]string{"config.py": "TOKEN = '" + secret + "'\n"}, want: "gitleaks found"},
 		"head sha mismatch":   {files: map[string]string{"a.txt": "a\n"}, edit: func(r *Request) { r.HeadSHA = strings.Repeat("a", 40) }, want: "must hold exactly one branch ending at"},
 		"bad run id":          {files: map[string]string{"a.txt": "a\n"}, edit: func(r *Request) { r.Run = "../x" }, want: "not a simple identifier"},
@@ -310,6 +310,8 @@ func TestBodyShape(t *testing.T) {
 // pusher's own clone (from a template dir) must not fire on the push.
 func TestPusherRunsNoRepoHooks(t *testing.T) {
 	f := newFixture(t)
+	// The repo opts in to the agent editing hook config, so the hooks reach the pusher's clone.
+	f.rebase(map[string]string{".satat/commands.yaml": "version: 1\ncommands: {setup: s, test: t}\nprotected:\n  allow: [.githooks, .husky, .pre-commit-config.yaml]\n"}, nil)
 	marker := filepath.Join(f.root, "hook-ran")
 	hook := "#!/bin/sh\necho ran >> " + marker + "\nexit 1\n"
 	tpl := filepath.Join(f.root, "tpl")

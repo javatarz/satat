@@ -300,7 +300,11 @@ So the design keeps write access out of reach of the agent
   - the bundle applies to a fresh clone of the base and holds exactly one branch, ending at the
     reported head, which descends from the reported base
   - between 1 and 20 commits
-  - the diff touches nothing under `.github/workflows`
+  - the diff touches no protected path: CI config, lint and format config, hook directories,
+    `.gitmodules` and `.satat/` by default, plus whatever the repo adds under `protected:` in its
+    `.satat/commands.yaml` on the base commit (see CONTRIBUTING.md). Renames, deletions, mode
+    changes, submodules and symlinks into a protected path count, and matching ignores case and
+    path tricks (`./`, `//`). The refusal names the paths
   - `gitleaks` finds no secret in the diff or commit messages. If gitleaks cannot run, nothing
     is published
 - The only branch it creates is `satat/<run>`. It will not overwrite an existing remote branch
