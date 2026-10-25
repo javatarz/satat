@@ -301,12 +301,12 @@ So the design keeps write access out of reach of the agent
     reported head, which descends from the reported base
   - between 1 and 20 commits
   - the base is the commit the worker cloned (not the step's `result.json`) and is on the base
-    branch; every commit in the bundle, and the net diff, touches no protected path: CI config, lint and format config, hook directories,
-    `.gitmodules`, `.gitattributes`, CODEOWNERS and `.satat/` by default, plus whatever the repo adds under `protected:` in its
-    `.satat/commands.yaml` on the base commit (see CONTRIBUTING.md). Renames, deletions, mode
-    changes, submodules and symlinks into a protected path count, and matching ignores case and
-    path tricks (`./`, `//`). The refusal names the paths. A malformed `protected:`
-    section blocks every push until fixed
+    branch. The net diff and every commit in the bundle touch no protected path: CI config, lint
+    and format config, hook directories, `.gitmodules`, `.gitattributes`, CODEOWNERS and `.satat/`
+    by default, plus whatever the repo adds under `protected:` in its `.satat/commands.yaml` on
+    the base commit (see CONTRIBUTING.md). Renames, deletions, mode changes, submodules and
+    symlinks into a protected path count, and matching ignores case and path tricks (`./`, `//`).
+    The refusal names the paths. A malformed `protected:` section blocks every push until fixed
   - `gitleaks` finds no secret in the diff or commit messages. If gitleaks cannot run, nothing
     is published
 - The only branch it creates is `satat/<run>`. It will not overwrite an existing remote branch
