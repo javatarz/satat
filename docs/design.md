@@ -112,7 +112,9 @@ flowchart LR
    with a fixed prompt that fences the issue text as untrusted data. Anything the agent left
    uncommitted is committed as `Satat`. Then it rehearses the push: `HEAD` goes to a throwaway
    local bare repo, so git runs the repo's own `pre-push` hook (pre-commit, husky, a plain
-   script) with no network and no credentials in its environment. If the hook fails, its
+   script) with no credentials in its environment and git limited to local transports. Blocking
+   other egress is the container's job ([ADR 0033](adr/0033-lane-toolchain-and-build-caches.md)),
+   and an agent that sets `core.hooksPath` in `.git/config` skips the hooks (#174). If the hook fails, its
    output goes back to the agent in a follow-up `claude -p`, at most 3 times (a stand-in for the
    retry cap of #19); a hook that never passes fails the run. The pusher runs no hooks. The runner writes `result.json` (status `changes`,
    `no_changes` or `failed`), `transcript.jsonl`, and, if there are commits, `changes.patch` for
