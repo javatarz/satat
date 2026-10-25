@@ -8,7 +8,9 @@
 // pass_env. SATAT_CONFIG overrides the path of satat.yaml. SATAT_INTAKE_REPOS (comma-separated
 // owner/name) turns on the GitHub webhook intake for those repos only. With repos under poller: in
 // satat.yaml the worker also polls them for ready-for-agent issues, which needs Issues: read and
-// Pull requests: read on SATAT_GITHUB_TOKEN.
+// Pull requests: read on SATAT_GITHUB_TOKEN. Before each issue the worker also checks the repo is
+// ready (#175) with SATAT_PUSH_TOKEN, which therefore needs Issues: write (to comment and relabel
+// a not-ready issue) and Metadata: read, besides contents and pull requests.
 package main
 
 import (
@@ -30,6 +32,7 @@ import (
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/poller"
 	"github.com/javatarz/satat/pusher"
+	"github.com/javatarz/satat/readiness"
 	"github.com/javatarz/satat/workflows"
 )
 
@@ -112,14 +115,19 @@ func run() error {
 	if err := limiter.Open(slices.Sorted(maps.Keys(accounts))...); err != nil {
 		return fmt.Errorf("open lanes: %w", err)
 	}
+	pu := &pusher.Pusher{Token: token}
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
 	wf, err := workflows.Register(hc, spec, workflows.Handler{
 		Launcher: l,
-		Pusher:   &pusher.Pusher{Token: token},
+		Pusher:   pu,
 		Cloner:   pipeline.GitCloner{Token: readToken},
 		Issues:   pipeline.GitHubIssues{Token: readToken},
 		Allowed:  allowed,
 		Gate:     limiter,
+		// The readiness check reads with the push token, because it checks what that token can do
+		// and reach (#175). It only GETs; the pusher writes the comment and the label.
+		Ready:    readiness.Checker{GH: readiness.HTTP{Token: token}, Allowed: allowed},
+		Reporter: pu,
 	})
 	if err != nil {
 		return err

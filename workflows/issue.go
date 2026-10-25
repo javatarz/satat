@@ -167,13 +167,18 @@ type Handler struct {
 	Gate Gate
 	// Now is the clock; nil means time.Now.
 	Now func() time.Time
+	// Ready and Reporter run the repo-readiness check after the issue gate (#175). Without
+	// them nothing is launched.
+	Ready    ReadinessChecker
+	Reporter NotReadyReporter
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;
 // the text in the input is ignored, so a forged event cannot choose what the agent is told (#181).
 // An issue that is not ready at run start (closed, a pull request, without ReadyLabel, or in a
 // repo that is no longer allowed) is skipped, which is a normal result; if it cannot be read,
-// nothing is launched and the run fails. A step that fails, or a change that cannot be published,
+// nothing is launched and the run fails. A repo that fails the readiness check (#175) is not
+// started either; repoNotReady says what happens. A step that fails, or a change that cannot be published,
 // is an error so the run shows as failed; a step that changes nothing is a normal result.
 //
 // A step that hit the subscription rate limit closes its account's lane until the reset and
@@ -192,6 +197,9 @@ func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt
 	}
 	if reason != "" {
 		return Output{Run: runID, Status: StatusSkipped, Reason: reason}, h.stopEarlierAttempt(ctx, runID)
+	}
+	if out, stop, err := h.repoNotReady(ctx, runID, in); stop {
+		return out, err
 	}
 	in.Issue.Title, in.Issue.Body = st.Title, st.Body
 	rep, err := pipeline.Run(ctx, pipeline.Options{

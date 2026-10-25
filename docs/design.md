@@ -78,8 +78,8 @@ flowchart LR
    Pull requests: read. **The poller has not been run against a live Hatchet**: the cron
    registration and the run listing are covered by unit tests only. A run older than 30 days (or
    than Hatchet's retention) is forgotten, so a still-labelled issue whose last run failed that long
-   ago is queued again. The poller does not need the repo-readiness check (#175): the run gate
-   above already handles readiness. The worker also re-reads the title and body (step 3), so listing a repo is not what keeps a forged delivery's text out.
+   ago is queued again. The poller does not run the repo-readiness check (#175): the worker does,
+   once per run (step 3). The worker also re-reads the title and body (step 3), so listing a repo is not what keeps a forged delivery's text out.
    A webhook (#112 slice 6) is planned and will push the same event. Because
    they share the event, everything after this step is the same whichever way a run came in.
 2. **Queue.** Hatchet Lite (with Postgres) holds the event. The workflow `satat-issue`
@@ -100,7 +100,8 @@ flowchart LR
    the text in the event, whether from the poller, the webhook or a forged delivery, is ignored
    (#181). This stops a forged delivery from supplying text. It does not stop someone with
    write access editing the body, or an edit after labelling (#175): the step gets whatever the
-   issue says at run start. Either way the task cancels any container an earlier attempt of the
+   issue says at run start. After this gate the worker runs the
+   [repo readiness check](#repo-readiness-check). Either way the task cancels any container an earlier attempt of the
    same run left running, which the reaper then removes.
 4. **One step, one container.** Otherwise the task calls `pipeline.Run`, which launches one step
    named `claude` in the lane the event names (default `claude`) through the
@@ -161,7 +162,8 @@ you would label `ready-for-agent` yourself.
 | Launcher conformance suite | `launcher/conformance/` | tests |
 | `satat.yaml` loader | `config/` | worker |
 | Runner (clone, Claude, commit, bundle) | `runner/`, `cmd/satat-runner`, `images/claude/Dockerfile` | step container |
-| Pusher (checks, push, draft PR) | `pusher/` | worker |
+| Pusher (checks, push, draft PR, not-ready comment and relabel) | `pusher/` | worker |
+| Repo readiness check | `readiness/`, `cmd/satat-check-repo` | worker, your machine |
 | Eval harness | `eval/`, `cmd/satat-eval` | your machine |
 | Hand triggers | `cmd/satat-enqueue`, `cmd/satat-step` | your machine |
 | Platform | `compose.yaml` | Docker |
@@ -316,6 +318,85 @@ known gap: the planned fix is an LLM gateway proxy that issues each step a short
 ([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md), #155). Until
 OpenBao exists the worker reads `github-read-token` from its environment as
 `SATAT_GITHUB_TOKEN`.
+
+## Repo readiness check
+
+Before a run starts, the worker checks the repo meets Satat's prerequisites (#175, replacing the
+"onboarding gate" of [ADR 0025](adr/0025-github-token-broker.md)). It runs after the issue gate
+of step 3, so only an open issue labelled `ready-for-agent` in a listed repo is checked. The code
+is the `readiness/` package: a `GitHub` interface (every method a GET) with the real `HTTP`
+client and a fake in the tests. It reads with the push token, because the check is about what
+that token can do and reach.
+
+**Blocking checks.** All of them run, and all failures are reported together.
+
+| Check | Fails when |
+|---|---|
+| commands | `.satat/commands.yaml` is missing on the base branch, its `version` is not 1, or `commands.setup` or `commands.test` is empty. Other keys are hints and ignored. The check calls `pipeline.ParseCommands` (#188), the parser the worker's clone uses, so the two cannot disagree; the difference is that a bad file here stops the issue with a comment instead of failing the run. |
+| access | the machine user has no write access, has the maintain or admin role, or the repo is archived |
+| merge protection | on the default branch (and the base, when it differs): a ruleset with a pull request rule exists but GitHub's `current_user_can_bypass` for it is not `never`; or there is no such rule and the branch has no protection at all; or protection cannot be read. A branch with classic branch protection and no ruleset passes with a note (see below) |
+| labeller | the issue's most recent `ready-for-agent` labelling was by the machine user itself, or cannot be found |
+| token reach | the push token's user has explicit access to any repo not listed in `SATAT_INTAKE_REPOS` or `poller.repos` |
+
+**Token reach protects the owner's other repos**, such as the private
+`javatarz/satat-automations`. The check lists the repos the token's user can reach
+(`GET /user/repos`, owner, collaborator and organisation member) and fails if any is not listed.
+What a GET can and cannot prove:
+
+- **Classic token** (its responses carry `X-OAuth-Scopes`). A classic `repo` scope covers every
+  repo the user can access, so the user's list is exactly the token's reach and a pass is a real
+  guarantee, but only while the machine user's memberships do not change. Classic scopes cannot be
+  narrowed to repos, so this is the weakest form.
+- **Fine-grained token** (no scopes header). The token is limited to the repos chosen when it was
+  made, and GitHub limits the listing to them, so a pass shows it reaches only the listed repos.
+  Prefer it. A GET still cannot show which permissions the token holds on each (so Contents:
+  write, Pull requests: write and Issues: write are not proven; branch and PR creation are
+  inferred from the user's write role and proven only by the first push).
+- Neither covers public repos, which anyone can read, nor access that is not in the list (an
+  organisation that requires SAML SSO for the token, say). A listing cut off at 1000 repos fails
+  rather than pass.
+- An installation token (the later GitHub App, ADR 0025) is not supported: `GET /user` is refused
+  for it, so the check errors. It would need `/installation/repositories` instead; not built.
+- **Which repos count as listed** is `SATAT_INTAKE_REPOS` plus `poller.repos`, the worker's list.
+  Checking a sandbox repo with `just check-repo` therefore needs it listed there too, and the
+  machine user's other repos must be listed as well or the check fails.
+- An actor GitHub no longer shows (a deleted account) is treated as an unknown labeller and fails.
+- A 403 that is a primary or secondary rate limit (`Retry-After`, or a body that mentions a rate
+  limit) and a 429 are plain errors to retry, never findings, so a limit never relabels an issue.
+
+**Classic branch protection** (as `javatarz/satat` itself uses) is recognised through
+`GET /repos/{r}/branches/{b}`, whose `protected` flag any reader sees. Its settings (a pull request
+required, who may bypass) need admin to read, and the machine user must not be admin, so they are
+not verified: protection that exists passes with a note, and no protection at all fails. Passing
+unverified is a deliberate choice, since blocking would fail every repo not yet on rulesets;
+rulesets stay the preferred form (ADR 0025) and are the only form whose bypass rights are proven.
+
+**What it does not check.** Required approvals and status checks of a ruleset (only that a pull
+request is required and cannot be bypassed), and warn-only items such as secret
+scanning (`just doctor`). The check is not cached; it costs a handful of GETs a run.
+
+**When it fails**, nothing launches. The run finishes with status `not_ready` (a normal result,
+not retried), and the pusher, the only GitHub writer, posts **one** comment listing every failure
+with its fix, adds `needs-info` and removes `ready-for-agent`, so the poller never queues the
+issue again. A human fixes the repo and re-adds `ready-for-agent`, which runs the check again. The
+pusher's token needs Issues: write for this, and Metadata: read.
+
+- **Idempotent.** The comment carries a hidden marker with a key for the failure set. The pusher
+  does nothing if the issue is no longer open and labelled ready, and does not comment again when
+  its own user already left a comment with the same key since the label was last added. A crash
+  between the comment and the relabel is therefore finished by the retry, not repeated. It adds
+  `needs-info` before it removes `ready-for-agent`, so the issue never has neither. A human who
+  re-adds the label without fixing anything gets a new comment, because that is a new request.
+- **If the check cannot run** (GitHub unreachable, a 5xx), the run fails and the issue is not
+  touched, so a hiccup never relabels it.
+- **Not built:** the comment and label write path has been exercised only against a fake GitHub
+  server in tests, never against the real API.
+- **Known gap.** A human labels an issue and its author then edits the body before the agent
+  reads it. Not addressed. A snapshot of the body at label time is the leading option; it is its
+  own card.
+
+`just check-repo owner/name` (optionally `--issue N`, `--base B`) prints the same result without
+touching an issue, and exits 1 when the repo is not ready.
 
 ## Concurrency caps
 
