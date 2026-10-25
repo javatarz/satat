@@ -109,7 +109,11 @@ func buildEgressImage(api *client.Client) (string, error) {
 	}
 	// The classic image store resolves name@<image id>; the containerd store (CI) has the manifest
 	// digest as the id and resolves name:tag@digest. Take the first form this daemon accepts.
-	for _, ref := range []string{"satat-egress-test@" + insp.ID, tag + "@" + insp.ID} {
+	cands := []string{"satat-egress-test@" + insp.ID, tag + "@" + insp.ID}
+	if d := insp.Descriptor; d != nil {
+		cands = append([]string{tag + "@" + d.Digest.String(), "satat-egress-test@" + d.Digest.String()}, cands...)
+	}
+	for _, ref := range cands {
 		if _, err := api.ImageInspect(ctx, ref); err == nil {
 			return ref, nil
 		}
