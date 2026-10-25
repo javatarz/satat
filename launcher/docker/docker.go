@@ -168,6 +168,11 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 		if err := l.putInput(ctx, id, step.Input, lane.User); err != nil {
 			return res, err
 		}
+		if step.Checkout != nil {
+			if err := l.putCheckout(ctx, id, step.Checkout, lane.User); err != nil {
+				return res, err
+			}
+		}
 		if _, err := l.api.ContainerStart(ctx, id, client.ContainerStartOptions{}); err != nil {
 			return res, fmt.Errorf("start %s: %w", req.name, err)
 		}
@@ -330,6 +335,77 @@ func (l *Launcher) putInput(ctx context.Context, id string, input []byte, user s
 		return fmt.Errorf("copy input: %w", err)
 	}
 	return nil
+}
+
+// putCheckout copies the caller's tar of the repo to checkoutDir in the container, as the step's
+// user. The archive is rewritten on the way: ownership is set here, not taken from the caller,
+// and anything but directories, regular files and symlinks is refused. Docker follows symlinks
+// that are already in the destination, so a path under a symlink the archive itself made is
+// refused too: that is how an archive would write outside its root.
+func (l *Launcher) putCheckout(ctx context.Context, id string, src io.Reader, user string) error {
+	uid, _ := strconv.Atoi(uidOf(user))
+	gid, _ := strconv.Atoi(gidOf(user))
+	pr, pw := io.Pipe()
+	go func() { pw.CloseWithError(rewriteCheckout(pw, src, uid, gid)) }()
+	defer pr.Close()
+	if _, err := l.api.CopyToContainer(ctx, id, client.CopyToContainerOptions{DestinationPath: inputDir, Content: pr}); err != nil {
+		return fmt.Errorf("copy checkout: %w", err)
+	}
+	return nil
+}
+
+// rewriteCheckout streams src to dst as a tar rooted at checkoutName/, owned by uid:gid.
+func rewriteCheckout(dst io.Writer, src io.Reader, uid, gid int) error {
+	tr, tw := tar.NewReader(src), tar.NewWriter(dst)
+	links := map[string]bool{}
+	if err := tw.WriteHeader(&tar.Header{Typeflag: tar.TypeDir, Name: checkoutName + "/", Mode: 0o755, Uid: uid, Gid: gid, ModTime: time.Unix(0, 0)}); err != nil {
+		return err
+	}
+	for {
+		h, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			return tw.Close()
+		}
+		if err != nil {
+			return fmt.Errorf("read checkout: %w", err)
+		}
+		rel := path.Clean(h.Name)
+		if rel == "." {
+			continue
+		}
+		if rel == ".." || strings.HasPrefix(rel, "../") || path.IsAbs(rel) {
+			return fmt.Errorf("checkout entry %q leaves the archive", h.Name)
+		}
+		for dir := path.Dir(rel); dir != "."; dir = path.Dir(dir) {
+			if links[dir] {
+				return fmt.Errorf("checkout entry %q is under the symlink %q", h.Name, dir)
+			}
+		}
+		out := &tar.Header{
+			Typeflag: h.Typeflag, Name: checkoutName + "/" + rel, Mode: h.Mode & 0o777,
+			Uid: uid, Gid: gid, ModTime: h.ModTime, Size: h.Size,
+		}
+		switch h.Typeflag {
+		case tar.TypeDir:
+			out.Name += "/"
+			out.Mode |= 0o700
+			out.Size = 0
+		case tar.TypeReg:
+		case tar.TypeSymlink:
+			links[rel] = true
+			out.Linkname, out.Size = h.Linkname, 0
+		default:
+			return fmt.Errorf("checkout entry %q has type %q: only directories, files and symlinks are allowed", h.Name, h.Typeflag)
+		}
+		if err := tw.WriteHeader(out); err != nil {
+			return err
+		}
+		if h.Typeflag == tar.TypeReg {
+			if _, err := io.Copy(tw, tr); err != nil {
+				return fmt.Errorf("read checkout %s: %w", h.Name, err)
+			}
+		}
+	}
 }
 
 func (l *Launcher) logs(ctx context.Context, id string, res *launcher.Result) error {

@@ -153,6 +153,8 @@ type IssueReader interface {
 type Handler struct {
 	Launcher launcher.Launcher
 	Pusher   pipeline.Publisher
+	// Cloner clones the repo before each step starts (pipeline.GitCloner, with the read token).
+	Cloner pipeline.Cloner
 	// Issues gates each run: only an open issue labelled ReadyLabel runs. A nil reader fails
 	// closed: nothing is launched.
 	Issues IssueReader
@@ -193,7 +195,7 @@ func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt
 	}
 	in.Issue.Title, in.Issue.Body = st.Title, st.Body
 	rep, err := pipeline.Run(ctx, pipeline.Options{
-		Launcher: h.Launcher, Pusher: h.Pusher,
+		Launcher: h.Launcher, Pusher: h.Pusher, Cloner: h.Cloner,
 		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue,
 	})
 	out := Output{Run: runID, ExitCode: rep.Launch.ExitCode}

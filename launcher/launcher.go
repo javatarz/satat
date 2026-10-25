@@ -8,6 +8,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"io"
 	"strings"
 	"time"
 )
@@ -69,6 +70,12 @@ type Step struct {
 	// Input is non-secret data placed at /etc/satat/input.json. A step writes its results under
 	// the directory named by $SATAT_OUTPUT.
 	Input []byte
+	// Checkout is a tar archive of the repo, cloned by the caller before the step starts so the
+	// step needs no credential to get it. It is placed at /etc/satat/repo, owned by the step's
+	// user. Entries other than directories, regular files and symlinks, and any path that leaves
+	// the archive's root, fail the launch. Nil places nothing. It is read once, and only when the
+	// workload is created: a re-delivered step that finds its earlier workload does not read it.
+	Checkout io.Reader
 	// CacheScope selects the persistent caches a step gets in a lane with PersistCaches: one
 	// scope per repo, from CacheScope(repo). It is lower-case letters and digits only, and is
 	// required in such a lane and ignored in others.
