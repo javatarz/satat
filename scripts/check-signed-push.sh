@@ -35,10 +35,10 @@ fi
 # Git reports N, not E, for an SSH-signed commit when gpg.ssh.allowedSignersFile is unset, which
 # is most SSH signers. So an N is only unsigned if the commit object has no signature header.
 has_signature() {
-  local obj header
+  local obj header re=$'\n''gpgsig(-sha256)? '
   obj="$(git cat-file commit "$1")"
   header="${obj%%$'\n\n'*}"
-  [[ $'\n'"$header" =~ $'\n'gpgsig(-sha256)?' ' ]]
+  [[ $'\n'"$header" =~ $re ]]
 }
 
 git rev-parse --verify --quiet "$to^{commit}" >/dev/null || { echo "signed commits: unknown ref $to" >&2; exit 1; }

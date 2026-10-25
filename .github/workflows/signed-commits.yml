@@ -28,13 +28,16 @@ jobs:
           set -euo pipefail
           # The PR commits endpoint lists at most 250 commits.
           if [ "$COMMITS" -gt 250 ]; then
-            echo "::error::This PR has $COMMITS commits; GitHub's API lists only 250, so this check cannot see them all. Split the PR."
+            echo "::error::This PR has $COMMITS commits; GitHub's API lists only 250," \
+              "so this check cannot see them all. Split the PR."
             exit 1
           fi
           # verification.reason is e.g. unsigned, unknown_key, bad_email, unverified_email, no_user.
           unverified="$(gh api --paginate "repos/$REPO/pulls/$PR/commits?per_page=100" --jq '
             .[] | select(.commit.verification.verified != true)
-            | "\(.sha[0:7])  \(.commit.verification.reason)  \(.commit.author.name) <\(.commit.author.email)>  \(.commit.message | split("\n")[0])"')"
+            | "\(.sha[0:7])  \(.commit.verification.reason)"
+              + "  \(.commit.author.name) <\(.commit.author.email)>"
+              + "  \(.commit.message | split("\n")[0])"')"
           if [ -z "$unverified" ]; then
             echo "All $COMMITS commit(s) are signed and Verified on GitHub."
             exit 0
