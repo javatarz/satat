@@ -23,7 +23,8 @@ for versions and the domain glossary.
 You need Docker ([colima](https://github.com/abiosoft/colima) or Docker Desktop), [mise](https://mise.jdx.dev/),
 [just](https://just.systems/), [pre-commit](https://pre-commit.com/), [gh](https://cli.github.com/),
 [actionlint](https://github.com/rhysd/actionlint) and the
-[1Password CLI](https://developer.1password.com/docs/cli/) (`op`).
+[1Password CLI](https://developer.1password.com/docs/cli/) (`op`). To contribute, set up
+[commit signing](CONTRIBUTING.md#signed-commits) first: `main` only accepts signed commits.
 
 ```sh
 just setup    # install the pinned tools and git hooks, create .env, then run doctor

@@ -73,9 +73,8 @@ lands on `main` exactly as you wrote it, so:
 
 - Every change goes through a pull request, not straight to `main`. Satat's agents learn from
   the same PRs, tests and checks we write.
-- `main` requires signed commits. Set up
-  [commit signing](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification)
-  before your first PR.
+- `main` requires signed commits that GitHub shows as Verified. Set up
+  [signing](#signed-commits) before your first commit.
 - Humans may merge their own PRs. Tag a reviewer when you want one.
 - Agent PRs need a human's approval before they merge, at least until our evals are strong
   enough to trust them (#124). Satat only opens draft PRs
@@ -103,11 +102,66 @@ We follow these
 
 Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 [pre-commit](https://pre-commit.com/), then run `just setup`. It installs the tools pinned in
-`mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
+`mise.toml`, the git hooks (including the commit message and [signing](#signed-commits)
+checks) and a `.env`, and then runs
 `just doctor`, which names anything else that is missing, such as `actionlint`.
 
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.
+
+## Signed commits
+
+`main` only accepts commits GitHub shows as Verified. PRs are rebase-merged, so every commit in
+your PR has to be signed, not just the last one. Three checks tell you early:
+
+- **On commit**, the pre-commit hook fails if git isn't set up to sign
+  (`scripts/check-signing-config.sh`). `just doctor` warns about the same thing.
+- **On push**, the pre-push hook fails if a commit you're about to push is unsigned or has a bad
+  signature (`scripts/check-signed-push.sh`).
+- **On the PR**, the `signed-commits` check fails for any commit GitHub doesn't show as Verified
+  and says why: `unsigned`, `unknown_key` (the key isn't on your GitHub account) or `bad_email`
+  and similar (the commit email isn't a verified email on your GitHub account).
+
+`just setup` installs the hooks. If you set up before the push hook existed, run it again.
+
+### Set up signing
+
+With an SSH key (the simplest if you already push over SSH):
+
+```sh
+git config --global commit.gpgsign true
+git config --global gpg.format ssh
+git config --global user.signingkey ~/.ssh/id_ed25519.pub
+```
+
+With a GPG key:
+
+```sh
+git config --global commit.gpgsign true
+git config --global user.signingkey <key id>   # gpg --list-secret-keys --keyid-format=long
+```
+
+Then add the key to GitHub under Settings > SSH and GPG keys. An SSH key has to be added as a
+**signing key**, separately from adding it as an authentication key. Make sure `user.email` is a
+verified email on your GitHub account. Check with `git log --show-signature -1` after your next
+commit. GitHub's
+[signing guide](https://docs.github.com/en/authentication/managing-commit-signature-verification)
+covers the details.
+
+### Re-sign commits you already made
+
+Re-signing rewrites the commit ids but keeps your changes and messages. From your branch:
+
+```sh
+git fetch origin
+git rebase --exec 'git commit --amend --no-edit -S' origin/main
+git push --force-with-lease
+```
+
+`git rebase --force-rebase -S origin/main` does the same in one step. Without `--force-rebase`,
+git keeps commits that are already on top of `origin/main` as they are, unsigned. If the check
+says `bad_email`, fix `user.email` and add `--reset-author` to the amend so the commits take the
+new email.
 
 ## Commit messages
 

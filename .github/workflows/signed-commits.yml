@@ -1,0 +1,72 @@
+name: Signed commits
+
+# main requires signed commits, and PRs are rebase-merged, so every commit in a PR lands on main
+# as it is. Fail the PR early, naming each commit GitHub does not show as Verified and why,
+# instead of finding out at merge time. The job name is stable so it can be a required check.
+
+on:
+  pull_request:
+
+# Reading a PR's commits needs only read access, which the token has even on PRs from forks.
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  signed-commits:
+    name: signed-commits
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check every commit is Verified on GitHub
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          COMMITS: ${{ github.event.pull_request.commits }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          # The PR commits endpoint lists at most 250 commits.
+          if [ "$COMMITS" -gt 250 ]; then
+            echo "::error::This PR has $COMMITS commits; GitHub's API lists only 250, so this check cannot see them all. Split the PR."
+            exit 1
+          fi
+          # verification.reason is e.g. unsigned, unknown_key, bad_email, unverified_email, no_user.
+          unverified="$(gh api --paginate "repos/$REPO/pulls/$PR/commits?per_page=100" --jq '
+            .[] | select(.commit.verification.verified != true)
+            | "\(.sha[0:7])  \(.commit.verification.reason)  \(.commit.author.name) <\(.commit.author.email)>  \(.commit.message | split("\n")[0])"')"
+          if [ -z "$unverified" ]; then
+            echo "All $COMMITS commit(s) are signed and Verified on GitHub."
+            exit 0
+          fi
+          count="$(printf '%s\n' "$unverified" | wc -l | tr -d ' ')"
+          echo "::error::$count commit(s) are not Verified on GitHub. main requires signed commits."
+          {
+            echo "## $count commit(s) not Verified"
+            echo
+            echo '```text'
+            echo "sha      reason  author  subject"
+            printf '%s\n' "$unverified"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          cat <<EOF
+
+          Commits GitHub does not show as Verified (sha, reason, author, subject):
+          $unverified
+
+          What the reason means:
+            unsigned          the commit has no signature
+            unknown_key       the signing key is not on the author's GitHub account
+                              (add it as a signing key under Settings > SSH and GPG keys)
+            bad_email / unverified_email / no_user
+                              the commit email is not a verified email of a GitHub account
+                              (fix user.email or verify the address on GitHub)
+
+          To fix: set up signing (run: just doctor, and see "Signed commits" in CONTRIBUTING.md),
+          then re-sign the commits and force-push:
+
+            git fetch origin
+            git rebase --exec 'git commit --amend --no-edit -S' origin/$BASE
+            git push --force-with-lease
+          EOF
+          exit 1
