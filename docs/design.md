@@ -353,7 +353,10 @@ rehearsal (#168) are the backstops.
   caught) and looks inside `sh -c`, `bash -c` and `eval` strings, nested. It does not see a command
   assembled at run time (`g=git; $g commit ...`), `python -c` or `node -e` strings, `xargs` or
   `find -exec`, aliases (`git config alias.x`), base64, or a script the agent writes and then runs.
-  Those pass.
+  Those pass. So do wrappers that take their own arguments (`sudo`, `nice`, `env -i`, `env -u X`),
+  `bash -c $'...'` and `bash -c "$(...)"` (the string is not known until it runs), `git -ccore.hooksPath=x`
+  (no space after `-c`), `core.hooks''Path` split by quotes (the raw `core.hooksPath` match sees the
+  quotes), and `--git-dir x` or `GIT_DIR` pointing at another repository.
 - The hook fails closed on bad input, and the settings set `onFailure: block` so a crash, a timeout
   or a missing script also blocks the call (otherwise only exit 2 does).
 - A Python or Node script can write `.claude/settings.local.json` or any workspace file: the
