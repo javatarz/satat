@@ -4,6 +4,15 @@
 # text, workflow input or agent output can change one (ADR 0027). The Docker launcher refuses
 # to start if a lane breaks the hardening floor (non-root, no capabilities, read-only root,
 # limits set, image pinned by digest).
+
+# The egress proxy (#169): a hostname-allowlist forward proxy per lane that sets `egress`. It runs
+# in its own container on the lane's internal network and on a network with a route out; a step
+# reaches only the hosts the lane allows, by HTTP(S)_PROXY, and has no other route. No TLS
+# interception, no secrets. Build the image and paste the digest-pinned reference it prints:
+#   scripts/build-egress-image.sh
+egress:
+  image: satat-egress@sha256:2999ed9b17024284e86e3ad9b56d394c7e6232edfa1246263ee1846c3bb76102
+
 # Caps the workflow enforces through Hatchet (ADR 0023): the whole platform, each repo, each credential
 # account, and each lane (max_runs under the lane). Over-cap work queues; it is not dropped.
 # Sized for the laptop: the Docker VM has 5.77 GiB, the platform takes about 0.4 GiB, and a Claude step
@@ -55,8 +64,40 @@ lanes:
     # share it. max_runs is this lane's own cap.
     account: claude-subscription
     max_runs: 1
-    # Needs to reach Anthropic and GitHub; open egress until the proxy exists (see smoke).
-    internal: false
+    # No route out except the egress proxy, which lets the step reach only these hosts (a name
+    # matches itself; "*.x" matches every sub-domain of x; a bare entry allows ports 443 and 80).
+    # GitHub is here for dependencies and release downloads: the step holds no GitHub credential,
+    # so it cannot push. The toolchain and registry hosts are ADR 0033's table; mise installs
+    # run through them (#120). Add a host when a stack needs one; a refusal shows in
+    # `docker logs satat-egress-claude`.
+    internal: true
+    egress:
+      allow:
+        # The model.
+        - api.anthropic.com
+        # GitHub: fetching dependencies and the releases mise installs toolchains from.
+        - github.com
+        - api.github.com
+        - release-assets.githubusercontent.com
+        - objects.githubusercontent.com
+        # Release attestation checks (sigstore trust root), made by mise on GitHub releases.
+        - tuf-repo-cdn.sigstore.dev
+        # mise: version lists and the Java catalog; Go and Node downloads.
+        - mise-versions.jdx.dev
+        - mise-java.jdx.dev
+        - dl.google.com
+        - nodejs.org
+        # Package registries.
+        - pypi.org
+        - files.pythonhosted.org
+        - registry.npmjs.org
+        - proxy.golang.org
+        - sum.golang.org
+        - repo.maven.apache.org
+        - repo1.maven.org
+        - plugins.gradle.org
+        - services.gradle.org
+        - downloads.gradle.org
     # Build caches on disk volumes, outside /workspace, so they do not count against `memory`
     # (ADR 0033). The paths match the image's cache env vars; /cache/tmp takes temp files a
     # build needs to execute, which the noexec /tmp tmpfs refuses. Persistent per (lane, repo):
@@ -92,11 +133,9 @@ lanes:
     # Names copied from the worker's environment into the step. A name that is unset fails
     # the launch. Never put a value here.
     pass_env: []
-    # internal: false puts the lane's network on a plain bridge, so the step has open egress.
-    # That is acceptable only because the prototype points at the owner's repos. Set it to true
-    # when the egress proxy exists and the lane's network should have no route out except to
-    # containers attached to it.
-    internal: false
+    # No network: it runs one command and needs none. A lane that needs hosts sets `egress`
+    # (see claude).
+    internal: true
 
   # Runs a command over a set of files with no network. Used by the eval harness to run held-out
   # tests; the step input is {"files": {path: base64}, "command": [...]}.

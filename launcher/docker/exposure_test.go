@@ -28,25 +28,17 @@ import (
 // files, mounts and network. Each finding is a way the step could hold a credential or reach
 // something it must not: the secret store's network, the Docker API, a host outside the egress
 // allowlist. The design (ADR 0025, 0026, 0032) says the answer is "nothing", so a finding is a
-// failure unless it is one of the knownGaps below, which are holes the harness has today. A
-// known gap is reported as a skip with its reason; when the hole is closed the test fails until
+// failure unless it is one of the knownGaps below, which are holes the harness has today. The
+// network holes (a default route, an external host, DNS) closed with the egress proxy (#169): a
+// configured lane is internal, and reaches only its allowlist through the proxy
+// (egress_test.go proves that; here the same probe sees no route at all). A known gap is reported as a skip with its reason; when the hole is closed the test fails until
 // the entry is deleted, so the list cannot go stale.
 
 // knownGaps are findings the harness has today, per lane of satat.yaml, with why and what closes
 // them. Keep this list short and honest: it is the debt, not an exemption.
-const openEgress = "internal: false gives the lane a plain bridge until the hostname-allowlist egress proxy exists (ADR 0026, roadmap/security.md next step 7)"
-
 var knownGaps = map[string][]knownGap{
 	"claude": {
 		{"env CLAUDE_CODE_OAUTH_TOKEN", "the Claude step holds the long-lived token until the LLM gateway proxy issues virtual keys (ADR 0032, #155)", false},
-		{"route: default route (open egress)", openEgress, false},
-		{"reach external-host 1.1.1.1:443", openEgress + ": any host is reachable", true},
-		{"reach dns example.com", openEgress + ": any name resolves", true},
-	},
-	"smoke": {
-		{"route: default route (open egress)", openEgress, false},
-		{"reach external-host 1.1.1.1:443", openEgress + ": any host is reachable", true},
-		{"reach dns example.com", openEgress + ": any name resolves", true},
 	},
 }
 
@@ -238,6 +230,10 @@ func TestConfiguredLanesExposure(t *testing.T) {
 			probe.Name = "expose-" + lane.Name
 			probe.PassEnv, probe.OptionalEnv = lane.PassEnv, lane.OptionalEnv
 			probe.Internal, probe.Runtime = lane.Internal, lane.Runtime
+			if lane.Egress != nil {
+				// The lane's own allowlist, with a proxy image built from this checkout.
+				probe.Egress = &launcher.Egress{Image: egressImage(t, api), Allow: lane.Egress.Allow}
+			}
 			got := h.probe(t, probe)
 			gaps := knownGaps[lane.Name]
 			known := map[string]bool{}
@@ -317,6 +313,9 @@ func (h *harness) probe(t *testing.T, lane launcher.Lane) []string {
 		v, ok := h.env[n]
 		return v, ok
 	}))
+	if lane.Egress != nil {
+		t.Cleanup(func() { removeEgress(t, l, lane.Name) })
+	}
 	res, err := l.Launch(context.Background(), launcher.Step{Run: "expose", Name: "probe", Lane: lane.Name, Checkout: h.checkoutTar()})
 	if err != nil {
 		t.Fatal(err)

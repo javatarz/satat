@@ -8,6 +8,7 @@ import (
 
 	"github.com/moby/moby/client"
 
+	"github.com/javatarz/satat/egress"
 	"github.com/javatarz/satat/launcher"
 	"github.com/javatarz/satat/launcher/docker"
 )
@@ -31,6 +32,68 @@ func TestParsesALane(t *testing.T) {
 		l.CPUs != 1 || l.PidsLimit != 64 || l.Timeout != 90*time.Second || !l.Internal ||
 		len(l.PassEnv) != 1 || l.PassEnv[0] != "FOO" {
 		t.Fatalf("unexpected lane: %+v", l)
+	}
+}
+
+const proxyYAML = "egress:\n  image: satat-egress@sha256:" + zeros + "\n"
+const zeros = "0000000000000000000000000000000000000000000000000000000000000000"
+
+func TestParsesEgress(t *testing.T) {
+	c, err := Parse(strings.NewReader(proxyYAML + lane("    internal: true\n    egress:\n      allow: [github.com, \"*.pythonhosted.org\", \"example.com:8443\"]\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := c.Lanes[0].Egress
+	if e == nil || e.Image != "satat-egress@sha256:"+zeros || strings.Join(e.Allow, " ") != "github.com *.pythonhosted.org example.com:8443" {
+		t.Fatalf("egress = %+v", e)
+	}
+	if _, err := docker.New(nil, c.Lanes); err != nil {
+		t.Fatalf("launcher refused a valid egress lane: %v", err)
+	}
+	// A lane without egress has none, whatever the top level says.
+	c, err = Parse(strings.NewReader(proxyYAML + lane("    internal: true\n")))
+	if err != nil || c.Lanes[0].Egress != nil {
+		t.Fatalf("egress = %+v, err = %v", c.Lanes[0].Egress, err)
+	}
+}
+
+// The claude lane has no route out except the proxy, and its allowlist carries what it needs:
+// the model, GitHub, and the toolchain and registry hosts of ADR 0033's table. Dropping one
+// breaks a package install, so the list is pinned here and checked against the real allowlist
+// matcher.
+func TestRepoClaudeLaneHasNoRouteButTheProxy(t *testing.T) {
+	c, err := Load("../satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, l := range c.Lanes {
+		if !l.Internal {
+			t.Errorf("lane %q has open egress", l.Name)
+		}
+		if l.Name == "claude" {
+			if l.Egress == nil {
+				t.Fatal("the claude lane has no egress proxy")
+			}
+			allow, err := egress.ParseAllowlist(l.Egress.Allow)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, h := range []string{
+				"api.anthropic.com", "github.com", "api.github.com", "release-assets.githubusercontent.com",
+				"mise-versions.jdx.dev", "mise-java.jdx.dev", "dl.google.com", "nodejs.org",
+				"pypi.org", "files.pythonhosted.org", "registry.npmjs.org", "proxy.golang.org", "sum.golang.org",
+				"repo.maven.apache.org", "plugins.gradle.org", "services.gradle.org",
+			} {
+				if !allow.Allows(h, 443) {
+					t.Errorf("the claude lane does not allow %s", h)
+				}
+			}
+			for _, h := range []string{"example.com", "evil.github.com", "1.1.1.1", "169.254.169.254"} {
+				if allow.Allows(h, 443) {
+					t.Errorf("the claude lane allows %s", h)
+				}
+			}
+		}
 	}
 }
 
@@ -98,26 +161,32 @@ func TestLanesComeBackInNameOrder(t *testing.T) {
 
 func TestRefusesBadFiles(t *testing.T) {
 	cases := map[string]struct{ yaml, want string }{
-		"empty":              {"", "empty file"},
-		"no lanes":           {"lanes: {}\n", "no lanes"},
-		"unknown key":        {lane("    memroy: 1GiB\n"), "memroy"},
-		"unknown top key":    {lane("") + "extra: 1\n", "extra"},
-		"missing memory":     {strings.Replace(lane(""), "    memory: 512MiB\n", "", 1), "memory: required"},
-		"bare number size":   {strings.Replace(lane(""), "512MiB", "536870912", 1), "not a size"},
-		"decimal unit":       {strings.Replace(lane(""), "512MiB", "512MB", 1), "not a size"},
-		"zero size":          {strings.Replace(lane(""), "512MiB", "0MiB", 1), "positive"},
-		"overflow size":      {strings.Replace(lane(""), "512MiB", "99999999999999GiB", 1), "too large"},
-		"bad timeout":        {lane("    timeout: soon\n"), "timeout"},
-		"negative timeout":   {lane("    timeout: -5m\n"), "timeout"},
-		"not yaml":           {"lanes: [", "yaml"},
-		"no limits":          {strings.Replace(lane(""), "limits:\n  global: 2\n  per_repo: 1\n  per_account: 1\n", "", 1), "limits"},
-		"zero limit":         {strings.Replace(lane(""), "global: 2", "global: 0", 1), "limits"},
-		"negative lane cap":  {lane("    max_runs: -1\n"), "max_runs"},
-		"duplicate cache":    {lane("    caches:\n      paths:\n        pip: /cache/pip\n        pip: /cache/pip2\n"), "already defined"},
-		"unknown cache key":  {lane("    caches:\n      path:\n        pip: /cache/pip\n"), "path"},
-		"bad cache age":      {"cache_reaper:\n  max_unused: 14d\n" + lane(""), "max_unused"},
-		"zero cache size":    {"cache_reaper:\n  max_size: 0GiB\n" + lane(""), "max_size"},
-		"cache size no unit": {"cache_reaper:\n  max_size: 20\n" + lane(""), "max_size"},
+		"empty":                  {"", "empty file"},
+		"no lanes":               {"lanes: {}\n", "no lanes"},
+		"unknown key":            {lane("    memroy: 1GiB\n"), "memroy"},
+		"unknown top key":        {lane("") + "extra: 1\n", "extra"},
+		"missing memory":         {strings.Replace(lane(""), "    memory: 512MiB\n", "", 1), "memory: required"},
+		"bare number size":       {strings.Replace(lane(""), "512MiB", "536870912", 1), "not a size"},
+		"decimal unit":           {strings.Replace(lane(""), "512MiB", "512MB", 1), "not a size"},
+		"zero size":              {strings.Replace(lane(""), "512MiB", "0MiB", 1), "positive"},
+		"overflow size":          {strings.Replace(lane(""), "512MiB", "99999999999999GiB", 1), "too large"},
+		"bad timeout":            {lane("    timeout: soon\n"), "timeout"},
+		"negative timeout":       {lane("    timeout: -5m\n"), "timeout"},
+		"not yaml":               {"lanes: [", "yaml"},
+		"no limits":              {strings.Replace(lane(""), "limits:\n  global: 2\n  per_repo: 1\n  per_account: 1\n", "", 1), "limits"},
+		"zero limit":             {strings.Replace(lane(""), "global: 2", "global: 0", 1), "limits"},
+		"negative lane cap":      {lane("    max_runs: -1\n"), "max_runs"},
+		"duplicate cache":        {lane("    caches:\n      paths:\n        pip: /cache/pip\n        pip: /cache/pip2\n"), "already defined"},
+		"unknown cache key":      {lane("    caches:\n      path:\n        pip: /cache/pip\n"), "path"},
+		"bad cache age":          {"cache_reaper:\n  max_unused: 14d\n" + lane(""), "max_unused"},
+		"zero cache size":        {"cache_reaper:\n  max_size: 0GiB\n" + lane(""), "max_size"},
+		"cache size no unit":     {"cache_reaper:\n  max_size: 20\n" + lane(""), "max_size"},
+		"egress without image":   {lane("    internal: true\n    egress:\n      allow: [github.com]\n"), "egress.image"},
+		"egress on an open lane": {proxyYAML + lane("    egress:\n      allow: [github.com]\n"), "internal: true"},
+		"empty allowlist":        {proxyYAML + lane("    internal: true\n    egress:\n      allow: []\n"), "allow is empty"},
+		"ip in allowlist":        {proxyYAML + lane("    internal: true\n    egress:\n      allow: [1.1.1.1]\n"), "not a host name"},
+		"url in allowlist":       {proxyYAML + lane("    internal: true\n    egress:\n      allow: [\"https://github.com\"]\n"), "not a port"},
+		"unknown egress key":     {proxyYAML + lane("    internal: true\n    egress:\n      alow: [github.com]\n"), "alow"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

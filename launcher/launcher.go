@@ -45,11 +45,25 @@ type Lane struct {
 
 	// Internal puts the lane on a network with no route out except to containers attached to it.
 	Internal bool
+	// Egress, when set, gives an Internal lane a way out: a hostname-allowlist proxy attached to
+	// the lane's network and to one with a route out (#169). The step gets HTTP_PROXY and
+	// HTTPS_PROXY pointing at it and has no other route. Nil means no way out at all.
+	Egress *Egress
 	// Runtime is "" (engine default) or "runsc" (gVisor) where installed.
 	Runtime string
 
 	// Timeout bounds one step. Defaults to 30 minutes.
 	Timeout time.Duration
+}
+
+// Egress is a lane's proxy: what it runs and the hosts it lets a step reach. It holds no secret
+// and does no TLS interception (ADR 0025); it decides on the host name and port alone.
+type Egress struct {
+	// Image is the proxy image, pinned by digest (images/egress, scripts/build-egress-image.sh).
+	Image string
+	// Allow lists the hosts a step may reach: "host", "*.suffix" for every sub-domain, each with
+	// an optional ":port" (default 443 and 80). Never an address.
+	Allow []string
 }
 
 // Cache is one cache directory. It is a name and a path, not a backend object: Docker backs it
