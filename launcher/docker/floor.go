@@ -19,9 +19,11 @@ const (
 	labelStep    = "satat.step"
 	labelLane    = "satat.lane"
 	labelKind    = "satat.kind"
+	labelCache   = "satat.cache"
 
 	// Volume kinds. The step reaper removes only input volumes; caches have their own reaper.
 	kindInput = "input"
+	kindCache = "cache"
 
 	// resourcePrefix names every container, volume and network the launcher creates.
 	resourcePrefix = "satat-"
@@ -248,13 +250,17 @@ func ValidateVolume(o client.VolumeCreateOptions) error {
 	if o.Labels[labelManaged] != "true" {
 		bad("missing label %s=true", labelManaged)
 	}
-	if !knownKind(o.Labels[labelKind]) {
-		bad("volume kind %q is not known", o.Labels[labelKind])
+	switch k := o.Labels[labelKind]; k {
+	case kindInput:
+	case kindCache:
+		if o.Labels[labelLane] == "" || o.Labels[labelCache] == "" {
+			bad("a cache volume needs its lane and cache labels")
+		}
+	default:
+		bad("volume kind %q is not known", k)
 	}
 	return errors.Join(errs...)
 }
-
-func knownKind(k string) bool { return k == kindInput }
 
 // isCachePath reports whether p is a clean absolute path strictly under cacheRoot.
 func isCachePath(p string) bool {

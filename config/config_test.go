@@ -34,6 +34,21 @@ func TestParsesALane(t *testing.T) {
 	}
 }
 
+func TestParsesCaches(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("    caches:\n      paths:\n        pip: /cache/pip\n        go-mod: /cache/go-mod\n")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []launcher.Cache{{Name: "go-mod", Path: "/cache/go-mod"}, {Name: "pip", Path: "/cache/pip"}}
+	got := c.Lanes[0].Caches
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+		t.Fatalf("caches = %v, want %v in name order", got, want)
+	}
+	if _, err := docker.New(nil, c.Lanes); err != nil {
+		t.Fatalf("launcher refused a valid cache list: %v", err)
+	}
+}
+
 func TestLimitsAndLaneCaps(t *testing.T) {
 	c, err := Parse(strings.NewReader(lane("    account: shared\n    max_runs: 3\n")))
 	if err != nil {
@@ -81,6 +96,8 @@ func TestRefusesBadFiles(t *testing.T) {
 		"no limits":         {strings.Replace(lane(""), "limits:\n  global: 2\n  per_repo: 1\n  per_account: 1\n", "", 1), "limits"},
 		"zero limit":        {strings.Replace(lane(""), "global: 2", "global: 0", 1), "limits"},
 		"negative lane cap": {lane("    max_runs: -1\n"), "max_runs"},
+		"duplicate cache":   {lane("    caches:\n      paths:\n        pip: /cache/pip\n        pip: /cache/pip2\n"), "already defined"},
+		"unknown cache key": {lane("    caches:\n      path:\n        pip: /cache/pip\n"), "path"},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -105,6 +122,10 @@ func TestLauncherRefusesLanesThatBreakTheFloor(t *testing.T) {
 		"bad env name":       lane("    pass_env: [\"A B\"]\n"),
 		"workspace ≥ memory": strings.Replace(lane(""), "workspace: 64MiB", "workspace: 600MiB", 1),
 		"unpinned image":     strings.Replace(lane(""), digest, "busybox:latest", 1),
+		"relative cache":     lane("    caches:\n      paths:\n        pip: cache/pip\n"),
+		"cache outside root": lane("    caches:\n      paths:\n        etc: /etc\n"),
+		"same cache path":    lane("    caches:\n      paths:\n        a: /cache/x\n        b: /cache/x\n"),
+		"bad cache name":     lane("    caches:\n      paths:\n        Pip_Cache: /cache/pip\n"),
 	}
 	for name, y := range cases {
 		t.Run(name, func(t *testing.T) {

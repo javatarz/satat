@@ -199,6 +199,17 @@ func Run(t *testing.T, c Config) {
 		}
 	})
 
+	t.Run("caches are disk mounts at their paths", func(t *testing.T) {
+		script := `for p in /cache/a /cache/b; do grep " $p " /proc/mounts | awk '{print $2, ($3 == "tmpfs" ? "memory" : "disk")}'; done`
+		l := c.New(t, []launcher.Lane{c.lane("caches", script, func(l *launcher.Lane) {
+			l.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "b", Path: "/cache/b"}}
+		})})
+		res := launch(t, l, launcher.Step{Run: "conf12", Name: "caches", Lane: "caches"})
+		if got := string(res.Stdout); got != "/cache/a disk\n/cache/b disk\n" {
+			t.Errorf("cache mounts = %q, want both paths disk-backed (stderr %q)", got, res.Stderr)
+		}
+	})
+
 	t.Run("internal lane has no route out", func(t *testing.T) {
 		l := c.New(t, []launcher.Lane{c.lane("internal", `wget -T 4 -q -O /dev/null http://1.1.1.1/ && echo reached || echo blocked`, func(l *launcher.Lane) { l.Internal = true })})
 		res := launch(t, l, launcher.Step{Run: "conf11", Name: "internal", Lane: "internal"})

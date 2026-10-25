@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -89,9 +90,13 @@ func names(t *testing.T, api *client.Client) []string {
 
 func TestContainerAndVolumeAreRemovedAfterEveryOutcome(t *testing.T) {
 	api := dockerAPI(t)
+	withCaches := func(x launcher.Lane) launcher.Lane {
+		x.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "b", Path: "/cache/b"}}
+		return x
+	}
 	l := newLauncher(t, api, []launcher.Lane{
-		shLane("ok", "true"), shLane("fail", "exit 9"),
-		func() launcher.Lane { x := shLane("slow", "sleep 60"); x.Timeout = time.Second; return x }(),
+		withCaches(shLane("ok", "true")), withCaches(shLane("fail", "exit 9")),
+		func() launcher.Lane { x := withCaches(shLane("slow", "sleep 60")); x.Timeout = time.Second; return x }(),
 	})
 	for _, lane := range []string{"ok", "fail", "slow"} {
 		if _, err := l.Launch(context.Background(), launcher.Step{Run: "clean", Name: lane, Lane: lane}); err != nil {
@@ -179,6 +184,54 @@ func TestRefusesToAdoptAContainerThatIsNotOurs(t *testing.T) {
 	}
 	if _, ierr := api.ContainerInspect(ctx, created.ID, client.ContainerInspectOptions{}); ierr != nil {
 		t.Errorf("the foreign container was removed: %v", ierr)
+	}
+}
+
+// A cache is a disk-backed mount of its own at its declared path, labelled as a cache.
+func TestCachesAreDiskVolumesAtTheirPaths(t *testing.T) {
+	api := dockerAPI(t)
+	lane := shLane("cache", `grep -E ' /cache/(a|b) ' /proc/mounts; sleep 2`)
+	lane.Caches = []launcher.Cache{{Name: "a", Path: "/cache/a"}, {Name: "b", Path: "/cache/b"}}
+	l := newLauncher(t, api, []launcher.Lane{lane})
+	ctx := context.Background()
+
+	type out struct {
+		res launcher.Result
+		err error
+	}
+	done := make(chan out, 1)
+	go func() {
+		res, err := l.Launch(ctx, launcher.Step{Run: "ct", Name: "s", Lane: "cache"})
+		done <- out{res, err}
+	}()
+	var labels map[string]string
+	for deadline := time.Now().Add(10 * time.Second); time.Now().Before(deadline) && labels == nil; time.Sleep(100 * time.Millisecond) {
+		if v, err := api.VolumeInspect(ctx, "satat-ct-s-cache-a", client.VolumeInspectOptions{}); err == nil {
+			labels = v.Volume.Labels
+		}
+	}
+	o := <-done
+	if o.err != nil {
+		t.Fatal(o.err)
+	}
+	if labels[labelKind] != kindCache || labels[labelLane] != "cache" || labels[labelManaged] != "true" {
+		t.Errorf("cache volume labels = %v", labels)
+	}
+	lines := strings.Split(strings.TrimSpace(string(o.res.Stdout)), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("want two cache mounts, got %q (stderr %q)", o.res.Stdout, o.res.Stderr)
+	}
+	for _, ln := range lines {
+		if f := strings.Fields(ln); len(f) < 3 || f[2] == "tmpfs" {
+			t.Errorf("cache mount is not disk-backed: %q", ln)
+		}
+	}
+	vols, err := api.VolumeList(ctx, client.VolumeListOptions{Filters: make(client.Filters).Add("label", labelKind+"="+kindCache)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(vols.Items) != 0 {
+		t.Errorf("per-step cache volumes left behind: %v", vols.Items)
 	}
 }
 

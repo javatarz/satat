@@ -1,6 +1,7 @@
 package docker
 
 import (
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -20,7 +21,40 @@ const (
 	tmpBytes       = 64 << 20
 )
 
-var idRE = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
+var (
+	idRE        = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,62}$`)
+	cacheNameRE = regexp.MustCompile(`^[a-z0-9]+(-[a-z0-9]+)*$`)
+)
+
+const maxCaches = 16
+
+// checkCaches refuses cache names that are not identifiers and paths that are not clean, under
+// /cache, distinct and not nested in one another.
+func checkCaches(l launcher.Lane) error {
+	if len(l.Caches) > maxCaches {
+		return fmt.Errorf("at most %d caches", maxCaches)
+	}
+	var errs []error
+	names := map[string]bool{}
+	for i, c := range l.Caches {
+		if !cacheNameRE.MatchString(c.Name) || len(c.Name) > 32 {
+			errs = append(errs, fmt.Errorf("cache name %q is not an identifier", c.Name))
+		}
+		if names[c.Name] {
+			errs = append(errs, fmt.Errorf("cache %q is declared twice", c.Name))
+		}
+		names[c.Name] = true
+		if !isCachePath(c.Path) {
+			errs = append(errs, fmt.Errorf("cache %q: path %q must be a clean absolute path under %s", c.Name, c.Path, cacheRoot))
+		}
+		for _, o := range l.Caches[:i] {
+			if o.Path == c.Path || strings.HasPrefix(c.Path, o.Path+"/") || strings.HasPrefix(o.Path, c.Path+"/") {
+				errs = append(errs, fmt.Errorf("caches %q and %q overlap at %s", o.Name, c.Name, c.Path))
+			}
+		}
+	}
+	return errors.Join(errs...)
+}
 
 // normalizeLane fills defaults and rejects a lane that could not pass the floor, so a bad lane
 // fails when the launcher is built and not on the first step.
@@ -44,6 +78,9 @@ func normalizeLane(l launcher.Lane) (launcher.Lane, error) {
 		if !envNameRE.MatchString(n) {
 			return l, fmt.Errorf("lane %q: env name %q is not allowed", l.Name, n)
 		}
+	}
+	if err := checkCaches(l); err != nil {
+		return l, fmt.Errorf("lane %q: %w", l.Name, err)
 	}
 	// The floor is checked on a sample request so a lane that can never launch fails now.
 	probe, err := buildRequest(l, launcher.Step{Run: "probe", Name: "probe", Lane: l.Name}, func(string) (string, bool) { return "x", true })
@@ -76,7 +113,35 @@ func inputVolumeOptions(s launcher.Step) client.VolumeCreateOptions {
 
 // cachePaths are the paths the lane declares for caches: the only places, besides /etc/satat and
 // /workspace, where the floor lets a volume be mounted.
-func cachePaths(l launcher.Lane) []string { return nil }
+func cachePaths(l launcher.Lane) []string {
+	var out []string
+	for _, c := range l.Caches {
+		out = append(out, c.Path)
+	}
+	return out
+}
+
+// cacheVolume is the volume behind one of a lane's caches for one step.
+type cacheVolume struct {
+	opts client.VolumeCreateOptions
+	path string
+}
+
+// cacheVolumes names the step's cache volumes. Each is the step's own and goes with it. The
+// builder mounts them and Launch creates them from this one list, so the two cannot disagree.
+func cacheVolumes(l launcher.Lane, s launcher.Step) []cacheVolume {
+	var out []cacheVolume
+	for _, c := range l.Caches {
+		out = append(out, cacheVolume{path: c.Path, opts: client.VolumeCreateOptions{
+			Name: containerName(s.Run, s.Name) + "-cache-" + c.Name,
+			Labels: map[string]string{
+				labelManaged: "true", labelKind: kindCache, labelLane: l.Name,
+				labelRun: s.Run, labelStep: s.Name, labelCache: c.Name,
+			},
+		}})
+	}
+	return out
+}
 
 // buildRequest turns a lane and a step identity into a create request. Nothing from Step.Input
 // or any other runtime data reaches a flag here: only the lane and the step's identifiers do.
@@ -148,6 +213,11 @@ func buildRequest(l launcher.Lane, s launcher.Step, lookupEnv func(string) (stri
 			NanoCPUs:   int64(l.CPUs * 1e9),
 			PidsLimit:  &pids,
 		},
+	}
+	// Cache volumes are created without NoCopy: Docker then copies the image's directory at the
+	// path, and with it the step user's ownership, into the new empty volume.
+	for _, cv := range cacheVolumes(l, s) {
+		host.Mounts = append(host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: cv.opts.Name, Target: cv.path})
 	}
 	nets := &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}}
 	return request{name: containerName(s.Run, s.Name), config: cfg, host: host, networking: nets}, nil
