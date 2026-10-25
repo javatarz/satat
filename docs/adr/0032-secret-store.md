@@ -4,7 +4,8 @@
 
 Accepted (2026-10-25). Research in [secret-store.md](../research/v2/secret-store.md), #143.
 The Kubernetes half is checked on k3d in #153.
-Settles the "where secrets live" question left open in `AGENTS.md`, for Compose now and
+Amended 2026-10-25: one store on every environment, and the Claude token held by an LLM gateway
+proxy (see Decision). Settles the "where secrets live" question left open in `AGENTS.md`, for Compose now and
 Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #129 and #130)
 and ADR 0027's "the pusher runs inside the worker". Leaves ADR 0011 (never in git, Terraform
 state or cloud-init) and ADR 0025 (broker, proxy, pusher) unchanged.
@@ -30,6 +31,9 @@ operator-only policy, and unsealing itself after a restart.
 - **One identity and one policy per component** (pusher, token broker, egress proxy, LiteLLM,
   worker). A policy grants `read` on named entries and nothing else. The coding agent has no
   identity. Git name and email are step inputs, not secrets.
+- **One store everywhere.** Compose, k3d and cloud Kubernetes all run OpenBao with the same
+  policies and entry names. Only the login method differs. No second store (Kubernetes Secrets,
+  a cloud secret manager) holds loaded secrets in any environment.
 - **Login:** AppRole on Compose, with the credential written once into a volume mounted only
   into that service and bound to its fixed address on an internal `secrets` network.
   Kubernetes auth on k3d and Kubernetes, bound to the service account. Policies are the same on
@@ -47,6 +51,12 @@ operator-only policy, and unsealing itself after a restart.
 - **Initialise once:** `just secrets-init` (seal key, init, mounts, policies, roles,
   credentials) and `just secrets-load` (`NAME=value` on stdin, validated, values never
   printed). Any source can feed the load; 1Password is optional and never called by Satat.
+- **The Claude token is held by an LLM gateway proxy, not the lane.** The proxy reads
+  `claude-oauth-token` under its own identity. Each step gets a short-lived, budget-capped,
+  per-lane virtual key (about the step timeout, deleted at step end) and points
+  `ANTHROPIC_BASE_URL` at the proxy. The lane holds that key, never the long-lived token. LiteLLM
+  is the first candidate; any proxy that meets the same properties may replace it. The same on
+  Compose and Kubernetes.
 - **The pusher becomes its own service** with its own identity, holding the push token and
   signing key. The worker keeps the Docker API and loses push access.
 - **`doctor` checks** that OpenBao is unsealed and every required entry name exists.
@@ -56,9 +66,10 @@ operator-only policy, and unsealing itself after a restart.
 - `scripts/compose-up.sh` and `check_op` go; starting Satat no longer needs `op`.
 - One more service (about 54 MiB idle) and one more to upgrade. The OpenBao Go client goes into
   the pusher, broker, proxy and worker. LiteLLM likely needs OpenBao Agent beside it.
-- Until the injecting proxy exists, the worker's policy includes the Claude token and the
-  launcher passes it into the Claude step, as today. This is the one known break of "use,
-  never see". When the proxy lands, the grant moves to the proxy's policy.
+- Until the gateway proxy is proven (spike below), the worker's policy includes the Claude token
+  and the launcher passes it into the Claude step on Compose, as today: the one known break of
+  "use, never see". On Kubernetes no interim delivery path is built; Claude steps there wait for
+  the proxy. When it lands, the grant moves to the proxy's policy and the worker loses it.
 - On Compose the worker holds the Docker API, so it can read any volume, the credentials
   included. That is root on the Docker VM and is accepted under ADR 0027. On Kubernetes the
   worker has no such reach.
@@ -68,13 +79,16 @@ operator-only policy, and unsealing itself after a restart.
   initialising and loading again. `doctor` catches an empty or sealed store.
 - OpenBao 2.6+ needs a token to generate a new root token, so the recovery key alone does not
   recover access. That is why the operator login exists.
-- External Secrets Operator with AWS Secrets Manager stays open as a later backend for several
-  clusters sharing one source. Kubernetes Secrets, Sealed Secrets and SOPS are not used as the
-  store.
+- Kubernetes Secrets, Sealed Secrets, SOPS and External Secrets Operator are not used as the
+  store or to deliver values to lanes. Another system may feed `secrets-load` as a source.
 
 ## Not verified
 
-- k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao (#153).
+- k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao (#153). If it
+  fails in a way that cannot be fixed, the store choice is reopened for all environments
+  together, not split.
+- The Claude CLI through the gateway proxy on the OAuth token, with the token never in the lane
+  and OpenBao Agent feeding the proxy (card GATEWAY_SPIKE).
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
 - A colima restart; OpenBao Agent for LiteLLM; Raft snapshot and restore; anything on EKS.
 
