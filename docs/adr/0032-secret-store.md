@@ -2,7 +2,8 @@
 
 ## Status
 
-Proposed (2026-10-25). Research in [secret-store.md](../research/v2/secret-store.md), #143.
+Accepted (2026-10-25). Research in [secret-store.md](../research/v2/secret-store.md), #143.
+The Kubernetes half is checked on k3d in #153.
 Settles the "where secrets live" question left open in `AGENTS.md`, for Compose now and
 Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #129 and #130)
 and ADR 0027's "the pusher runs inside the worker". Leaves ADR 0011 (never in git, Terraform
@@ -73,7 +74,7 @@ operator-only policy, and unsealing itself after a restart.
 
 ## Not verified
 
-- k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao. Needs a k3d card.
+- k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao (#153).
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
 - A colima restart; OpenBao Agent for LiteLLM; Raft snapshot and restore; anything on EKS.
 

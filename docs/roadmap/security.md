@@ -1,7 +1,7 @@
 # Security
 
-**Status:** Shaping (secret store) · Backlog (parts) · **Related:** [ADR 0025](../adr/0025-github-token-broker.md),
-[ADR 0032](../adr/0032-secret-store.md) (Proposed), #97, #143 · **Source:** calls on 2026-10-16
+**Status:** Decided (secret store) · Backlog (parts) · **Related:** [ADR 0025](../adr/0025-github-token-broker.md),
+[ADR 0032](../adr/0032-secret-store.md), #97, #143, #153 · **Source:** calls on 2026-10-16
 and 2026-10-25
 
 - Agents never hold tokens (ADR 0025 token broker). Guard against prompt injection in issue text.
@@ -30,10 +30,10 @@ Direction from the 2026-10-25 conversation (research in
 - **Threat model: the agent.** The host and its Docker VM are trusted for now. Revisit when the
   host is not the owner's laptop (then a KMS or hardware seal).
 
-Proposed shape: OpenBao with one identity per component (ADR 0032). Spiked on Compose.
+Decided: OpenBao with one identity per component (ADR 0032). Spiked on Compose.
 Next, in order:
 
-1. k3d spike: the same policies with Kubernetes auth, and step pods unable to reach the store.
+1. k3d spike (#153): the same policies with Kubernetes auth, and step pods unable to reach the store.
 2. The pusher moves out of the worker into its own service, with its own identity.
 3. The worker's builder refuses the store's network and credential volumes for a lane, and a CI
    check confirms it.
