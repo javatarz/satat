@@ -49,8 +49,11 @@ tmpfs mounts are `noexec`. A toolchain therefore downloads once per repo, not on
 - **Versions** come from the repo's `.mise.toml` or `.tool-versions`. The lane enables mise's
   idiomatic files for go (`go.mod`, `.go-version`), node (`.nvmrc`, `.node-version`), python
   (`.python-version`) and java (`.java-version`), which mise reads only when enabled. A lane-level
-  `/etc/mise/config.toml` in the image sets defaults for repos that pin nothing, and sets
-  `GOTOOLCHAIN=local` so Go does not fetch a second toolchain behind mise's back.
+  `/usr/share/satat/mise-defaults.toml` in the image holds defaults for repos that pin nothing.
+  The runner applies it (`MISE_GLOBAL_CONFIG_FILE`) only when `mise ls --current` finds no pinned
+  tool. It is deliberately not `/etc/mise/config.toml`, which mise reads on every run and would
+  install all four languages for a repo that pins one. The image also sets `GOTOOLCHAIN=local` so Go
+  does not fetch a second toolchain behind mise's back.
 - **The runner, not the agent, runs `mise install`** after the clone and before `claude`, then
   puts the installed tools on `claude`'s `PATH`. A failed install fails the step visibly instead of
   becoming "could not run tests" in a PR. mise runs with the same stripped environment as
@@ -119,6 +122,14 @@ outside the run, stays valid as an escape hatch for stacks mise cannot install.
   review of the PR stays the control.
 - The floor gains mount and volume-create checks, each with a refusal test, and the reaper gains a
   cache policy. Local volumes have no size cap, so that policy is the only brake on disk use.
+- The cache reaper reads volume sizes and use counts from `GET /system/df`, so the Docker socket
+  proxy enables `SYSTEM`. The owner approved this after checking that the daemon exposes no write
+  route under `/system`; ADR 0027 records the evidence and the tripwire test that guards it.
+- The reaper and its last-use marker volumes are a Docker-backend detail. They do not carry to
+  Kubernetes, where a namespace ResourceQuota and PVC annotations would cover size, count and
+  last use. The `caches` lane config, `persist` and the hashed repo scope are backend-neutral.
+  A shared in-cluster mirror per ecosystem may suit cluster scale better than per-repo volumes;
+  that is a design opinion, not verified.
 
 ## Not verified
 
