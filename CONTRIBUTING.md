@@ -130,8 +130,8 @@ The lanes in `satat.yaml` run images built locally, and the pinned references in
 author's builds. On a new machine, or after changing `egress/` or `images/egress`, run
 `scripts/build-egress-image.sh` (the egress proxy, #169) and `scripts/build-claude-image.sh`, and
 paste each printed digest into `satat.yaml` (`egress.image` and the claude lane's `image`). A
-missing egress image fails the launch with that instruction. The worker image copies `egress/`, so
-rebuild it with the compose project after the same change.
+missing egress image fails the launch with that instruction. The worker image compiles `config`, which
+imports `egress/`, so rebuild it with the compose project after the same change.
 
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.
