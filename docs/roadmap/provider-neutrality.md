@@ -22,7 +22,9 @@
 - Secrets map to a credential account or a person, not to an environment variable. ADR 0022
   (NN12) decided that a repo maps to an account and the launcher will mount that account's
   secret. On `main` today, accounts are only concurrency cap keys.
-- #129 proposes `deploy.secrets`, a flat map from variable name to source. That is fine for one
-  account. It should grow into secrets grouped per account or person.
-- The shared `satat.yaml` should not name one owner's 1Password vault. Each install points at
-  its own secret source, so a fork works without edits (#94).
+- Secrets live in one store per install, loaded once from any source
+  ([security](security.md#secrets-use-never-see), ADR 0032 Proposed). `satat.yaml` names which
+  secrets exist, never where their values come from. That replaces the `deploy.secrets` source
+  map proposed on #129. Grouping secrets per account or person still applies, as store entries.
+- The shared `satat.yaml` should not name one owner's 1Password vault. Each install loads its
+  own store, so a fork works without edits (#94).
