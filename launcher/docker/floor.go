@@ -3,12 +3,14 @@ package docker
 import (
 	"errors"
 	"fmt"
+	"path"
 	"regexp"
 	"strings"
 
 	"github.com/moby/moby/api/types/container"
 	"github.com/moby/moby/api/types/mount"
 	"github.com/moby/moby/api/types/network"
+	"github.com/moby/moby/client"
 )
 
 const (
@@ -16,6 +18,10 @@ const (
 	labelRun     = "satat.run"
 	labelStep    = "satat.step"
 	labelLane    = "satat.lane"
+	labelKind    = "satat.kind"
+
+	// Volume kinds. The step reaper removes only input volumes; caches have their own reaper.
+	kindInput = "input"
 
 	// resourcePrefix names every container, volume and network the launcher creates.
 	resourcePrefix = "satat-"
@@ -26,18 +32,23 @@ const (
 	outputDir  = inputDir + "/" + outputName
 	workspace  = "/workspace"
 	tmpDir     = "/tmp"
+	// cacheRoot holds every cache path a lane may declare.
+	cacheRoot = "/cache"
 )
 
 var (
 	digestRE  = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 	uidgidRE  = regexp.MustCompile(`^([1-9][0-9]*):([1-9][0-9]*)$`)
 	envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
+	volumeRE  = regexp.MustCompile(`^satat-[a-zA-Z0-9][a-zA-Z0-9_.-]{0,190}$`)
 )
 
 // ValidateRequest is the hardening floor of ADR 0026 and the access gate of ADR 0027. It looks at
 // a finished create request, not at the lane that produced it, so a bug in the builder cannot
-// widen what a step gets. It returns every violation, not only the first.
-func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *network.NetworkingConfig) error {
+// widen what a step gets. The one thing it takes from the lane is cachePaths, the cache paths the
+// lane declares in configuration: a volume may be mounted only there, at /etc/satat or at
+// /workspace. It returns every violation, not only the first.
+func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *network.NetworkingConfig, cachePaths []string) error {
 	var errs []error
 	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 
@@ -134,15 +145,31 @@ func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *ne
 	if len(host.VolumesFrom) != 0 || len(host.Links) != 0 {
 		bad("volumes-from and links are not allowed")
 	}
+	for _, p := range cachePaths {
+		if !isCachePath(p) {
+			bad("cache path %q is not a clean path under %s", p, cacheRoot)
+		}
+	}
 	for _, m := range host.Mounts {
 		switch m.Type {
 		case mount.TypeVolume:
 			if !strings.HasPrefix(m.Source, resourcePrefix) {
 				bad("volume %q is not a Satat volume", m.Source)
 			}
+			if m.Target != inputDir && m.Target != workspace && !contains(cachePaths, m.Target) {
+				bad("volume at %q is not allowed: only %s, %s and declared cache paths", m.Target, inputDir, workspace)
+			}
+			// A local-driver volume with o=bind,device=/x is a host bind mount in disguise, and a
+			// subpath reaches into a directory of the volume the launcher did not choose.
+			if o := m.VolumeOptions; o != nil && (o.DriverConfig != nil || o.Subpath != "") {
+				bad("volume at %q must not set a driver config or a subpath", m.Target)
+			}
 		case mount.TypeTmpfs:
 			if m.Source != "" {
 				bad("tmpfs mount must not have a source")
+			}
+			if m.Target != tmpDir && m.Target != workspace {
+				bad("tmpfs at %q is not allowed", m.Target)
 			}
 		default:
 			bad("mount type %q at %q is not allowed", m.Type, m.Target)
@@ -198,6 +225,40 @@ func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *ne
 	}
 
 	return errors.Join(errs...)
+}
+
+// ValidateVolume is the floor for creating a volume. A step can only mount a volume the launcher
+// created, so this is where a volume's driver is pinned: the default local driver with no
+// options, because driver options are how a named volume becomes a bind mount of a host path.
+func ValidateVolume(o client.VolumeCreateOptions) error {
+	var errs []error
+	bad := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	if !volumeRE.MatchString(o.Name) {
+		bad("volume name %q is not a Satat volume name", o.Name)
+	}
+	if o.Driver != "" && o.Driver != "local" {
+		bad("volume driver %q is not allowed", o.Driver)
+	}
+	if len(o.DriverOpts) != 0 {
+		bad("volume driver options are not allowed")
+	}
+	if o.ClusterVolumeSpec != nil {
+		bad("cluster volumes are not allowed")
+	}
+	if o.Labels[labelManaged] != "true" {
+		bad("missing label %s=true", labelManaged)
+	}
+	if !knownKind(o.Labels[labelKind]) {
+		bad("volume kind %q is not known", o.Labels[labelKind])
+	}
+	return errors.Join(errs...)
+}
+
+func knownKind(k string) bool { return k == kindInput }
+
+// isCachePath reports whether p is a clean absolute path strictly under cacheRoot.
+func isCachePath(p string) bool {
+	return path.IsAbs(p) && path.Clean(p) == p && strings.HasPrefix(p, cacheRoot+"/")
 }
 
 func contains(list []string, want string) bool {

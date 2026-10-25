@@ -124,7 +124,7 @@ func (l *Launcher) Launch(ctx context.Context, step launcher.Step) (launcher.Res
 	if err != nil {
 		return launcher.Result{}, err
 	}
-	if err := ValidateRequest(req.config, req.host, req.networking); err != nil {
+	if err := ValidateRequest(req.config, req.host, req.networking, cachePaths(lane)); err != nil {
 		return launcher.Result{}, fmt.Errorf("refusing to create %s: %w", req.name, err)
 	}
 	// Callers for one step in this process share one container. The first caller's context
@@ -138,22 +138,22 @@ func (l *Launcher) Launch(ctx context.Context, step launcher.Step) (launcher.Res
 
 func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.Step, req request) (launcher.Result, error) {
 	var res launcher.Result
-	volume := inputVolume(step.Run, step.Name)
 
-	// Remove the container and its volume on every exit path, even when ctx is already done.
+	// Remove the container and the step's volumes on every exit path, even when ctx is already
+	// done. Only volumes this call created or adopted are listed.
 	var id string
+	var volumes []string
 	defer func() {
 		cctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), cleanupTimeout)
 		defer cancel()
-		l.cleanup(cctx, req.name, id, volume)
+		l.cleanup(cctx, req.name, id, volumes)
 	}()
 
-	if _, err := l.api.VolumeCreate(ctx, client.VolumeCreateOptions{
-		Name:   volume,
-		Labels: map[string]string{labelManaged: "true", labelRun: step.Run, labelStep: step.Name},
-	}); err != nil {
+	in := inputVolumeOptions(step)
+	if err := l.createVolume(ctx, in); err != nil {
 		return res, fmt.Errorf("create input volume: %w", err)
 	}
+	volumes = append(volumes, in.Name)
 
 	created, err := l.api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking,
@@ -213,6 +213,36 @@ func (l *Launcher) run(ctx context.Context, lane launcher.Lane, step launcher.St
 	delete(l.cancelled, req.name)
 	l.mu.Unlock()
 	return res, nil
+}
+
+// createVolume creates a volume after checking it against the floor. Creating a name that exists
+// returns the existing volume, which is adopted only if it carries exactly the labels asked for
+// and the plain local driver: a re-delivered step finds its own volume, never someone else's.
+func (l *Launcher) createVolume(ctx context.Context, o client.VolumeCreateOptions) error {
+	if err := ValidateVolume(o); err != nil {
+		return fmt.Errorf("refusing to create volume %s: %w", o.Name, err)
+	}
+	got, err := l.api.VolumeCreate(ctx, o)
+	if err != nil {
+		return err
+	}
+	v := got.Volume
+	if v.Driver != "local" || len(v.Options) != 0 || !sameLabels(v.Labels, o.Labels) {
+		return fmt.Errorf("volume %s exists and is not the Satat volume asked for", o.Name)
+	}
+	return nil
+}
+
+func sameLabels(a, b map[string]string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k, v := range b {
+		if a[k] != v {
+			return false
+		}
+	}
+	return true
 }
 
 // wait blocks until the container stops. A step that outlives its lane timeout, or whose caller
@@ -343,9 +373,9 @@ func (c *capped) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// cleanup removes the container and the input volume. Errors other than "already gone" are logged;
-// the reaper catches what this misses.
-func (l *Launcher) cleanup(ctx context.Context, name, id, volume string) {
+// cleanup removes the container and the step's volumes. Errors other than "already gone" are
+// logged; the reaper catches what this misses.
+func (l *Launcher) cleanup(ctx context.Context, name, id string, volumes []string) {
 	// Only a container this call created or adopted is removed, and only by its ID: a name that
 	// belongs to something else is never touched.
 	if id != "" {
@@ -353,8 +383,10 @@ func (l *Launcher) cleanup(ctx context.Context, name, id, volume string) {
 			l.log.Warn("remove container", "container", name, "err", err)
 		}
 	}
-	if _, err := l.api.VolumeRemove(ctx, volume, client.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
-		l.log.Warn("remove volume", "volume", volume, "err", err)
+	for _, v := range volumes {
+		if _, err := l.api.VolumeRemove(ctx, v, client.VolumeRemoveOptions{Force: true}); err != nil && !cerrdefs.IsNotFound(err) {
+			l.log.Warn("remove volume", "volume", v, "err", err)
+		}
 	}
 }
 

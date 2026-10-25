@@ -131,7 +131,7 @@ func TestAdoptsContainerLeftByADeadWorker(t *testing.T) {
 				t.Fatal(err)
 			}
 			ctx := context.Background()
-			if _, err := api.VolumeCreate(ctx, client.VolumeCreateOptions{Name: inputVolume(step.Run, step.Name), Labels: map[string]string{labelManaged: "true"}}); err != nil {
+			if _, err := api.VolumeCreate(ctx, inputVolumeOptions(step)); err != nil {
 				t.Fatal(err)
 			}
 			created, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking})
@@ -182,6 +182,33 @@ func TestRefusesToAdoptAContainerThatIsNotOurs(t *testing.T) {
 	}
 }
 
+// A volume with a Satat name that the launcher did not create, here a host bind in disguise, must
+// not be mounted into a step, and must not be removed as if it were the step's own.
+func TestRefusesToAdoptAVolumeThatIsNotOurs(t *testing.T) {
+	api := dockerAPI(t)
+	l := newLauncher(t, api, []launcher.Lane{shLane("ownvol", "true")})
+	ctx := context.Background()
+	step := launcher.Step{Run: "theirs", Name: "v", Lane: "ownvol"}
+	name := inputVolume(step.Run, step.Name)
+	if _, err := api.VolumeCreate(ctx, client.VolumeCreateOptions{
+		Name: name, Driver: "local", DriverOpts: map[string]string{"type": "none", "o": "bind", "device": "/tmp"},
+		Labels: inputVolumeOptions(step).Labels,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = api.VolumeRemove(ctx, name, client.VolumeRemoveOptions{Force: true}) })
+
+	if _, err := l.Launch(ctx, step); err == nil {
+		t.Fatal("Launch mounted a volume it did not create")
+	}
+	if _, err := api.VolumeInspect(ctx, name, client.VolumeInspectOptions{}); err != nil {
+		t.Errorf("the foreign volume was removed: %v", err)
+	}
+	if left := names(t, api); len(left) != 0 {
+		t.Errorf("a container was created: %v", left)
+	}
+}
+
 func TestPassEnvReachesTheStepAndOnlyThat(t *testing.T) {
 	api := dockerAPI(t)
 	lane := shLane("env", `echo "token=$MY_TOKEN"; echo "host=$DOCKER_HOST"`)
@@ -203,8 +230,9 @@ func TestReapRemovesOldContainersAndKeepsNewOnes(t *testing.T) {
 	l := newLauncher(t, api, []launcher.Lane{lane})
 	ctx := context.Background()
 	n, _ := normalizeLane(lane)
-	req, _ := buildRequest(n, launcher.Step{Run: "reap", Name: "old", Lane: "reap"}, l.lookupEnv)
-	if _, err := api.VolumeCreate(ctx, client.VolumeCreateOptions{Name: inputVolume("reap", "old"), Labels: map[string]string{labelManaged: "true"}}); err != nil {
+	step := launcher.Step{Run: "reap", Name: "old", Lane: "reap"}
+	req, _ := buildRequest(n, step, l.lookupEnv)
+	if _, err := api.VolumeCreate(ctx, inputVolumeOptions(step)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{Name: req.name, Config: req.config, HostConfig: req.host, NetworkingConfig: req.networking}); err != nil {
