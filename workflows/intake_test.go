@@ -116,7 +116,7 @@ func (f *fakeEvents) Push(_ context.Context, key string, v any) error {
 
 func TestIntakeQueuesOneEventPerRequest(t *testing.T) {
 	ev := &fakeEvents{}
-	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev}
+	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev, Runs: fakeRuns{}}
 	r, err := i.Handle(context.Background(), payload(t, labeled))
 	if err != nil || !r.Queued || r.Issue != 7 {
 		t.Fatalf("%+v %v", r, err)
@@ -132,8 +132,53 @@ func TestIntakeQueuesOneEventPerRequest(t *testing.T) {
 
 func TestIntakeReportsAFailedPush(t *testing.T) {
 	ev := &fakeEvents{err: errors.New("hatchet down")}
-	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev}
+	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev, Runs: fakeRuns{}}
 	if _, err := i.Handle(context.Background(), payload(t, labeled)); err == nil {
 		t.Error("a failed push must fail the intake run so Hatchet retries it")
+	}
+}
+
+type fakeRuns struct {
+	ran map[string]bool
+	err error
+}
+
+func (f fakeRuns) Issues(context.Context) (map[string]bool, error) { return f.ran, f.err }
+
+// A redelivery, a re-added label and a retry after a successful push all reach Handle with an
+// issue that already has a run.
+func TestIntakeSkipsAnIssueThatHasARun(t *testing.T) {
+	ev := &fakeEvents{}
+	runs := fakeRuns{ran: map[string]bool{"javatarz/satat-sandbox#7": true}}
+	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev, Runs: runs}
+	r, err := i.Handle(context.Background(), payload(t, labeled))
+	if err != nil || r.Queued || r.Reason != "already has a run" || len(ev.keys) != 0 {
+		t.Fatalf("%+v %v pushed %v", r, err, ev.keys)
+	}
+	// The repo's case in the payload does not matter.
+	r, err = i.Handle(context.Background(), payload(t, labeled, func(m map[string]any) { m["repository"].(map[string]any)["full_name"] = "JavaTarz/Satat-Sandbox" }))
+	if err != nil || r.Queued || len(ev.keys) != 0 {
+		t.Errorf("case changed the key: %+v %v", r, err)
+	}
+	// Another issue still queues.
+	runs.ran = map[string]bool{"javatarz/satat-sandbox#8": true}
+	i.Runs = runs
+	if r, err := i.Handle(context.Background(), payload(t, labeled)); err != nil || !r.Queued {
+		t.Errorf("another issue's run blocked this one: %+v %v", r, err)
+	}
+}
+
+func TestIntakeFailsClosedWhenRunsAreUnknown(t *testing.T) {
+	ev := &fakeEvents{}
+	base := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev}
+	if _, err := base.Handle(context.Background(), payload(t, labeled)); err == nil {
+		t.Error("a nil Runs must be an error")
+	}
+	base.Runs = fakeRuns{err: errors.New("hatchet down")}
+	if _, err := base.Handle(context.Background(), payload(t, labeled)); err == nil {
+		t.Error("a run listing failure must be an error")
+	}
+	if len(ev.keys) != 0 {
+		t.Errorf("pushed %v without knowing the runs", ev.keys)
 	}
 }

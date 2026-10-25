@@ -46,9 +46,11 @@ func (h HatchetRuns) Issues(ctx context.Context) (map[string]bool, error) {
 	}
 	since := now().Add(-RunHistory)
 	set := map[string]bool{}
+	// Payloads are not returned unless asked for, although the API documents true as the default.
+	withPayloads := true
 	for offset := int64(0); ; offset += runPage {
 		limit, off := int64(runPage), offset
-		list, err := h.Client.Runs().List(ctx, rest.V1WorkflowRunListParams{Since: since, Limit: &limit, Offset: &off, OnlyTasks: false})
+		list, err := h.Client.Runs().List(ctx, rest.V1WorkflowRunListParams{Since: since, Limit: &limit, Offset: &off, OnlyTasks: false, IncludePayloads: &withPayloads})
 		if err != nil {
 			return nil, err
 		}
@@ -74,15 +76,20 @@ func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
 		switch {
 		case ok:
 			set[Key(repo, n)] = true
-		case strings.HasPrefix(row.DisplayName, workflows.Name):
+		case strings.HasPrefix(row.DisplayName, workflows.Name) || (row.WorkflowName != nil && strings.HasPrefix(*row.WorkflowName, workflows.Name)):
 			return fmt.Errorf("run %q (%s) has no readable repo and issue in its input: cannot tell which issues have a run", row.DisplayName, row.TaskExternalId)
 		}
 	}
 	return nil
 }
 
-// inputIssue reads the repo and issue number out of a satat-issue run's input.
+// inputIssue reads the repo and issue number out of a satat-issue run's input. Hatchet lists a
+// run's input wrapped in an envelope ({"input": {...}, "triggered_by": ...}); the bare form is
+// accepted too.
 func inputIssue(input map[string]any) (string, int, bool) {
+	if inner, ok := input["input"].(map[string]any); ok {
+		input = inner
+	}
 	b, err := json.Marshal(input)
 	if err != nil {
 		return "", 0, false

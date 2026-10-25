@@ -67,13 +67,14 @@ type Output struct {
 	Reason string `json:"reason,omitempty"`
 }
 
-// MapIssue builds a run input from config. It is the only place caps are looked up.
+// MapIssue builds a run input from config. It is the only place caps are looked up. It lower-cases
+// the repo (GitHub ignores case there) so the dedupe key in the input matches IssueKey.
 func MapIssue(cfg config.Config, repo, base, lane string, issue runner.Issue) (Input, error) {
 	account, ok := cfg.Accounts[lane]
 	if !ok {
 		return Input{}, fmt.Errorf("unknown lane %q", lane)
 	}
-	return Input{Repo: repo, Base: base, Lane: lane, Account: account, LaneCap: cfg.LaneMaxRuns[lane], Issue: issue}, nil
+	return Input{Repo: strings.ToLower(repo), Base: base, Lane: lane, Account: account, LaneCap: cfg.LaneMaxRuns[lane], Issue: issue}, nil
 }
 
 // Cap is one concurrency expression. Max is the static limit; MaxExpression, when set, computes
@@ -86,15 +87,25 @@ type Cap struct {
 
 // Spec is everything Register needs to know about the workflow's shape.
 type Spec struct {
-	Name             string
-	Events           []string
-	Caps             []Cap
+	Name   string
+	Events []string
+	Caps   []Cap
+	// DedupeKey is a concurrency expression that names one issue. Hatchet cancels a run whose key
+	// already has one in flight (CANCEL_NEWEST), so a duplicate event never starts a second run (#182).
+	// It is registered first: Hatchet chains strategies, so a key registered after the caps only
+	// sees runs that cleared them, and a duplicate waiting behind a cap would not be cancelled.
+	DedupeKey        string
 	ScheduleTimeout  time.Duration
 	ExecutionTimeout time.Duration
 }
 
 // The four caps, in the order ADR 0023 lists them.
 var capExpressions = []string{"'global'", "input.lane", "input.repo", "input.account"}
+
+// issueKeyExpression names one issue in a concurrency expression: "owner/name#N". It is plain CEL
+// (no extension functions), so registration cannot fail on a function Hatchet lacks. Unlike
+// IssueKey it does not lower-case, because MapIssue already did, so it sees the same value.
+const issueKeyExpression = "input.repo + '#' + string(input.issue.number)"
 
 // Define is the workflow Satat runs. executionTimeout bounds one run, and must cover the longest
 // lane timeout plus publishing.
@@ -108,6 +119,7 @@ func Define(l config.Limits, executionTimeout time.Duration) Spec {
 			{Expression: capExpressions[2], Max: l.PerRepo},
 			{Expression: capExpressions[3], Max: l.PerAccount},
 		},
+		DedupeKey:        issueKeyExpression,
 		ScheduleTimeout:  ScheduleTimeout,
 		ExecutionTimeout: executionTimeout,
 	}
@@ -134,6 +146,9 @@ func (s Spec) Validate() error {
 				errs = append(errs, fmt.Errorf("cap %q has no positive limit", c.Expression))
 			}
 		}
+	}
+	if s.DedupeKey != issueKeyExpression {
+		errs = append(errs, fmt.Errorf("dedupe key is %q, want %q: a duplicate event would start a second run", s.DedupeKey, issueKeyExpression))
 	}
 	if s.ScheduleTimeout < MinScheduleTimeout {
 		errs = append(errs, fmt.Errorf("schedule timeout %s is under %s: queued work would be cancelled", s.ScheduleTimeout, MinScheduleTimeout))
@@ -303,6 +318,11 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 		}
 		caps = append(caps, hc)
 	}
+	// One run per issue: the newest of a duplicate pair is cancelled, never the one in flight.
+	// First in the chain, so it also counts runs still waiting behind the other caps: checked live,
+	// a duplicate queued behind a cap is cancelled at once, whereas with the key last both ran in turn.
+	one, cancelNewest := int32(1), hatchet.CancelNewest
+	caps = append([]hatchet.Concurrency{{Expression: spec.DedupeKey, MaxRuns: &one, LimitStrategy: &cancelNewest}}, caps...)
 	keyExpr, units, window := AccountKeyExpr, 1, hatchet.Second
 	wf := client.NewWorkflow(spec.Name,
 		hatchet.WithWorkflowEvents(spec.Events...),
