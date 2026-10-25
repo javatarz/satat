@@ -5,3 +5,7 @@ commands:
   setup: pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
   # Required. A fast loop for the agent between commits; the harness never runs it as a gate.
   test: go test -p 1 -short ./...
+# Paths the agent may not change, on top of the default (CI, lint and hook config, .satat/).
+# Read from the base branch by the pusher.
+protected:
+  add: [justfile, mise.toml]

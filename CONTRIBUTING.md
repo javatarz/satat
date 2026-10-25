@@ -135,6 +135,26 @@ commit-msg and pre-push), and those hooks are the gate. `test` is a fast loop, h
 `go test -p 1 -short ./...` (the Docker tests need `just test`). See
 [per-codebase workflows](docs/roadmap/per-codebase-workflows.md).
 
+The same file can hold an optional top-level `protected:` key (the file stays `version: 1`, and
+readers of `commands:` ignore other keys). The pusher refuses a bundle that changes a protected
+path, so the agent cannot edit what judges it. The default list covers CI config
+(`.github/workflows`, `.gitlab-ci.yml`, `.circleci`, ...), lint and format config
+(`.pre-commit-config.yaml`, `.editorconfig`, `.golangci.*`, `.eslintrc*`, ...), hook directories,
+`.gitmodules` and `.satat/`. Tests are not protected by default; add the ones that judge your
+code.
+
+```yaml
+protected:
+  add: [justfile, tests/golden/]   # more protected paths
+  allow: [.editorconfig]           # default paths the agent may change in this repo
+```
+
+An entry without a slash matches that name at any depth; one with a slash is anchored at the repo
+root and covers everything under it. `*`, `?` and `[...]` work within a name, and case is ignored.
+`add` wins over `allow`. The pusher reads this from the base commit, so a change in the agent's own
+branch never widens what it may touch. A malformed `protected:` section makes the pusher refuse
+every push until it is fixed.
+
 ## Signed commits
 
 We recommend signing your commits, but `main` doesn't require it. Signed commits show as Verified

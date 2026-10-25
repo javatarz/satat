@@ -155,14 +155,8 @@ func (p *Pusher) Push(ctx context.Context, req Request) (Outcome, error) {
 	}
 
 	// Content checks, on exactly what would be pushed.
-	names, err := p.gitOut(ctx, repoDir, "diff", "--name-only", "--no-renames", "-z", req.BaseSHA, req.HeadSHA)
-	if err != nil {
+	if err := p.checkProtected(ctx, repoDir, req); err != nil {
 		return out, err
-	}
-	for _, name := range strings.Split(names, "\x00") {
-		if isWorkflowPath(name) {
-			return out, refuse("the change touches %s; Satat does not edit workflows", name)
-		}
 	}
 	if err := p.scan(ctx, repoDir, req); err != nil {
 		return out, err
@@ -202,11 +196,6 @@ func (p *Pusher) Push(ctx context.Context, req Request) (Outcome, error) {
 	}
 	out.PRNumber, out.PRURL = pr.Number, pr.URL
 	return out, nil
-}
-
-func isWorkflowPath(name string) bool {
-	n := strings.ToLower(strings.TrimPrefix(filepath.ToSlash(filepath.Clean("/"+name)), "/"))
-	return n == ".github/workflows" || strings.HasPrefix(n, ".github/workflows/")
 }
 
 // scan runs gitleaks over the diff the push would publish.
