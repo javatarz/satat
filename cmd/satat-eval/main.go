@@ -108,7 +108,7 @@ func run() (bool, error) {
 		if rep.PushErr != nil {
 			fmt.Fprintf(os.Stderr, "not published: %v\n", rep.PushErr)
 		}
-		subject = eval.Subject{Run: *runID, ExitCode: rep.Launch.ExitCode, Runner: rep.Runner, Bundle: rep.Launch.Files["changes.bundle"], PR: rep.Push}
+		subject = eval.Subject{Run: *runID, ExitCode: rep.Launch.ExitCode, Runner: rep.Runner, Bundle: rep.Launch.Files["changes.bundle"], Transcript: rep.Launch.Files["transcript.jsonl"], PR: rep.Push}
 	}
 
 	token := os.Getenv("SATAT_PUSH_TOKEN")
@@ -142,6 +142,7 @@ func loadSaved(dir string) (eval.Subject, error) {
 	}
 	s.Run, s.Runner = r.Run, &r
 	s.Bundle, _ = os.ReadFile(filepath.Join(dir, "changes.bundle"))
+	s.Transcript, _ = os.ReadFile(filepath.Join(dir, "transcript.jsonl"))
 	return s, nil
 }
 

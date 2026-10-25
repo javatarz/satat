@@ -16,3 +16,6 @@ checks:
     max_files: 2
   commits:
     max: 3
+  # The agent must have run the tests itself, and they must have passed.
+  ran_tests:
+    commands: ['python3? -m unittest', '\bpytest\b']
