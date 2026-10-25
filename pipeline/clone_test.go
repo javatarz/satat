@@ -108,6 +108,10 @@ func TestCloneRefusesWhatItCannotUse(t *testing.T) {
 		"no test":          {"version: 1\ncommands:\n  setup: a\n", "main", "commands.test is required"},
 		"no such branch":   {goodCommands, "nope", "clone a/b"},
 		"base is a flag":   {goodCommands, "--orphan", "plain branch name"},
+		"bool command":     {"version: 1\ncommands:\n  setup: a\n  test: true\n", "main", "commands.test must be a string"},
+		"list command":     {"version: 1\ncommands:\n  setup: a\n  test: [b]\n", "main", "commands.test must be a string"},
+		"hint is a number": {"version: 1\ncommands:\n  setup: a\n  test: b\n  n: 3\n", "main", "commands.n must be a string"},
+		"too big":          {"version: 1\ncommands:\n  setup: a\n  test: b\n  x: " + strings.Repeat("y", 70<<10) + "\n", "main", "over the"},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := cloner(sourceRepo(t, tc.body), tmp).Clone(context.Background(), "a/b", tc.base)
@@ -124,5 +128,42 @@ func TestCloneRefusesWhatItCannotUse(t *testing.T) {
 	}
 	if _, err := (GitCloner{}).Clone(context.Background(), "a/b", "main"); err == nil {
 		t.Error("cloned without a token")
+	}
+}
+
+// The credential helper answers for the configured host only.
+func TestCredentialHelperAnswersOnlyForItsHost(t *testing.T) {
+	src := sourceRepo(t, goodCommands)
+	var helper string
+	spy := filepath.Join(t.TempDir(), "git")
+	// A git that records the -c credential.helper value and then runs the real one.
+	real, _ := exec.LookPath("git")
+	script := "#!/bin/sh\nfor a in \"$@\"; do case \"$a\" in credential.helper=*) printf '%s' \"${a#credential.helper=}\" > " + spy + ".helper;; esac; done\nexec " + real + " \"$@\"\n"
+	if err := os.WriteFile(spy, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	c := cloner(src, t.TempDir())
+	c.Git = spy
+	ck, err := c.Clone(context.Background(), "a/b", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ck.Close()
+	b, err := os.ReadFile(spy + ".helper")
+	if err != nil {
+		t.Fatal(err)
+	}
+	helper = strings.TrimPrefix(string(b), "!")
+	for host, want := range map[string]bool{"github.com": true, "evil.example": false} {
+		cmd := exec.Command("sh", "-c", helper+" get")
+		cmd.Env = []string{"SATAT_CLONE_TOKEN=tok"}
+		cmd.Stdin = strings.NewReader("protocol=https\nhost=" + host + "\n\n")
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := strings.Contains(string(out), "password=tok"); got != want {
+			t.Errorf("host %s: token offered = %v, want %v", host, got, want)
+		}
 	}
 }

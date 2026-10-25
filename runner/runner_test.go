@@ -3,6 +3,7 @@ package runner
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -102,6 +103,28 @@ type env struct {
 	fake, repo string
 	// checkout stands in for the clone the worker puts in the input volume.
 	checkout string
+	// template is a git template dir (hooks) the worker's clone is made with, if any.
+	template string
+}
+
+// reclone redoes the worker's clone from the source repo, with the template's hooks and, when
+// depth is positive, as a shallow clone. Call it after changing the source.
+func (e *env) reclone(t *testing.T, depth int) {
+	t.Helper()
+	if err := os.RemoveAll(e.checkout); err != nil {
+		t.Fatal(err)
+	}
+	args := []string{"clone", "-q"}
+	if depth > 0 {
+		args = append(args, "--depth", fmt.Sprint(depth))
+	}
+	cmd := exec.Command("git", append(args, "file://"+e.repo, e.checkout)...)
+	if e.template != "" {
+		cmd.Env = append(os.Environ(), "GIT_TEMPLATE_DIR="+e.template)
+	}
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git clone: %v\n%s", err, out)
+	}
 }
 
 func setup(t *testing.T, mode string, extra ...string) *env {

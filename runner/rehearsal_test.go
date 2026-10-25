@@ -59,6 +59,9 @@ func hooked(t *testing.T, mode, follow, hook string, extra ...string) *env {
 		t.Fatal(err)
 	}
 	e := setup(t, mode, append([]string{"GIT_TEMPLATE_DIR=" + tpl, "FAKE_FOLLOW=" + follow}, extra...)...)
+	// The hooks come from the template at clone time, which is now the worker's, not the runner's.
+	e.template = tpl
+	e.reclone(t, 0)
 	for i, kv := range e.cfg.Env {
 		if strings.HasPrefix(kv, "PATH=") {
 			e.cfg.Env[i] = "PATH=" + bin + ":" + strings.TrimPrefix(kv, "PATH=")
@@ -174,6 +177,7 @@ func TestRehearsalWorksOnAShallowClone(t *testing.T) {
 	for i := 0; i < 60; i++ {
 		srcGit(t, e.repo, "-c", "user.name=a", "-c", "user.email=a@b", "commit", "-q", "--allow-empty", "-m", "More history")
 	}
+	e.reclone(t, 50)
 	if err := Run(context.Background(), e.cfg); err != nil {
 		t.Fatal(err)
 	}
