@@ -30,7 +30,9 @@ if grep -q '<hook-output>' "$rec/stdin"; then
 	if [ "$FAKE_FOLLOW" = fix ]; then
 		echo ok > ok.txt; git add ok.txt; git -c user.name=a -c user.email=a@b commit -q -m "Satisfy the hook"
 	fi
-	echo '{"type":"result","is_error":false,"result":"fixed it"}'
+	if [ "$FAKE_FOLLOW" != noresult ]; then
+		echo '{"type":"result","is_error":false,"result":"fixed it"}'
+	fi
 	exit 0
 fi
 echo '{"type":"system","subtype":"init"}'

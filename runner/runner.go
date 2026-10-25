@@ -316,6 +316,7 @@ func ClaudeArgs(maxTurns int) []string {
 // runClaude runs one claude session. A follow-up (the rehearsal feedback) appends to the
 // transcript instead of replacing it.
 func runClaude(ctx context.Context, cfg Config, env []string, dir, prompt string, followUp bool, res *Result) error {
+	res.ClaudeResult = nil // a follow-up that ends without a result event must not inherit the last one
 	flags := os.O_CREATE | os.O_WRONLY | os.O_TRUNC
 	if followUp {
 		flags = os.O_CREATE | os.O_WRONLY | os.O_APPEND
