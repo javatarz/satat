@@ -5,6 +5,9 @@
 
 - OpenTelemetry traces into a Langfuse-like self-hosted tool: turn-by-turn conversation graph
   and cost per turn. No paid tools.
-- Conversation logs outlive the container, and work across machines.
+- Conversations (agent transcripts) are captured outside the step result, so they outlive the
+  container on every runtime and work across machines. The result channel is too small for
+  them: #129 proposes keeping a 4 KiB tail of output for lane-started runs, and #130 caps pod
+  logs on Kubernetes at 1 MiB per stream. This needs its own card later.
 - Live monitoring to catch a session going in circles.
 - Hatchet ships an OTel collector. LiteLLM gives token and cost data.
