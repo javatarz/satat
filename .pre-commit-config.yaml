@@ -62,15 +62,6 @@ repos:
         stages: [commit-msg]
         always_run: true
 
-      - id: signed-commits-push
-        name: Pushed commits are signed
-        description: Fail when a commit about to be pushed is unsigned or badly signed
-        entry: scripts/check-signed-push.sh
-        language: system
-        stages: [pre-push]
-        pass_filenames: false
-        always_run: true
-
   - repo: https://github.com/editorconfig-checker/editorconfig-checker.python
     rev: 2.7.3
     hooks:

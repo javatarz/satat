@@ -30,7 +30,8 @@ badges as a bot. Commit author is `<slug>[bot]` with the App's noreply email, pl
 (`createCommitOnBranch`) as the App, so GitHub signs them and they show as Verified; it replays
 the agent's commits one by one and sets no author. See
 [signed agent commits](../research/v2/signed-agent-commits.md) (#148). If that does not verify,
-the fallback is to sign in the pusher with a key held by the broker.
+the fallback is to sign in the pusher with a key held by the broker. `main` stopped requiring
+signed commits on 2026-10-25, so this is optional until Verified commits are wanted again.
 
 **A token broker (Go)** holds the App private key and mints installation tokens with
 `POST /app/installations/{id}/access_tokens`, narrowed by `repositories` and `permissions`.

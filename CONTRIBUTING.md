@@ -113,8 +113,7 @@ We follow these
 
 Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 [pre-commit](https://pre-commit.com/), then run `just setup`. It installs the tools pinned in
-`mise.toml`, the git hooks (including the commit message and [signing](#signed-commits)
-checks) and a `.env`, and then runs
+`mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
 `just doctor`, which names anything else that is missing, such as `actionlint`.
 
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
@@ -122,17 +121,9 @@ for it there.
 
 ## Signed commits
 
-`main` doesn't require signed commits, but signed commits show as Verified on GitHub and tell a
-reader who wrote them. Two checks flag unsigned commits early:
-
-- **On push**, the pre-push hook fails if a commit you're about to push is unsigned or has a bad
-  signature (`scripts/check-signed-push.sh`). `just doctor` warns if git isn't set up to sign.
-- **On the PR**, the `signed-commits` check fails for any commit GitHub doesn't show as Verified
-  and says why: `unsigned`, `unknown_key` (the key isn't on your GitHub account) or `bad_email`
-  and similar (the commit email isn't a verified email on your GitHub account). It isn't a
-  required check, so it doesn't block a merge.
-
-`just setup` installs the hooks. If you set up before the push hook existed, run it again.
+We recommend signing your commits, but `main` doesn't require it. Signed commits show as Verified
+on GitHub and tell a reader who wrote them. `just doctor` warns if git isn't set up to sign.
+Nothing blocks an unsigned commit, and GitHub's rebase button creates unsigned ones anyway.
 
 ### Set up signing
 
@@ -160,7 +151,7 @@ covers the details.
 
 ### Re-sign commits you already made
 
-Re-signing rewrites the commit ids but keeps your changes, messages and authors. From your branch:
+If you want to sign commits you already made, re-signing rewrites the commit ids but keeps your changes, messages and authors. From your branch:
 
 ```sh
 git fetch origin
@@ -169,9 +160,9 @@ git push --force-with-lease
 ```
 
 `git rebase --force-rebase -S origin/main` does the same in one step. Without `--force-rebase`,
-git keeps commits that are already on top of `origin/main` as they are, unsigned. If the check
-says `bad_email`, fix `user.email` and add `--reset-author` to the amend so the commits take the
-new email.
+git keeps commits that are already on top of `origin/main` as they are, unsigned. If GitHub
+doesn't show them as Verified because of `bad_email`, fix `user.email` and add `--reset-author` to
+the amend so the commits take the new email.
 
 Both commands re-sign **every** commit in the range as you, replacing any existing signature and
 making you the committer. That is right for your own commits. If the PR also has commits by other

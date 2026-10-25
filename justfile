@@ -10,7 +10,7 @@ default:
 # Install the pinned tools and the git hooks, create .env if missing, then run doctor
 setup:
     mise install
-    pre-commit install --hook-type pre-commit --hook-type commit-msg --hook-type pre-push
+    pre-commit install --hook-type pre-commit --hook-type commit-msg
     @[ -f .env ] || { pw="$(openssl rand -hex 24 2>/dev/null)" || pw=""; [ -n "$pw" ] || { echo "error: openssl is needed to generate POSTGRES_PASSWORD; .env not created" >&2; exit 1; }; umask 077; sed "s/^POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$pw/" .env.example > .env; echo "created .env with a random POSTGRES_PASSWORD"; }
     @just doctor
 

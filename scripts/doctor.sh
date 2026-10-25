@@ -118,19 +118,13 @@ check_terraform() {
 }
 
 check_pre_commit() {
-  local hook name
+  local hook
   if ! has pre-commit; then
     warn "pre-commit: not installed (brew install pre-commit, then: just setup; just lint needs it)"
     return
   fi
-  for name in commit-msg pre-push; do
-    hook="$(git rev-parse --git-path "hooks/$name" 2>/dev/null || true)"
-    if [ -z "$hook" ] || [ ! -f "$hook" ] || ! grep -q pre-commit "$hook"; then
-      hook=""
-      break
-    fi
-  done
-  if [ -n "$hook" ]; then
+  hook="$(git rev-parse --git-path hooks/commit-msg 2>/dev/null || true)"
+  if [ -n "$hook" ] && [ -f "$hook" ] && grep -q pre-commit "$hook"; then
     ok "pre-commit: installed, hooks installed"
   else
     # Not needed to run Satat, only to commit.
@@ -138,13 +132,13 @@ check_pre_commit() {
   fi
 }
 
-# Signing is optional. Not needed by `just run`.
+# Signed commits are recommended, not required. Not needed by `just run`.
 check_signing() {
   local reason
   if reason="$(scripts/check-signing-config.sh --brief 2>&1)"; then
     ok "git: commit signing configured"
   else
-    warn "git: $reason (see Signed commits in CONTRIBUTING.md)"
+    warn "git: $reason (signed commits are recommended, not required; see Signed commits in CONTRIBUTING.md)"
   fi
 }
 

@@ -1,6 +1,8 @@
 # Verified commits for agent PRs (#148)
 
-Question: how do commits on the PRs Satat's pusher opens show as Verified on GitHub, so they can pass the `signed-commits` required check on `main`?
+**Status (2026-10-25): shelved.** `main` no longer requires signed commits, so agent PRs don't need Verified commits to merge, and #148 was closed. This note stays for when Verified agent commits are wanted again. Nothing below was tested against a GitHub App.
+
+Question: how do commits on the PRs Satat's pusher opens show as Verified on GitHub, so they pass a signed-commits requirement on `main`? There is no such requirement now.
 
 Read on 2026-10-25: GitHub's [about commit signature verification](https://docs.github.com/en/authentication/managing-commit-signature-verification/about-commit-signature-verification) page, plus third-party notes on `createCommitOnBranch` (the grafana, step-security and DataDog `github-api-commit` tools and a GitHub community discussion). Nothing here was run against a GitHub App yet, because the Satat App does not exist. The pusher still uses a token from `SATAT_PUSH_TOKEN`.
 
@@ -28,7 +30,6 @@ From the third-party tools, not confirmed here:
 ## Not verified
 
 - That a commit created by `createCommitOnBranch` with an App installation token shows `verified: true`, `reason: valid`, with the App as committer. This is the open question, and it needs a scratch repo and an App. DataDog's tool claims it holds for any token type, which the GitHub docs do not say.
-- That the `signed-commits` check, which reads `verification.verified`, passes for such a PR.
 - Payload size limits for a large commit, and rate-limit cost of up to 20 calls per step on top of the token calls in ADR 0025.
 - Whether `git`-pushed commits could be Verified some other way. Signing in the pusher with a key held by the broker works for any commit, but it moves a long-lived signing key into the trusted worker and registers it on a bot account. Not checked: whether an App's bot account can hold a signing key at all. If it cannot, this needs a machine user.
 
