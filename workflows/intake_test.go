@@ -16,9 +16,9 @@ var intakeCfg = config.Config{
 }
 
 // labeled is GitHub's `issues.labeled` body, trimmed to what matters.
-const labeled = `{"action":"labeled","label":{"name":"ready-for-agent"},
- "issue":{"number":7,"title":"Add greet","body":"do it","state":"open"},
- "repository":{"full_name":"javatarz/satat-sandbox","default_branch":"trunk"}}`
+const labeled = `{"action":"labeled","label":{"name":"ready-for-agent"},` +
+	`"issue":{"number":7,"title":"Add greet","body":"do it","state":"open"},` +
+	`"repository":{"full_name":"javatarz/satat-sandbox","default_branch":"trunk"}}`
 
 func payload(t *testing.T, raw string, edit ...func(map[string]any)) WebhookPayload {
 	t.Helper()
