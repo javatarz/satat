@@ -88,7 +88,7 @@ operator-only policy, and unsealing itself after a restart.
   fails in a way that cannot be fixed, the store choice is reopened for all environments
   together, not split.
 - The Claude CLI through the gateway proxy on the OAuth token, with the token never in the lane
-  and OpenBao Agent feeding the proxy (card GATEWAY_SPIKE).
+  and OpenBao Agent feeding the proxy (#155).
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
 - A colima restart; OpenBao Agent for LiteLLM; Raft snapshot and restore; anything on EKS.
 
