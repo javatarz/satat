@@ -251,6 +251,9 @@ func followRun(ctx context.Context, api hatchetAPI, id string, w io.Writer, ever
 
 func printOutput(w io.Writer, o *workflows.Output) {
 	fmt.Fprintf(w, "status: %s\nexit: %d\n", o.Status, o.ExitCode)
+	if o.Reason != "" {
+		fmt.Fprintf(w, "reason: %s\n", o.Reason)
+	}
 	if len(o.Files) > 0 {
 		names := make([]string, 0, len(o.Files))
 		for n := range o.Files {

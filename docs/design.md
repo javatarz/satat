@@ -2,8 +2,8 @@
 
 This is the tour for someone new to the repo. It describes what runs on `main` now, the v0.2
 Docker prototype (#112). Things that are planned but not built are in
-[What is not built](#what-is-not-built), each with the ADR or issue that owns it. The flow and
-lane-started runs also show their planned parts in place, marked as planned. For direction
+[What is not built](#what-is-not-built), each with the ADR or issue that owns it. The flow also
+shows its planned parts in place, marked as planned. For direction
 see the [roadmap](roadmap/README.md); for the reasons behind a choice, the [ADRs](#adrs-and-research).
 
 ## What Satat is
@@ -28,14 +28,14 @@ flowchart LR
   enq["satat-enqueue<br/>by hand"]
   poll["poller: Hatchet cron<br/>queues ready-for-agent issues<br/>(off until satat.yaml lists repos)"]
   hook["webhook<br/>(planned, #112 slice 6)"]
-  lanerun["lane-started run<br/>satat agent run &lt;lane&gt;<br/>lanes with no agent only<br/>(planned, #129)"]
+  lanerun["lane-started run<br/>satat agent run &lt;lane&gt;<br/>lanes with no agent only"]
 
   queue[("Hatchet Lite + Postgres<br/>queue and four caps:<br/>global, lane, repo, account")]
 
   enq -- "event satat:issue" --> queue
   poll -- "event satat:issue" --> queue
   hook -- "event satat:issue" --> queue
-  lanerun -. "own event, same workflow<br/>and caps" .-> queue
+  lanerun -- "event satat:agent<br/>same workflow and caps" --> queue
 
   subgraph worker["worker container (trusted)"]
     ready{"issue still labelled<br/>ready-for-agent?"}
@@ -57,7 +57,7 @@ flowchart LR
   push -- "push satat/RUN, open draft PR<br/>body ends: Satat-Run: RUN" --> gh[(GitHub)]
 
   classDef planned fill:#eceff3,stroke:#6b7685,color:#1f2733,stroke-dasharray:4 3
-  class hook,lanerun planned
+  class hook planned
 ```
 
 1. **Ways in.** Two exist. A person runs
@@ -140,7 +140,7 @@ flowchart LR
    Hatchet retries are off (`WithRetries(0)`): a re-delivered task finds the earlier attempt's
    container instead (see the launcher).
 
-A [lane-started run](#lane-started-runs) is the one planned exception to "every way in is an
+A [lane-started run](#lane-started-runs) is the one exception to "every way in is an
 issue". It is allowed only on lanes that run no agent, so agent work never skips the readiness
 check.
 
@@ -174,8 +174,9 @@ Ports bind to `127.0.0.1`. All images are pinned by digest.
 
 ## Lane-started runs
 
-**Planned, not built.** #129 proposes them as `satat agent run <lane> [--input] [--wait]`, with
-`ls` and `rm`, in its ADR 0030 (proposed). This section says where they fit in the flow above.
+Built in #129 as `satat agent run <lane> [--input] [--wait]`, with `ls` and `rm`
+([ADR 0030](adr/0030-on-demand-agent-runs.md), proposed). This section says where they fit in
+the flow above.
 
 A lane-started run starts from a lane instead of an issue. The operator names a lane and passes
 JSON, which the worker places at `/etc/satat/input.json`. It goes through the same workflow and
@@ -186,7 +187,7 @@ names) and never publishes. There is no issue, so there is no readiness check.
 **Only on lanes that run no agent.** A lane-started run is for checking the platform and for
 lanes that run a fixed command:
 
-- `smoke`, and the `sleep` lane #129 adds, for platform smoke tests. The pre-flight `doctor`
+- `smoke` and `sleep`, for platform smoke tests. The pre-flight `doctor`
   (#133) could use a `smoke` run as its end-to-end check.
 - `check-python` and other eval lanes, which run held-out tests over a set of files, could use
   them too. Today `satat-eval` calls the launcher directly instead.
@@ -208,16 +209,18 @@ lanes:
     ...
 ```
 
-The key is one optional boolean on the lane. The worker refuses a lane-started run on a lane
-without `agent: false`. The default is the safe side: a new lane that leaves the key out counts
+The key is one optional boolean on the lane (`config.NoAgent` holds the lanes that set it to
+false). The worker refuses a lane-started run on a lane without `agent: false`: it launches
+nothing and records the run as `refused`, with the reason, and `satat agent run --wait` prints
+it and exits 1. The default is the safe side: a new lane that leaves the key out counts
 as an agent lane, so the mistake shows up as a refused lane-started run, not as an agent working
 from made-up input. The check runs in the worker at run start, like the readiness check, so
 every event is gated whoever pushed it. The CLI checks as well, but only to fail early with a
 clear message. Refusing an issue run on a lane with `agent: false` is an optional follow-up to
 the readiness check.
 
-What #129 should change to fit this, and the other ways of marking a lane that were considered,
-are in [lane-started runs](research/v2/lane-started-runs.md).
+The other ways of marking a lane that were considered are in
+[lane-started runs](research/v2/lane-started-runs.md).
 
 ## The launcher
 
@@ -236,10 +239,11 @@ Kubernetes backend is planned and must pass `launcher/conformance`
 **Lanes.** A lane is the fixed shape a step runs in: image, user, limits, network, timeout and
 the names of the environment variables it may receive. Lanes come from `satat.yaml` only. Issue
 text, workflow input and agent output cannot change one
-([ADR 0027](adr/0027-docker-api-access.md)). `satat.yaml` has three lanes: `claude` (the real
-one), `smoke` (a busybox placeholder) and `check-python` (runs a command over a set of files
-with no network, used by the eval harness). Only `claude` runs an agent. Nothing marks that in
-`satat.yaml` yet; the planned `agent: false` key is in [lane-started runs](#lane-started-runs).
+([ADR 0027](adr/0027-docker-api-access.md)). `satat.yaml` has four lanes: `claude` (the real
+one), `smoke` (a busybox placeholder), `sleep` (idles, to test cancelling a lane-started run) and
+`check-python` (runs a command over a set of files with no network, used by the eval harness).
+Only `claude` runs an agent; the other three say `agent: false`
+([lane-started runs](#lane-started-runs)).
 
 **Behaviour.**
 
@@ -529,7 +533,6 @@ Do not read these as features. They are decided or planned, not present:
 | Not built | Where it is tracked |
 |---|---|
 | Webhook intake that starts a run when an issue is labelled. | #112 slice 6, [docker-prototype.md](research/v2/docker-prototype.md), [signal-driven intake](roadmap/signal-driven-intake.md) |
-| Lane-started runs on lanes that run no agent, and the `agent: false` lane key | #129, [lane-started runs](research/v2/lane-started-runs.md) |
 | Language toolchain in the lane image. The Claude image has no `python` or other toolchain, so the agent cannot run the repo's tests. Decided: a lean image, mise installs the repo's toolchains at step start into a persistent per-repo cache volume. | #120, [ADR 0033](adr/0033-lane-toolchain-and-build-caches.md) |
 | k3d adapter and Kubernetes launcher: a second `deploy.Target` with Helm, and a launcher that runs agents as pods | [deploy-targets.md](research/v2/deploy-targets.md), [ADR 0028](adr/0028-infrastructure-adapter-compose-first.md) |
 | Kubernetes backend, agent-sandbox, per-cloud provisioning and a Helm chart | [ADR 0024](adr/0024-kubernetes-agent-sandbox-runtime.md), [ADR 0026](adr/0026-docker-first-runtime.md), [AGENTS.md](../AGENTS.md) |

@@ -407,3 +407,35 @@ func TestOptionalEnvMustNotBeWorkerEnv(t *testing.T) {
 		t.Fatalf("error should name optional_env and the variable: %s", msg)
 	}
 }
+
+func TestAgentKeyDefaultsToAnAgentLane(t *testing.T) {
+	for extra, noAgent := range map[string]bool{"": false, "    agent: true\n": false, "    agent: false\n": true} {
+		c, err := Parse(strings.NewReader(lane(extra)))
+		if err != nil {
+			t.Fatalf("%q: %v", extra, err)
+		}
+		if c.NoAgent["a"] != noAgent {
+			t.Errorf("%q: NoAgent[a] = %v, want %v", extra, c.NoAgent["a"], noAgent)
+		}
+	}
+}
+
+func TestAgentKeyMustBeABoolean(t *testing.T) {
+	if msg := parseErr(t, lane("    agent: no-agent\n")); !strings.Contains(msg, "bool") {
+		t.Fatalf("error should say the key is a boolean: %s", msg)
+	}
+}
+
+// The shipped lanes: claude runs an agent; the test and eval lanes do not.
+func TestShippedLanesMarkWhichRunAnAgent(t *testing.T) {
+	c, err := Load("../satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{"claude": false, "smoke": true, "sleep": true, "check-python": true}
+	for name, noAgent := range want {
+		if c.NoAgent[name] != noAgent {
+			t.Errorf("lane %s: NoAgent = %v, want %v", name, c.NoAgent[name], noAgent)
+		}
+	}
+}

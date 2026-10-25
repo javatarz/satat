@@ -42,6 +42,9 @@ const (
 	// StatusSkipped is the output status of a run that did not launch because the issue was not
 	// ready. It is a normal result, not a failure, so it is not retried.
 	StatusSkipped = "skipped"
+	// StatusRefused is the output status of a lane-started run on a lane that runs an agent. It
+	// launches nothing and is not retried; Reason says why.
+	StatusRefused = "refused"
 )
 
 // Input is the run input. It is also what the concurrency expressions read, so the caps that
@@ -203,6 +206,9 @@ type Handler struct {
 	Now func() time.Time
 	// Secrets are the values scrubbed from an agent run's output tails.
 	Secrets []string
+	// NoAgent holds the lanes that run no agent (config.NoAgent). Only they take lane-started
+	// runs; nil refuses every one, so a handler that is not told fails closed.
+	NoAgent map[string]bool
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;

@@ -87,8 +87,8 @@ the repo is ready (#175: a valid `.satat/commands.yaml`, access, merge protectio
 the issue is not started, Satat comments once and sets `needs-info`. Every way in is gated,
 whoever pushed the event.
 The direction for the one exception is [lane-started runs](../design.md#lane-started-runs),
-only on lanes that run no agent: platform smoke tests, and perhaps eval lanes. Nothing in
-config marks those lanes yet (#129).
+only on lanes that run no agent: platform smoke tests, and perhaps eval lanes. Those lanes say
+`agent: false` in `satat.yaml` (#129).
 
 Green is decided, amber is being shaped, and grey dashed is an idea.
 

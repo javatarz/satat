@@ -9,9 +9,11 @@ caps). Keeps [ADR 0027](0027-docker-api-access.md) and the one-shot runner of
 
 ## Context
 
-Today an agent run starts only from an issue, through the `satat-issue` workflow. The owner wants
-to create and destroy temporary agents on demand, from a lane's image config, in the running
-platform. Each agent does one task and exits. Agents must not register with Hatchet themselves:
+Today an agent run starts only from an issue, through the `satat-issue` workflow. The platform
+also needs one-shot runs on demand, from a lane's config, in the running platform: for platform
+smoke tests, and perhaps for eval lanes. Each does one task and exits. Agent work itself starts
+only from an issue a human labelled `ready-for-agent`, so these runs are allowed only on lanes
+that run no agent ([design.md](../design.md#lane-started-runs)). Agents must not register with Hatchet themselves:
 the worker stays the only Hatchet worker and the only process that starts containers.
 
 Hatchet's concurrency groups belong to a workflow. ADR 0023 verified the four caps within one
@@ -24,6 +26,10 @@ the same subscription with neither the lane cap nor the account cap holding.
   the same four caps and timeouts. Its input gains `kind` (`issue` or `agent`; empty means issue) and
   `step_input`. Agent runs key the repo cap on a fixed `adhoc` value, and look up the lane and account
   caps from `satat.yaml` as issue runs do. So both kinds share one set of groups.
+- **Only on lanes that say `agent: false`.** A lane without the key runs an agent and takes issue
+  runs only. The worker refuses an agent run on such a lane at run start, whoever pushed the event:
+  it launches nothing and records the run as `refused` with the reason. `satat agent run` refuses
+  it too, before pushing, to fail early. `smoke`, `sleep` and `check-python` say `agent: false`.
 - **An agent run is one launcher step** on the named lane, with `step_input` placed at
   `/etc/satat/input.json`. Nothing in it reaches a container flag. It never pushes. Publishing stays
   with issue runs.

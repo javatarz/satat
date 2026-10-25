@@ -30,6 +30,10 @@ type Config struct {
 	Accounts map[string]string
 	// LaneMaxRuns is each lane's own cap (lane.max_runs), by lane name.
 	LaneMaxRuns map[string]int
+	// NoAgent holds the lanes that say `agent: false`: they run a fixed command, not a coding
+	// agent, so they take lane-started runs. A lane without the key runs an agent and takes issue
+	// runs only (design.md, lane-started runs).
+	NoAgent map[string]bool
 	// CacheReaper bounds the persistent caches of every lane together.
 	CacheReaper CacheReaper
 	// Poller says which repos the worker polls for ready-for-agent issues (#135).
@@ -170,21 +174,23 @@ type limitsFile struct {
 }
 
 type laneFile struct {
-	Image       string     `yaml:"image"`
-	User        string     `yaml:"user"`
-	Command     []string   `yaml:"command"`
-	PassEnv     []string   `yaml:"pass_env"`
-	OptionalEnv []string   `yaml:"optional_env"`
-	Memory      string     `yaml:"memory"`
-	CPUs        float64    `yaml:"cpus"`
-	Pids        int64      `yaml:"pids"`
-	Workspace   string     `yaml:"workspace"`
-	Internal    bool       `yaml:"internal"`
-	Runtime     string     `yaml:"runtime"`
-	Timeout     string     `yaml:"timeout"`
-	Account     string     `yaml:"account"`
-	MaxRuns     int        `yaml:"max_runs"`
-	Caches      cachesFile `yaml:"caches"`
+	Image       string   `yaml:"image"`
+	User        string   `yaml:"user"`
+	Command     []string `yaml:"command"`
+	PassEnv     []string `yaml:"pass_env"`
+	OptionalEnv []string `yaml:"optional_env"`
+	Memory      string   `yaml:"memory"`
+	CPUs        float64  `yaml:"cpus"`
+	Pids        int64    `yaml:"pids"`
+	Workspace   string   `yaml:"workspace"`
+	Internal    bool     `yaml:"internal"`
+	Runtime     string   `yaml:"runtime"`
+	Timeout     string   `yaml:"timeout"`
+	Account     string   `yaml:"account"`
+	MaxRuns     int      `yaml:"max_runs"`
+	// Agent is false on a lane that runs no agent. Absent means true: the safe side.
+	Agent  *bool      `yaml:"agent"`
+	Caches cachesFile `yaml:"caches"`
 }
 
 // cachesFile is a lane's cache list: cache name to the path the step sees it at (ADR 0033).
@@ -226,6 +232,7 @@ func Parse(r io.Reader) (Config, error) {
 		Limits:      Limits{Global: f.Limits.Global, PerRepo: f.Limits.PerRepo, PerAccount: f.Limits.PerAccount},
 		Accounts:    map[string]string{},
 		LaneMaxRuns: map[string]int{},
+		NoAgent:     map[string]bool{},
 		Deploy:      Deploy{Target: "compose"},
 	}
 	var errs []error
@@ -262,6 +269,9 @@ func Parse(r io.Reader) (Config, error) {
 			c.Accounts[name] = name
 		}
 		c.LaneMaxRuns[name] = lf.MaxRuns
+		if lf.Agent != nil && !*lf.Agent {
+			c.NoAgent[name] = true
+		}
 		if lf.MaxRuns == 0 {
 			c.LaneMaxRuns[name] = 1
 		}

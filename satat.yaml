@@ -98,6 +98,9 @@ lanes:
 
   # Placeholder until the Claude Code image exists (slice 4 replaces it).
   smoke:
+    # Runs a fixed command, not a coding agent: takes lane-started runs (`satat agent run`), never
+    # issue runs (design.md, lane-started runs).
+    agent: false
     image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
     # user: 10001:10001   # default; must be numeric and non-root
     command: ["sh", "-c", "id && echo ok"]
@@ -119,6 +122,9 @@ lanes:
   # Idle lane for exercising on-demand agent runs (`satat agent`): sleeps until cancelled or timed
   # out. No pass_env and no network.
   sleep:
+    # Runs a fixed command, not a coding agent: takes lane-started runs (`satat agent run`), never
+    # issue runs (design.md, lane-started runs).
+    agent: false
     image: busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e
     command: ["sh", "-c", "sleep 600"]
     # 128MiB, not 64: the floor needs workspace plus the 64MiB /tmp to fit under the limit.
@@ -132,6 +138,9 @@ lanes:
   # Runs a command over a set of files with no network. Used by the eval harness to run held-out
   # tests; the step input is {"files": {path: base64}, "command": [...]}.
   check-python:
+    # Runs a fixed command, not a coding agent: takes lane-started runs (`satat agent run`), never
+    # issue runs (design.md, lane-started runs).
+    agent: false
     image: python:3.13.16-slim@sha256:cf50a4f6ac4f026458b08d5222023d700ac806410dff5e9ca8728fa44f2b850f
     command:
       - python
