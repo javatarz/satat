@@ -36,9 +36,10 @@ type Case struct {
 	Base   string `yaml:"base"`
 	Issue  int    `yaml:"issue"`
 	Checks struct {
-		Tests   *TestsCheck  `yaml:"tests"`
-		Scope   *ScopeCheck  `yaml:"scope"`
-		Commits CommitsCheck `yaml:"commits"`
+		Tests    *TestsCheck    `yaml:"tests"`
+		Scope    *ScopeCheck    `yaml:"scope"`
+		Commits  CommitsCheck   `yaml:"commits"`
+		RanTests *RanTestsCheck `yaml:"ran_tests"`
 	} `yaml:"checks"`
 
 	Dir string `yaml:"-"`
@@ -86,6 +87,13 @@ func LoadCase(dir string) (Case, error) {
 		return c, fmt.Errorf("%s: name, repo, base and issue are required", dir)
 	case c.Checks.Tests != nil && (c.Checks.Tests.Lane == "" || len(c.Checks.Tests.Command) == 0):
 		return c, fmt.Errorf("%s: tests needs a lane and a command", dir)
+	case c.Checks.RanTests != nil && len(c.Checks.RanTests.Commands) == 0:
+		return c, fmt.Errorf("%s: ran_tests needs at least one command pattern", dir)
+	}
+	if c.Checks.RanTests != nil {
+		if _, err := compileAll(c.Checks.RanTests.Commands); err != nil {
+			return c, fmt.Errorf("%s: %w", dir, err)
+		}
 	}
 	if c.Checks.Tests != nil {
 		for _, h := range c.Checks.Tests.Hidden {
@@ -103,6 +111,8 @@ type Subject struct {
 	ExitCode int
 	Runner   *runner.Result
 	Bundle   []byte
+	// Transcript is the agent's transcript.jsonl (stream-json); empty when the run left none.
+	Transcript []byte
 	// PR is set when the run published; the PR checks are skipped otherwise.
 	PR *pusher.Outcome
 }
@@ -195,7 +205,7 @@ func (g *Grader) Grade(ctx context.Context, c Case, s Subject) (Result, error) {
 		add("run", true, fmt.Sprintf("%d commit(s) on %s", s.Runner.Commits, s.Runner.Branch))
 	}
 	if !res.Checks[0].Pass {
-		for _, n := range []string{"scope", "commits", "tests", "pr"} {
+		for _, n := range []string{"scope", "commits", "ran-tests", "tests", "pr"} {
 			skip(n, "no change to grade")
 		}
 		return res, nil
@@ -225,6 +235,19 @@ func (g *Grader) Grade(ctx context.Context, c Case, s Subject) (Result, error) {
 		return res, err
 	}
 	add("commits", commitsOK(c.Checks.Commits, subjects) == "", orDefault(commitsOK(c.Checks.Commits, subjects), fmt.Sprintf("%d commit(s), subjects fit the repo style", len(subjects))))
+
+	if rc := c.Checks.RanTests; rc != nil {
+		pats, err := compileAll(rc.Commands)
+		switch {
+		case err != nil:
+			return res, err
+		case len(s.Transcript) == 0:
+			skip("ran-tests", "no transcript to inspect")
+		default:
+			ok, detail := ranTests(s.Transcript, pats)
+			add("ran-tests", ok, detail)
+		}
+	}
 
 	if tc := c.Checks.Tests; tc != nil {
 		files, err := w.tree(ctx)
