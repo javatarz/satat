@@ -44,7 +44,10 @@ const (
 )
 
 var (
-	digestRE  = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
+	// An image is pinned by a digest (repo@sha256:...) or by its bare image ID (sha256:...), the
+	// content hash a local build has on a daemon with the classic image store. Either names one
+	// content; a tag alone does not.
+	digestRE  = regexp.MustCompile(`(^|@)sha256:[0-9a-f]{64}$`)
 	uidgidRE  = regexp.MustCompile(`^([1-9][0-9]*):([1-9][0-9]*)$`)
 	envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	volumeRE  = regexp.MustCompile(`^satat-[a-zA-Z0-9][a-zA-Z0-9_.-]{0,190}$`)

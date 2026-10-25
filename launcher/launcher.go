@@ -18,7 +18,7 @@ import (
 // workflow input, issue text or agent output can change one (ADR 0027).
 type Lane struct {
 	Name string
-	// Image must be pinned by digest (repo[:tag]@sha256:...).
+	// Image must be pinned by digest (repo[:tag]@sha256:...) or by its bare image ID (sha256:...).
 	Image string
 	// User is a numeric uid:gid, never root. Defaults to 10001:10001.
 	User string

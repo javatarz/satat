@@ -523,3 +523,21 @@ func TestEgressProxyRequestPassesItsFloorAndTheFloorRefuses(t *testing.T) {
 		})
 	}
 }
+
+func TestImagePinAcceptsADigestOrAnImageIDButNotATag(t *testing.T) {
+	h := strings.Repeat("a", 64)
+	for ref, ok := range map[string]bool{
+		"busybox@sha256:" + h:           true,
+		"busybox:1.37@sha256:" + h:      true,
+		"sha256:" + h:                   true,
+		"busybox:latest":                false,
+		"busybox":                       false,
+		"sha256:abc":                    false,
+		"x-sha256:" + h:                 false,
+		"busybox@sha256:" + h + "extra": false,
+	} {
+		if digestRE.MatchString(ref) != ok {
+			t.Errorf("digestRE(%q) = %v, want %v", ref, !ok, ok)
+		}
+	}
+}

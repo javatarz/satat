@@ -113,6 +113,9 @@ func buildEgressImage(api *client.Client) (string, error) {
 	if d := insp.Descriptor; d != nil {
 		cands = append([]string{tag + "@" + d.Digest.String(), "satat-egress-test@" + d.Digest.String()}, cands...)
 	}
+	// On the classic image store (a CI runner) a local build has no repo digest and only its bare
+	// image ID names it.
+	cands = append(cands, insp.ID)
 	for _, ref := range cands {
 		if _, err := api.ImageInspect(ctx, ref); err == nil {
 			return ref, nil

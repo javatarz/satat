@@ -60,6 +60,9 @@ How the Docker launcher meets what ADR 0024 required of the Kubernetes one:
   `CLAUDE_CODE_OAUTH_TOKEN`, is passed as an env var by name (the form the #102 spike verified).
   That is a prototype shortcut: this step container holds that token, unlike GitHub credentials
   (ADR 0025), and a later card replaces it with a proxy that injects it.
+- **Image pin.** A lane's image, and the egress proxy's, is `repo[:tag]@sha256:<digest>` or a bare
+  `sha256:<image id>`. Both name one content; a tag alone is refused. The bare ID is what a local
+  build has on a daemon with the classic image store.
 - **Hardening floor** (replaces the Pod Security `restricted` floor of ADR 0024): non-root
   user, `cap-drop ALL`, `no-new-privileges`, read-only root filesystem with a tmpfs `/tmp` and
   a tmpfs `/workspace` (memory-backed, so it counts against the lane's memory limit; a disk volume
