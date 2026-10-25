@@ -133,3 +133,49 @@ runs the same pipeline as the hand trigger, started by an event (`satat-enqueue`
 - **Not done:** the webhook intake (slice 6), retries (set to 0 because the launcher adopts a re-delivered step),
   the Claude-lane back-off, and a restart test (kill the worker mid-step and watch the next attempt adopt it) on
   the real stack.
+
+## Cache volumes for #120 (2026-10-25)
+
+Checks behind the launcher's cache volumes (ADR 0033), on Docker 29.5.2 (Ubuntu 24.04 VM, overlayfs).
+Each step ran with the launcher's flags: read-only root, uid 10001, `--cap-drop ALL`,
+`no-new-privileges`, `/tmp` as a `nosuid,nodev` tmpfs. The test image was busybox with
+`/cache/go-mod` owned by 10001 and holding one file, `seed`.
+
+| Case | Result |
+|---|---|
+| New named volume mounted at `/cache/go-mod`, copy-up on (the launcher's cache mounts) | `10001:10001 755`, `seed` copied in, writable by the step |
+| Same with `volume-nocopy` (the input volume's setting) | `0:0 755`, empty, `Permission denied` for the step |
+| Volume made by `volume create` first, then mounted | copied on first mount, as above |
+| Volume first mounted where the image has no `/cache/go-mod`, then in the image above | first `0:0`; second mount copied and became `10001:10001` |
+| Used volume (holds a file) mounted again | not re-seeded |
+| Volume emptied by a step, then mounted again | **re-seeded**: `seed` is back |
+| `/proc/mounts` | `/tmp` is `tmpfs ... nosuid,nodev,noexec`; the cache is `ext4 rw` with no `noexec` |
+| Run a script from `/tmp`, then the same script from the cache | `Permission denied`, then it ran |
+| `system df -v` while a running container holds the volume, then after it exits | `links=1`, then `links=0` |
+| `volume rm` while held | refused: `volume is in use` |
+| `volume create` on an existing name with other labels | succeeds and returns the existing volume, labels unchanged |
+
+What this settles:
+
+- **Copy-up carries the image's ownership into a new cache volume,** so caches need no chown and the
+  step stays non-root. It also copies the directory's contents, and does so again whenever the volume is
+  empty at mount time. The image's `/cache/*` directories should therefore be empty.
+- **A cache volume made before the image had the directory is root-owned, but heals.** While it is
+  empty, the next mount in an image that has the directory copies it again. A persistent cache can only
+  stay root-owned if something non-empty got into it, which a non-root step cannot do.
+- **`/tmp` is `noexec` even though the launcher does not ask for it:** Docker's tmpfs default adds it.
+  A cache volume is not `noexec`, so `/cache/tmp` works as `TMPDIR` for builds that execute what they
+  unpack. The launcher keeps `/tmp` as it is.
+- **Use counts and the in-use refusal are both real.** The cache reaper skips any volume `df` reports
+  with links, and if a step attaches one after the read, Docker refuses the removal.
+- **Creating a volume is not a check that it is ours.** An existing name comes back with its own labels
+  and no error, so the launcher compares labels, driver and options before it mounts a volume it did
+  not just make. A test creates a `satat-` volume that is a host bind in disguise and checks the
+  launcher refuses it and leaves it in place.
+- **The cache reaper needs `SYSTEM: 1` on the socket proxy.** Volume sizes and use counts come only from
+  `GET /system/df`. In the pinned proxy's `haproxy.cfg` that flag allows every path under `/system`;
+  the launcher calls only that one. Whether the Engine API has any write endpoint under `/system` was
+  not checked.
+
+Not verified here: the real `claude` image with its cache env vars (it is not built on this machine),
+how long `/system/df` takes with large caches, and a cache volume filling the VM's disk.
