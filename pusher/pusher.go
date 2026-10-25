@@ -61,6 +61,7 @@ var (
 	repoRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
 	baseRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_./-]{0,99}$`)
 	runRE  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.-]{0,62}$`)
+	keyRE  = regexp.MustCompile(`^[0-9a-f]{6,64}$`)
 	shaRE  = regexp.MustCompile(`^[0-9a-f]{40}$`)
 )
 
@@ -310,6 +311,14 @@ func Body(req Request) string {
 	return b.String()
 }
 
+// apiError is a non-2xx answer from GitHub.
+type apiError struct {
+	Status int
+	msg    string
+}
+
+func (e *apiError) Error() string { return e.msg }
+
 func (p *Pusher) api(ctx context.Context, method, path string, body, into any) error {
 	var rd io.Reader
 	if body != nil {
@@ -336,7 +345,7 @@ func (p *Pusher) api(ctx context.Context, method, path string, body, into any) e
 	defer resp.Body.Close()
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("github %s %s: %s: %s", method, path, resp.Status, p.scrub(firstLines(string(data), 5)))
+		return &apiError{Status: resp.StatusCode, msg: fmt.Sprintf("github %s %s: %s: %s", method, path, resp.Status, p.scrub(firstLines(string(data), 5)))}
 	}
 	if into != nil {
 		return json.Unmarshal(data, into)
