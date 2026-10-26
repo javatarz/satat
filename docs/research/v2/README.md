@@ -15,6 +15,7 @@ starting with [ADR 0021](../../adr/0021-adopt-platform-plumbing.md).
 | [lane-started-runs.md](lane-started-runs.md) | How a lane is marked as running an agent, why lane-started runs are refused on agent lanes, and what #129 should change |
 | [secret-store.md](secret-store.md) | Where loaded secrets live and who may read them: OpenBao with one identity per component, the same policies on Compose (AppRole) and Kubernetes (service accounts), a Compose spike, and the alternatives. Feeds ADR 0032 |
 | [payload-limits.md](payload-limits.md) | Measured size ceilings of the two worker-to-pusher handoff routes (a Hatchet task input and an HTTP `PUT`), GitHub's limits, the Git LFS refusal, a proposed bundle ceiling, and whether a Hatchet token can be scoped to one task. Feeds #156 |
+| [runtime-libraries.md](runtime-libraries.md) | Whether one Go or Python library can launch a step on Docker, Kubernetes, ECS, Cloud Run and ACA jobs: none meets the launcher contract; keep Docker + Kubernetes, with a bridge under the Kubernetes launcher (EKS Fargate) as the route to serverless capacity. Feeds #213 |
 | [notes/](notes/) | Raw per-topic research with full citations, used as input to the files above. Notes may describe options that were later rejected |
 
 The current architecture is kept in the onboarding guide
