@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"regexp"
 	"strings"
 	"syscall"
 	"time"
@@ -109,9 +108,6 @@ func (t *tailBuffer) String() string {
 	return string(b)
 }
 
-// fenceCloseRE matches a closing fence tag in any case, with stray spaces.
-var fenceCloseRE = regexp.MustCompile(`(?i)<\s*/\s*hook-output`)
-
 // RehearsalPrompt is what the agent is told when the repo's pre-push hooks failed. The hook
 // output is the repo's own tooling, but it can quote file contents, so it is fenced as data.
 //
@@ -126,7 +122,7 @@ func RehearsalPrompt(in Input, output string, attempt int) string {
 		output = "[earlier output cut]\n" + output[cut:]
 	}
 	// Output that quotes file contents must not be able to close the fence.
-	output = fenceCloseRE.ReplaceAllString(output, "<\\/hook-output")
+	output = neutralise(output)
 	return fmt.Sprintf(`An earlier session in this clone worked on the task below and committed its work. The repo's pre-push hooks then failed when those commits were pushed to a local scratch repository (this is a rehearsal; nothing was sent to GitHub). Look at the commits on this branch, fix what the hooks report and commit the fix. Attempt %d of %d.
 
 Rules:
