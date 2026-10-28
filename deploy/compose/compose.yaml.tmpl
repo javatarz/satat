@@ -100,6 +100,9 @@ services:
       HATCHET_CLIENT_SERVER_URL: http://hatchet-lite:8888
       DOCKER_HOST: tcp://docker-proxy:2375
       SATAT_CONFIG: /etc/satat/satat.yaml
+      # sha256 of satat.yaml, set by `satat deploy up`. The worker does not read it: it is here so an
+      # edited satat.yaml changes the worker's config and compose recreates it, remounting the file.
+      SATAT_CONFIG_SHA256: ${SATAT_CONFIG_SHA256:-}
       HOME: /tmp
       # Repos (owner/name, comma-separated) the webhook intake may queue. Empty turns intake off.
       SATAT_INTAKE_REPOS: ${SATAT_INTAKE_REPOS:-}

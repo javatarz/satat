@@ -4,7 +4,9 @@ package compose
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -101,6 +103,10 @@ func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 const (
 	keyPassword = "POSTGRES_PASSWORD"
 	keyToken    = "HATCHET_CLIENT_TOKEN"
+	// keyConfigHash carries satat.yaml's sha256 into the worker's environment. The worker mounts
+	// satat.yaml as a single file, which an editor's save replaces, and compose recreates a container
+	// only when its config changes; the hash makes an edited satat.yaml such a change.
+	keyConfigHash = "SATAT_CONFIG_SHA256"
 
 	defaultPoll            = 2 * time.Second
 	defaultPlatformTimeout = 3 * time.Minute
@@ -127,6 +133,11 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	if !bytes.Equal(have, files["compose.yaml"]) {
 		return fmt.Errorf("%s is out of date: run satat deploy render", t.file())
 	}
+	mounted, err := os.ReadFile(t.configFile())
+	if err != nil {
+		return fmt.Errorf("reading the worker's config: %w", err)
+	}
+	configHash := sha256.Sum256(mounted)
 
 	envFile := t.envFile()
 	for _, key := range []string{keyPassword, keyToken} {
@@ -172,7 +183,8 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 
 	// The worker is always brought up, so new worker code or a changed environment rolls out;
 	// compose leaves an unchanged container alone. This is the only command that gets the real
-	// secrets, and only in its environment.
+	// secrets, and only in its environment. The config hash is part of that environment, so an
+	// edited satat.yaml rolls out too.
 	env := os.Environ()
 	names := make([]string, 0, len(secrets))
 	for name := range secrets {
@@ -182,6 +194,7 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	for _, name := range names {
 		env = append(env, name+"="+secrets[name])
 	}
+	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
 	t.warnRunningAgents(ctx)
 	t.say("building and starting worker")
 	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
@@ -437,6 +450,9 @@ func (t *Target) env() []string {
 
 func (t *Target) file() string    { return filepath.Join(t.Dir, "compose.yaml") }
 func (t *Target) envFile() string { return filepath.Join(t.Dir, ".env") }
+
+// configFile is the satat.yaml compose.yaml mounts into the worker (./satat.yaml).
+func (t *Target) configFile() string { return filepath.Join(t.Dir, "satat.yaml") }
 
 func (t *Target) say(format string, args ...any) {
 	if t.Out != nil {
