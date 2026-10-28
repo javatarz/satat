@@ -44,6 +44,15 @@ const AccountKeyExpr = "'account-' + input.account"
 // AccountKey is the rate-limit key of a credential account.
 func AccountKey(account string) string { return "account-" + account }
 
+// accountRateLimit is the task's rate limit: one unit of its account's key per run. The limit
+// itself belongs to the Limiter. A dynamic key with no limit value is upserted with limit 0 each
+// time a run is queued (Hatchet Lite v0.110.5), which closes the lane behind every run; -1 is
+// Hatchet's placeholder for "do not upsert".
+func accountRateLimit() *hatchet.RateLimit {
+	key, units, limit, window := AccountKeyExpr, 1, "-1", hatchet.Second
+	return &hatchet.RateLimit{Key: key, KeyExpr: &key, Units: &units, LimitValueExpr: &limit, Duration: &window}
+}
+
 // RateLimitError is returned by an attempt whose step hit the subscription limit. It is the only
 // error Register leaves retryable.
 type RateLimitError struct {

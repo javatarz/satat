@@ -189,6 +189,22 @@ func TestOpenSetsEveryAccount(t *testing.T) {
 	}
 }
 
+// With a dynamic key and no limit value, Hatchet takes the limit as 0 and upserts it whenever a run
+// is queued, closing the account's lane behind every run until the worker reopens it. -1 is
+// Hatchet's "do not upsert" placeholder, so the limit stays what the Limiter set.
+func TestAccountRateLimitLeavesTheLimitToTheLimiter(t *testing.T) {
+	rl := accountRateLimit()
+	if rl.LimitValueExpr == nil || *rl.LimitValueExpr != "-1" {
+		t.Fatalf("LimitValueExpr = %v, want -1 so Hatchet never upserts the account's limit", rl.LimitValueExpr)
+	}
+	if rl.Key != AccountKeyExpr || rl.KeyExpr == nil || *rl.KeyExpr != AccountKeyExpr {
+		t.Errorf("key = %q / %v, want %q", rl.Key, rl.KeyExpr, AccountKeyExpr)
+	}
+	if rl.Units == nil || *rl.Units != 1 {
+		t.Errorf("units = %v, want 1", rl.Units)
+	}
+}
+
 type fakeGate struct {
 	account string
 	until   time.Time

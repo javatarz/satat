@@ -354,7 +354,6 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 	// a duplicate queued behind a cap is cancelled at once, whereas with the key last both ran in turn.
 	one, cancelNewest := int32(1), hatchet.CancelNewest
 	caps = append([]hatchet.Concurrency{{Expression: spec.DedupeKey, MaxRuns: &one, LimitStrategy: &cancelNewest}}, caps...)
-	keyExpr, units, window := AccountKeyExpr, 1, hatchet.Second
 	wf := client.NewWorkflow(spec.Name,
 		hatchet.WithWorkflowEvents(spec.Events...),
 		hatchet.WithWorkflowConcurrency(caps...),
@@ -387,7 +386,7 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 		// Close, so an instant retry could still run. Verified against Hatchet Lite v0.110.5.
 		hatchet.WithRetryBackoff(5, 5),
 		// The retry waits on the account's rate limit, which the Gate closes until the reset.
-		hatchet.WithRateLimits(&hatchet.RateLimit{Key: keyExpr, KeyExpr: &keyExpr, Units: &units, Duration: &window}),
+		hatchet.WithRateLimits(accountRateLimit()),
 	)
 	return wf, nil
 }
