@@ -10,8 +10,9 @@ two sentences that restrict it (see [Terms](#terms)). Not legal advice.
 
 ## Setup
 
-- Docker Compose on colima, run 2026-10-27 and 2026-10-28. The harness was `docs/scratch/155/`
-  (gitignored, not committed). Stacks were removed with `down -v` after each run.
+- Docker Compose on colima, run 2026-10-27 and 2026-10-28. The harness and raw results are on the
+  throwaway branch `prototype/155-gateway-proxy` under `docs/scratch/155/`, never merged. Stacks
+  were removed with `down -v` after each run.
 - LiteLLM 1.106.4 (`docker.io/litellm/litellm`; the GHCR image returned 403), Postgres 15.6, an
   OpenTelemetry collector with a debug exporter.
 - OpenBao 2.7.2 in dev mode, laid out as ADR 0032: KV v2 mount `satat/`, entry
@@ -29,7 +30,7 @@ two sentences that restrict it (see [Terms](#terms)). Not legal advice.
 |---|---|---|
 | 1 | Upstream OAuth | **Pass.** `claude -p` worked with only a virtual key in the lane. Needs managed-settings changes (finding 1). |
 | 2 | Token never in the lane | **Pass.** Not in the lane's files, env, `/proc` or process list, nor in responses on 19 routes, LiteLLM logs, Postgres or OTLP spans. A planted `ANTHROPIC_API_KEY` is refused (exit 1). |
-| 3 | Per-step key | **Pass.** Models list, expiry and deletion enforced. Budget is a soft cap (finding 4). A non-admin user can mint (finding 5). |
+| 3 | Per-step key | **Pass.** Models list, expiry and deletion enforced. The budget overshoots by less than one call (finding 4). The worker mints and deletes keys with a non-admin LiteLLM user's key read from OpenBao (finding 5). |
 | 4 | Reach | **Pass.** The lane has no DNS or route out and reaches only LiteLLM. Admin routes refuse a virtual key. |
 | 5 | Token delivery | **Pass.** OpenBao Agent logs in and runs LiteLLM. Rotation without a rebuild in about 20 s (finding 6). |
 | 6 | Observability | **Pass.** Access log, spend per key and OTLP spans. Prompts in spans unless turned off (finding 7). |
@@ -57,19 +58,38 @@ two sentences that restrict it (see [Terms](#terms)). Not legal advice.
      (`call_type: pass_through_endpoint`).
    - Config: `ANTHROPIC_API_KEY` in LiteLLM's environment holds the token for this route; the lane's
      base URL is `http://litellm:4000/anthropic`.
-3. **Set `allowed_routes` on every key.** `/anthropic` forwards any path with the token. The token's
-   narrow scope already refuses profile, usage and organization endpoints (403).
-   `allowed_routes: ["/anthropic/v1/messages"]` on the key blocks every other path, and Claude Code
-   still works.
-4. **The budget is a soft cap.** LiteLLM checks recorded spend before each call and writes spend
-   about 12 s after it. With `max_budget` of 1e-6, the first call passed and the second got 422
-   "Budget has been exceeded!". Calls in flight in that window can overshoot. How far under
-   concurrent calls was not measured.
-5. **The minter does not need the master key.** A virtual key cannot mint (401). A LiteLLM
-   `internal_user` (here `satat-minter`, with its own model list and total budget) can create and
-   delete only its own keys and cannot touch users, models or config. Its keys may ask for more,
-   but calls are capped by the user's model list (403) and total budget (422 "User=satat-minter over
-   budget"). The minter's own key can also call models.
+3. **`/anthropic` forwards any path, and only an admin can narrow a key.** The token's own scope
+   (inference only) refuses profile, usage, organization and files endpoints (403); `/v1/models`
+   answers.
+   - `allowed_routes: ["/anthropic/v1/messages"]` on a key blocks every other path, and Claude Code
+     still works.
+   - But a non-admin minter gets 403 "Only proxy admins can set `allowed_routes` on a key. Use
+     `key_type` to pick a preset route bucket instead." Its keys use `key_type: "llm_api"`, which
+     still reaches any `/anthropic/*` path.
+   - So the choice is a minter that is a proxy admin (can change models and config, read all spend)
+     or a non-admin minter whose keys rely on the token's scope for paths beyond `/v1/messages`.
+4. **The budget overshoots by less than one call.** Spend is written about 12 s after a call. With
+   `max_budget` of 1e-6, the first call passed and the second got 422 "Budget has been exceeded!".
+   Under concurrency (Haiku 4.5 on `/anthropic`, about $0.0015 a call), only a few calls were
+   admitted and the rest refused at once; a second wave after spend landed was all 422:
+
+   | Concurrent calls | Budget | Admitted | Final spend |
+   |---|---|---|---|
+   | 20 | $0.002 | 2 | $0.003038 |
+   | 20 | $0.01 | 7 | $0.010633 |
+   | 40 | $0.005 | 4 | $0.006076 |
+
+   How LiteLLM limits concurrent calls was not read from its source.
+5. **The worker mints with a non-admin key from OpenBao.** A virtual key cannot mint (401). A
+   LiteLLM `internal_user` (here `satat-minter`, with its own model list and total budget) can
+   create and delete only its own keys and cannot touch users, models or config. Its keys may ask
+   for more, but calls are capped by the user's model list (403) and total budget (422
+   "User=satat-minter over budget"). The minter's own key can also call models.
+   - Tested end to end: the operator piped the minter key into OpenBao as `litellm-minter-key`,
+     readable only by a `worker` AppRole bound to the worker's address. A container at that address
+     logged in, was refused `claude-oauth-token`, read the minter key, minted a step key (the lane's
+     `claude -p` answered) and deleted it (the next call got 401). The same AppRole from another
+     address was refused.
 6. **OpenBao Agent runs LiteLLM.** LiteLLM's built-in Vault secret manager is premium-only, so the
    `bao` binary is added to the LiteLLM image and runs as its entrypoint: AppRole auto-auth,
    `env_template` for the token, `exec` of LiteLLM's entrypoint with
@@ -89,8 +109,9 @@ two sentences that restrict it (see [Terms](#terms)). Not legal advice.
 8. **Both routes draw from the plan, not extra usage.** Streamed calls on 2026-10-28 reported
    `representative-claim: five_hour`, `overage-status: rejected` (`org_level_disabled`) and the same
    utilization on `/v1/messages`, on `/anthropic`, and on a bare `/v1/messages` call with no Claude
-   Code identity. These were tiny requests; a full session on `/v1/messages` was not re-measured
-   (see [Hermes](#hermes-agent)).
+   Code identity. A full Claude Code session on `/v1/messages` (3 turns, tool use, 6 upstream
+   calls) also succeeded. With extra usage disabled, a call classed as extra usage would have been
+   refused (see [Hermes](#hermes-agent)); none was.
 9. **Side finding for #174:** Claude Code 2.1.301 warns that the lane's managed `Write(...)` deny
    rules are never matched ("only Edit(path) rules are. Use Edit(...) instead").
 
@@ -141,9 +162,12 @@ What Hermes' own plugin will not do is what #155 tests: a proxy holding the subs
 ## Recommendation
 
 - **Proxy:** LiteLLM 1.106.4 on the `/anthropic` pass-through route, OpenBao Agent as its
-  entrypoint, `turn_off_message_logging: true`. Per-step keys with `duration`, `models`,
-  `max_budget` and `allowed_routes: ["/anthropic/v1/messages"]`, minted and deleted by a LiteLLM
-  `internal_user` whose own budget caps the total. No alternative proxy was needed.
+  entrypoint, `turn_off_message_logging: true`. No alternative proxy was needed.
+- **Minting:** the worker, which runs the launcher, reads a LiteLLM `internal_user` key from
+  OpenBao and mints each step key with `duration`, `models`, `max_budget` and
+  `key_type: "llm_api"`, then deletes it at step end. The user's own budget caps the total. Paths
+  beyond `/v1/messages` rely on the token's inference-only scope; locking keys to
+  `/anthropic/v1/messages` needs an admin minter instead.
 - **Before building it,** the owner decides on the terms. In order of risk:
   1. The proxy holds a Console API key (or workload identity federation) instead of the
      subscription token. Covered by the API-key safe harbour; billed at API rates.
@@ -166,7 +190,7 @@ Inference from ADR 0032 and `agent-sandbox-spike.md`:
 
 ## Not covered
 
-- Budget overshoot under concurrent calls.
 - The real upstream headers on the wire with the real token (a capture would log it); the fake-token
   capture stands in.
-- A full Claude Code session's plan-versus-extra-usage billing on `/v1/messages`.
+- Billing on a bill: plan versus extra usage is read from rate-limit headers and from calls not being
+  refused with extra usage off.
