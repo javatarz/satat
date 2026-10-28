@@ -173,8 +173,8 @@ What Hermes' own plugin will not do is what #155 tests: a proxy holding the subs
      subscription token. Covered by the API-key safe harbour; billed at API rates.
   2. Pass-through with the token in the lane: Claude Code holds `CLAUDE_CODE_OAUTH_TOKEN` and
      LiteLLM forwards it. Documented, but breaks "the token never in the lane"; it would need the
-     fallback hardening #155 names (separate UID, scrubbed subprocess env, egress through the proxy
-     only).
+     fallback B hardening in `secrets-decisions.md` §2 (separate UID, scrubbed subprocess env, egress
+     through the proxy only).
   3. This spike's design: the proxy holds the subscription token. Works, closest to the restricting
      text, riskier from 2026-11-12. The legal page suggests asking Anthropic sales for a definite
      answer.
