@@ -1,0 +1,9 @@
+# PROTOTYPE for #155: print every span LiteLLM sends.
+receivers:
+  otlp:
+    protocols: {http: {endpoint: 0.0.0.0:4318}}
+exporters:
+  debug: {verbosity: detailed}
+service:
+  pipelines:
+    traces: {receivers: [otlp], exporters: [debug]}

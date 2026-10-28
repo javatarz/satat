@@ -1,0 +1,41 @@
+{
+  "forceLoginMethod": "claudeai",
+  "allowedProviders": [
+    "customEndpoint"
+  ],
+  "permissions": {
+    "deny": [
+      "Bash(git commit --no-ve*)",
+      "Bash(git commit * --no-ve*)",
+      "Bash(git commit -n)",
+      "Bash(git commit -n *)",
+      "Bash(git commit * -n)",
+      "Bash(git commit * -n *)",
+      "Bash(git push --no-ve*)",
+      "Bash(git push * --no-ve*)",
+      "Edit(/etc/claude-code/**)",
+      "Write(/etc/claude-code/**)",
+      "Edit(/usr/local/lib/satat/**)",
+      "Write(/usr/local/lib/satat/**)",
+      "Edit(**/.claude/settings*.json)",
+      "Write(**/.claude/settings*.json)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "onFailure": "block",
+            "command": "/usr/local/bin/node /usr/local/lib/satat/hooks/guard-git-hooks.js"
+          }
+        ]
+      }
+    ]
+  },
+  "env": {
+    "ANTHROPIC_BASE_URL": "http://litellm:4000/anthropic"
+  }
+}

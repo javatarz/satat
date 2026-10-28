@@ -1,0 +1,9 @@
+# PROTOTYPE for #155: upstream is a header listener, token is fake.
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "anthropic/*"
+      api_base: http://upstream:4000
+      api_key: sk-ant-oat01-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+general_settings:
+  master_key: sk-placeholder-master

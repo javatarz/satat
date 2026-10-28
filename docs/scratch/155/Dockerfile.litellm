@@ -1,0 +1,7 @@
+# PROTOTYPE for #155: LiteLLM started by OpenBao Agent, which holds the AppRole login and injects the token.
+FROM docker.io/openbao/openbao:latest AS bao
+FROM docker.io/litellm/litellm:latest
+COPY --from=bao /usr/bin/bao /usr/local/bin/bao
+COPY bao-agent.hcl /etc/bao-agent.hcl
+ENTRYPOINT ["bao", "agent", "-config=/etc/bao-agent.hcl"]
+CMD []

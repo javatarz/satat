@@ -1,0 +1,51 @@
+# PROTOTYPE for #155, wipe me. The lane reaches only LiteLLM; LiteLLM alone reaches the internet.
+name: satat-155
+services:
+  db:
+    image: postgres:15.6@sha256:1ebd963e5c598f944a4e9ba27de4c95289d663dcc73731025aa53c5254094d8f
+    environment: {POSTGRES_USER: litellm, POSTGRES_PASSWORD: placeholder, POSTGRES_DB: litellm}
+    networks: [gateway]
+  openbao:
+    image: docker.io/openbao/openbao:latest
+    command: ["server", "-dev", "-dev-root-token-id=placeholder-root", "-dev-listen-address=0.0.0.0:8200"]
+    cap_add: [IPC_LOCK]
+    networks:
+      secrets: {ipv4_address: 172.31.155.2}
+  litellm:
+    build: {context: ., dockerfile: Dockerfile.litellm}
+    image: satat-155-litellm
+    volumes: ["./litellm.yaml:/app/config.yaml:ro", "litellm-approle:/approle:ro"]
+    environment:
+      LITELLM_MASTER_KEY: sk-placeholder-master
+      DATABASE_URL: postgresql://litellm:placeholder@db:5432/litellm
+      OTEL_EXPORTER: otlp_http
+      OTEL_ENDPOINT: http://otel:4318/v1/traces
+    ports: ["127.0.0.1:4000:4000"]
+    networks:
+      gateway: {}
+      lane: {}
+      egress: {}
+      secrets: {ipv4_address: 172.31.155.10}
+    depends_on: [db, openbao]
+  otel:
+    image: otel/opentelemetry-collector:latest
+    command: ["--config", "/etc/otel.yaml"]
+    volumes: ["./otel.yaml:/etc/otel.yaml:ro"]
+    networks: [gateway]
+  lane:
+    build: {context: ., dockerfile: Dockerfile.lane}
+    image: satat-155-lane
+    profiles: [lane]
+    environment:
+      ANTHROPIC_BASE_URL: http://litellm:4000
+    volumes: ["./lane-probe.sh:/usr/local/bin/lane-probe:ro"]
+    networks: [lane]
+volumes:
+  litellm-approle: {}
+networks:
+  secrets:
+    internal: true
+    ipam: {config: [{subnet: 172.31.155.0/24}]}
+  gateway: {internal: true}
+  lane: {internal: true}
+  egress: {}

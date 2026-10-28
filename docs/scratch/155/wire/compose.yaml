@@ -1,0 +1,15 @@
+# PROTOTYPE for #155, wipe me: LiteLLM -> header listener, fake token.
+name: satat-155-wire
+services:
+  upstream:
+    image: python:3.12-slim
+    command: ["python", "/l.py"]
+    volumes: ["./listener.py:/l.py:ro"]
+  litellm:
+    image: docker.io/litellm/litellm:latest
+    command: ["--config", "/app/config.yaml", "--port", "4000"]
+    volumes: ["./litellm.yaml:/app/config.yaml:ro"]
+    environment:
+      ANTHROPIC_API_KEY: sk-ant-oat01-FAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE
+      ANTHROPIC_API_BASE: http://upstream:4000
+    ports: ["127.0.0.1:4100:4000"]

@@ -1,0 +1,14 @@
+# PROTOTYPE for #155. Any model the CLI asks for goes to Anthropic on the operator's OAuth token.
+model_list:
+  - model_name: "*"
+    litellm_params:
+      model: "anthropic/*"
+      api_key: os.environ/CLAUDE_OAUTH_TOKEN
+
+general_settings:
+  master_key: os.environ/LITELLM_MASTER_KEY
+  database_url: os.environ/DATABASE_URL
+
+litellm_settings:
+  callbacks: ["otel"]
+  turn_off_message_logging: true
