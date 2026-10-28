@@ -38,6 +38,39 @@ The Claude lane image is built locally: `just build-images`, then put the refere
 in `satat.yaml`. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and
 watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#run-it-locally).
 
+### Without 1Password
+
+`just run` reads the worker's three tokens from 1Password. To supply them yourself instead, set
+each `deploy.secrets` entry in `satat.yaml` to `env` (a local change, don't commit it):
+
+```yaml
+deploy:
+  secrets:
+    CLAUDE_CODE_OAUTH_TOKEN: env   # from claude setup-token
+    SATAT_GITHUB_TOKEN: env        # fine-grained PAT: Contents read, Issues read
+    SATAT_PUSH_TOKEN: env          # fine-grained PAT: Contents and Pull requests read/write
+```
+
+`env` means the shell's environment: `satat deploy up` does not read `.env` for these. To have
+mise load `.env` whenever you are in the repo, activate mise in your shell (add
+`eval "$(mise activate zsh)"` to `~/.zshrc`, then open a new shell) and create a
+`mise.local.toml` (gitignored):
+
+```toml
+[env]
+_.file = ".env"
+```
+
+Put the three tokens in `.env` (they are then on disk in plain text, mode 0600), then:
+
+```sh
+mise trust                     # once, so mise loads mise.local.toml
+go run ./cmd/satat deploy up   # creates the Hatchet token on first run, then starts the stack
+```
+
+`go run ./cmd/satat deploy status` and `deploy down` check and stop it. `just doctor` still
+fails its `op` check on this path; the other checks apply.
+
 ## Docs
 
 - [docs/design.md](./docs/design.md) — how Satat works today: flow, launcher, pusher, caps, evals
