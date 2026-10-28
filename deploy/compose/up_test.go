@@ -83,6 +83,9 @@ func setup(t *testing.T) (*Target, *fakeRunner, *bytes.Buffer, config.Config) {
 	if err := os.WriteFile(filepath.Join(dir, "compose.yaml"), files["compose.yaml"], 0o644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "satat.yaml"), []byte(testConfig), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	f := &fakeRunner{t: t, dir: dir}
 	out := &bytes.Buffer{}
 	tg := &Target{Dir: dir, Run: f, Out: out, poll: time.Millisecond, platformTimeout: time.Second, workerTimeout: 50 * time.Millisecond}
@@ -291,6 +294,80 @@ func TestUpSecretsOnlyInChildEnv(t *testing.T) {
 	if strings.Contains(out.String(), token) {
 		t.Error("Hatchet token in Out")
 	}
+}
+
+// The worker mounts satat.yaml as a single file, and compose recreates a container only when its
+// config changes, so an edited satat.yaml would never reach a running worker. Up passes the file's
+// hash into the worker's environment: a changed file changes the environment and rolls the worker.
+func TestUpRollsWorkerWhenSatatYAMLChanges(t *testing.T) {
+	tg, f, _, cfg := setup(t)
+	if !strings.Contains(string(mustRead(t, filepath.Join(tg.Dir, "compose.yaml"))), "SATAT_CONFIG_SHA256: ${SATAT_CONFIG_SHA256:-}") {
+		t.Fatal("compose.yaml does not pass SATAT_CONFIG_SHA256 to the worker")
+	}
+	platformUp, workerUp := true, true
+	f.respond = coldStack(&platformUp, &workerUp)
+	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	hash := func() string {
+		t.Helper()
+		f.calls = nil
+		if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range f.calls {
+			if strings.Join(c.args, " ") != "up -d --build worker" {
+				continue
+			}
+			for _, kv := range c.env {
+				if v, ok := strings.CutPrefix(kv, "SATAT_CONFIG_SHA256="); ok {
+					return v
+				}
+			}
+		}
+		t.Fatal("worker compose up env lacks SATAT_CONFIG_SHA256")
+		return ""
+	}
+
+	first := hash()
+	if len(first) != 64 {
+		t.Fatalf("SATAT_CONFIG_SHA256 = %q, want a sha256 in hex", first)
+	}
+	if again := hash(); again != first {
+		t.Fatalf("hash changed with satat.yaml unchanged: %s then %s", first, again)
+	}
+	if err := os.WriteFile(filepath.Join(tg.Dir, "satat.yaml"), []byte(testConfig+"# edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if edited := hash(); edited == first {
+		t.Fatal("hash unchanged after satat.yaml was edited")
+	}
+}
+
+func TestUpRefusesMissingSatatYAML(t *testing.T) {
+	tg, f, _, cfg := setup(t)
+	platformUp, workerUp := true, true
+	f.respond = coldStack(&platformUp, &workerUp)
+	if err := os.Remove(filepath.Join(tg.Dir, "satat.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	err := tg.Up(context.Background(), cfg, secrets())
+	if err == nil || !strings.Contains(err.Error(), "satat.yaml") {
+		t.Fatalf("err = %v, want an error naming satat.yaml", err)
+	}
+	if slices.Contains(f.summary(), "up -d --build worker") {
+		t.Fatal("worker brought up without satat.yaml to mount")
+	}
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
 }
 
 // Recreating the worker orphans agents still running, so up warns before the worker's up.
