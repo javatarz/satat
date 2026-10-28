@@ -10,11 +10,11 @@ Principles: secrets are as short-lived and as narrowly scoped as possible, minte
 
 ## 2. Claude subscription token: decided 2026-10-17
 
-- Tokens are the operator's own seat, on the operator's own infrastructure, single user. Anthropic's terms (code.claude.com legal and compliance page, read 2026-10-17) restrict third parties that collect, store or intermediate credentials for their users. That does not describe this use. Not legal advice; revisit if anyone else's seat or a second user is ever added.
+- Tokens are the operator's own seat, on the operator's own infrastructure, single user. Anthropic's terms (code.claude.com legal and compliance page, read 2026-10-17) restrict third parties that collect, store or intermediate credentials for their users. That does not describe this use. Not legal advice; revisit if anyone else's seat or a second user is ever added. Corrected 2026-10-28 (#155): the page's "collect, store, or intermediate Claude.ai credentials or session tokens" sentence has no "for their users" limit, and the Usage Policy from 2026-11-12 restricts services "that route requests through consumer subscriptions". Whether Option A is allowed is open; see [claude-gateway-proxy-spike.md](claude-gateway-proxy-spike.md#terms).
 - Option A: the lane pod holds a placeholder `CLAUDE_CODE_OAUTH_TOKEN`, and `ANTHROPIC_BASE_URL` points at the Satat proxy, which injects the real token. The real token lives only with the proxy.
 - Fallback B if the placeholder does not work end to end: the token is in the harness process environment, with a dedicated seat, a separate UID from the agent's shell, `CLAUDE_CODE_SUBPROCESS_ENV_SCRUB`, and egress to `api.anthropic.com` only (through the proxy).
 - Credential accounts (NN12) get a type: `subscription` or `api-federated` (Anthropic Workload Identity Federation: no stored secret, token at most 1 hour, API-billed). Only `subscription` is needed now.
-- To verify: the proxy forwards to the real API with a real token (the #102 probe only saw 500s); the CLI accepts the placeholder.
+- To verify: the proxy forwards to the real API with a real token (the #102 probe only saw 500s); the CLI accepts the placeholder. Verified 2026-10-28 in #155 with LiteLLM.
 
 ## 3. LLM gateway (LiteLLM): decided 2026-10-19
 
