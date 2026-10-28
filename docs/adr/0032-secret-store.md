@@ -60,9 +60,10 @@ operator-only policy, and unsealing itself after a restart.
   per-lane virtual key (about the step timeout, deleted at step end) and points
   `ANTHROPIC_BASE_URL` at the proxy. The lane holds that key, never the long-lived token. The
   proxy is LiteLLM on its `/anthropic` pass-through route, which forwards Claude Code's request
-  unchanged and swaps only the credential. Each key is limited to `/anthropic/v1/messages` and
-  minted and deleted by a LiteLLM non-admin user whose own budget caps the total; the lane's managed
-  settings allow `customEndpoint` and pin the base URL. The same on Compose and Kubernetes.
+  unchanged and swaps only the credential. The worker mints and deletes each key with a LiteLLM
+  non-admin user's key, read from OpenBao as `litellm-minter-key`; that user's budget caps the
+  total. The lane's managed settings allow `customEndpoint` and pin the base URL. The same on
+  Compose and Kubernetes.
 - **GitHub credentials are static entries.** `github-push-token` (a machine user's fine-grained
   token) is readable by the pusher only; `github-read-token` by the worker only. Nothing mints
   tokens in v0.2 (ADR 0025).
@@ -76,7 +77,8 @@ operator-only policy, and unsealing itself after a restart.
 - One more service (about 54 MiB idle) and one more to upgrade. The OpenBao Go client goes into
   the pusher and worker. LiteLLM gets its token from OpenBao Agent, which runs as its entrypoint
   and restarts it when the token changes (LiteLLM's own Vault support is a paid feature). A
-  rotation takes about 20 s and cuts requests in flight.
+  rotation takes about 20 s and cuts requests in flight. A non-admin minter cannot limit a key to
+  `/anthropic/v1/messages`, so other `/anthropic` paths rely on the token's inference-only scope.
 - Until the gateway proxy is built, the worker's policy includes the Claude token
   and the launcher passes it into the Claude step on Compose, as today: the one known break of
   "use, never see". On Kubernetes no interim delivery path is built; Claude steps there wait for
@@ -104,8 +106,7 @@ operator-only policy, and unsealing itself after a restart.
   consumer subscriptions". If the owner rules it out, the proxy holds a Console API key instead
   (billed at API rates), or the token goes back to the lane with the proxy only forwarding it.
   Either is an amendment to this ADR.
-- The gateway proxy on k3d, and its budget overshoot under concurrent calls (the budget is
-  checked before each call against spend written about 12 s later).
+- The gateway proxy on k3d.
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
 - A colima restart; Raft snapshot and restore; anything on EKS.
 
