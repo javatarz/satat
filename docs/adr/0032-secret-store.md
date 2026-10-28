@@ -10,6 +10,10 @@ Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #1
 and ADR 0027's "the pusher runs inside the worker". Leaves ADR 0011 (never in git, Terraform
 state or cloud-init) unchanged. Amends ADR 0025 (2026-10-25): no broker, and the egress proxy holds no secret
 and needs no identity.
+Updated 2026-10-28: the gateway proxy is checked on Compose in
+[claude-gateway-proxy-spike.md](../research/v2/claude-gateway-proxy-spike.md), #155. It works;
+whether Anthropic's terms allow the proxy to hold the subscription token is open (see Not
+verified).
 
 ## Context
 
@@ -54,9 +58,11 @@ operator-only policy, and unsealing itself after a restart.
 - **The Claude token is held by an LLM gateway proxy, not the lane.** The proxy reads
   `claude-oauth-token` under its own identity. Each step gets a short-lived, budget-capped,
   per-lane virtual key (about the step timeout, deleted at step end) and points
-  `ANTHROPIC_BASE_URL` at the proxy. The lane holds that key, never the long-lived token. LiteLLM
-  is the first candidate; any proxy that meets the same properties may replace it. The same on
-  Compose and Kubernetes.
+  `ANTHROPIC_BASE_URL` at the proxy. The lane holds that key, never the long-lived token. The
+  proxy is LiteLLM on its `/anthropic` pass-through route, which forwards Claude Code's request
+  unchanged and swaps only the credential. Each key is limited to `/anthropic/v1/messages` and
+  minted and deleted by a LiteLLM non-admin user whose own budget caps the total; the lane's managed
+  settings allow `customEndpoint` and pin the base URL. The same on Compose and Kubernetes.
 - **GitHub credentials are static entries.** `github-push-token` (a machine user's fine-grained
   token) is readable by the pusher only; `github-read-token` by the worker only. Nothing mints
   tokens in v0.2 (ADR 0025).
@@ -68,8 +74,10 @@ operator-only policy, and unsealing itself after a restart.
 
 - `scripts/compose-up.sh` and `check_op` go; starting Satat no longer needs `op`.
 - One more service (about 54 MiB idle) and one more to upgrade. The OpenBao Go client goes into
-  the pusher, gateway proxy and worker. LiteLLM likely needs OpenBao Agent beside it.
-- Until the gateway proxy is proven (spike below), the worker's policy includes the Claude token
+  the pusher and worker. LiteLLM gets its token from OpenBao Agent, which runs as its entrypoint
+  and restarts it when the token changes (LiteLLM's own Vault support is a paid feature). A
+  rotation takes about 20 s and cuts requests in flight.
+- Until the gateway proxy is built, the worker's policy includes the Claude token
   and the launcher passes it into the Claude step on Compose, as today: the one known break of
   "use, never see". On Kubernetes no interim delivery path is built; Claude steps there wait for
   the proxy. When it lands, the grant moves to the proxy's policy and the worker loses it.
@@ -90,10 +98,16 @@ operator-only policy, and unsealing itself after a restart.
 - k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao (#153). If it
   fails in a way that cannot be fixed, the store choice is reopened for all environments
   together, not split.
-- The Claude CLI through the gateway proxy on the OAuth token, with the token never in the lane
-  and OpenBao Agent feeding the proxy (#155).
+- Whether Anthropic's terms allow a proxy to hold the subscription token. The Claude Code legal
+  page says developers "may not collect, store, or intermediate Claude.ai credentials or session
+  tokens", and the Usage Policy from 2026-11-12 restricts services "that route requests through
+  consumer subscriptions". If the owner rules it out, the proxy holds a Console API key instead
+  (billed at API rates), or the token goes back to the lane with the proxy only forwarding it.
+  Either is an amendment to this ADR.
+- The gateway proxy on k3d, and its budget overshoot under concurrent calls (the budget is
+  checked before each call against spend written about 12 s later).
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
-- A colima restart; OpenBao Agent for LiteLLM; Raft snapshot and restore; anything on EKS.
+- A colima restart; Raft snapshot and restore; anything on EKS.
 
 Revisit when a second cluster must share secrets, when the host stops being trusted (then a
 KMS or hardware seal), or when a secret needs a TTL shorter than a manual rotation.
