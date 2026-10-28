@@ -66,7 +66,8 @@ func (h HatchetRuns) Issues(ctx context.Context) (map[string]bool, error) {
 // collect adds the issues of rows to set. It fails closed: a row it cannot read means a run the
 // poller cannot see, and an issue it cannot see would be queued again every interval. So it is an
 // error when payloads are hidden from the token, or when a satat-issue row has no readable input
-// (for example an offloaded payload).
+// (for example an offloaded payload). Agent runs share the workflow but have no issue, so they are
+// skipped.
 func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
 	for _, row := range rows {
 		if row.PayloadsRestricted != nil && *row.PayloadsRestricted {
@@ -74,6 +75,7 @@ func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
 		}
 		repo, n, ok := inputIssue(row.Input)
 		switch {
+		case inputKind(row.Input) == workflows.KindAgent:
 		case ok:
 			set[Key(repo, n)] = true
 		case strings.HasPrefix(row.DisplayName, workflows.Name) || (row.WorkflowName != nil && strings.HasPrefix(*row.WorkflowName, workflows.Name)):
@@ -81,6 +83,16 @@ func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
 		}
 	}
 	return nil
+}
+
+// inputKind reads a satat-issue run's kind (workflows.KindIssue or KindAgent; empty for an issue)
+// from its input, in either form inputIssue accepts.
+func inputKind(input map[string]any) string {
+	if inner, ok := input["input"].(map[string]any); ok {
+		input = inner
+	}
+	kind, _ := input["kind"].(string)
+	return kind
 }
 
 // inputIssue reads the repo and issue number out of a satat-issue run's input. Hatchet lists a
