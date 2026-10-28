@@ -199,3 +199,25 @@ func TestCollectFailsClosed(t *testing.T) {
 		}
 	}
 }
+
+// Agent runs share the satat-issue workflow (for its caps) but have no issue, so there is nothing
+// to dedupe: the poller skips them rather than failing every poll for RunHistory.
+func TestCollectSkipsAgentRuns(t *testing.T) {
+	wfName := workflows.Name
+	agent := rest.V1TaskSummary{DisplayName: "run-1793150749252", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"kind": workflows.KindAgent, "repo": workflows.AdhocRepo, "lane": "smoke"}, "triggered_by": "event"}}
+	issue := rest.V1TaskSummary{DisplayName: "run-2", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"repo": "me/a", "issue": map[string]interface{}{"number": float64(4)}}}}
+	set := map[string]bool{}
+	if err := collect(set, []rest.V1TaskSummary{agent, issue}); err != nil {
+		t.Fatalf("an agent run must not fail the poll: %v", err)
+	}
+	if len(set) != 1 || !set["me/a#4"] {
+		t.Fatalf("set = %v, want only me/a#4", set)
+	}
+	// Only kind agent is skipped: an issue run (explicit or empty kind) without an issue still fails.
+	for _, kind := range []string{workflows.KindIssue, ""} {
+		row := rest.V1TaskSummary{DisplayName: "run-3", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"kind": kind, "repo": "me/a"}}}
+		if err := collect(map[string]bool{}, []rest.V1TaskSummary{row}); err == nil {
+			t.Errorf("kind %q with no issue: want an error", kind)
+		}
+	}
+}
