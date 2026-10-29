@@ -63,8 +63,11 @@ func (ExecRunner) Run(ctx context.Context, env []string, name string, args ...st
 // Target deploys with Docker Compose in Dir, where compose.yaml and the env file live.
 type Target struct {
 	Dir string
-	Run Runner
-	Out io.Writer
+	// Root is the repo the worker image is built from, when it is not Dir. Empty keeps
+	// compose.yaml's default, its own directory.
+	Root string
+	Run  Runner
+	Out  io.Writer
 	// Reap removes agent containers and volumes left behind, by their satat.* labels. Down calls
 	// it after `docker compose down` when it is set.
 	Reap func(ctx context.Context) (int, error)
@@ -107,6 +110,8 @@ const (
 	// satat.yaml as a single file, which an editor's save replaces, and compose recreates a container
 	// only when its config changes; the hash makes an edited satat.yaml such a change.
 	keyConfigHash = "SATAT_CONFIG_SHA256"
+	// keyBuildContext is the worker's build context, Root, for a satat.yaml outside the repo root.
+	keyBuildContext = "SATAT_BUILD_CONTEXT"
 
 	defaultPoll            = 2 * time.Second
 	defaultPlatformTimeout = 3 * time.Minute
@@ -195,6 +200,9 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 		env = append(env, name+"="+secrets[name])
 	}
 	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
+	if t.Root != "" {
+		env = append(env, keyBuildContext+"="+t.Root)
+	}
 	t.warnRunningAgents(ctx)
 	t.say("building and starting worker")
 	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {

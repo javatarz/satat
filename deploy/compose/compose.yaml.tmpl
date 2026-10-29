@@ -81,7 +81,8 @@ services:
   # still work, but they duplicate it.
   worker:
     build:
-      context: .
+      # The repo, which `satat deploy up` sets when satat.yaml is elsewhere in it (the e2e stack's).
+      context: ${SATAT_BUILD_CONTEXT:-.}
       dockerfile: images/worker/Dockerfile
       args:
         GO_IMAGE: {{.GoImage}}

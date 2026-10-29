@@ -345,6 +345,52 @@ func TestUpRollsWorkerWhenSatatYAMLChanges(t *testing.T) {
 	}
 }
 
+// A config outside the repo root (the e2e stack's, say) still builds the worker from the repo:
+// Up passes Root as the build context. With no Root, compose.yaml's default (its own directory)
+// stands, as before.
+func TestUpBuildsWorkerFromRoot(t *testing.T) {
+	tg, f, _, cfg := setup(t)
+	if !strings.Contains(string(mustRead(t, filepath.Join(tg.Dir, "compose.yaml"))), "context: ${SATAT_BUILD_CONTEXT:-.}") {
+		t.Fatal("compose.yaml does not take the worker's build context from SATAT_BUILD_CONTEXT")
+	}
+	platformUp, workerUp := true, true
+	f.respond = coldStack(&platformUp, &workerUp)
+	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	buildContext := func() (string, bool) {
+		t.Helper()
+		f.calls = nil
+		if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range f.calls {
+			if strings.Join(c.args, " ") != "up -d --build worker" {
+				continue
+			}
+			for _, kv := range c.env {
+				if v, ok := strings.CutPrefix(kv, "SATAT_BUILD_CONTEXT="); ok {
+					return v, true
+				}
+			}
+			return "", false
+		}
+		t.Fatal("no worker compose up")
+		return "", false
+	}
+
+	t.Setenv("SATAT_BUILD_CONTEXT", "")
+	os.Unsetenv("SATAT_BUILD_CONTEXT")
+	if v, ok := buildContext(); ok {
+		t.Errorf("SATAT_BUILD_CONTEXT = %q with no Root, want it unset", v)
+	}
+	tg.Root = "/src/satat"
+	if v, _ := buildContext(); v != "/src/satat" {
+		t.Errorf("SATAT_BUILD_CONTEXT = %q, want Root /src/satat", v)
+	}
+}
+
 func TestUpRefusesMissingSatatYAML(t *testing.T) {
 	tg, f, _, cfg := setup(t)
 	platformUp, workerUp := true, true
