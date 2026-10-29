@@ -111,7 +111,7 @@ We follow these
 1. A short README that says what the code does and how to get started.
 2. A single entry point for every task: one command to set up a workstation, one to run the
    system, and one each to lint and test. Ours is the `justfile`: `just setup`, `just doctor`,
-   `just run`, `just lint`, `just test` and `just build`. New tasks get a recipe there.
+   `just run`, `just up`, `just status`, `just down`, `just lint`, `just test` and `just build`. New tasks get a recipe there.
 3. Fast feedback: linting and tests quick enough to run on every commit.
 4. Pre-commit checks that run the CI safety net locally.
 5. Everything runs locally, without the internet where possible.
