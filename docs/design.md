@@ -490,6 +490,16 @@ go test -p 1 ./...          # needs Docker
 go test -short -p 1 ./...   # skips the tests that start containers
 ```
 
+**End to end.** `just e2e` (the `e2e` build tag) brings a throwaway stack up with `satat deploy up`,
+as the Compose project `satat-e2e` configured in `docs/scratch/e2e/`, drives it with the `satat` CLI
+and takes it down ([#224](https://github.com/javatarz/satat/issues/224)). It checks that `deploy
+up` reaches healthy and changes nothing the second time, that a smoke run and its input go through
+Hatchet, the worker and a step container, that an edited `satat.yaml` reaches the worker, and that
+`deploy down --volumes` leaves nothing behind. Every lane runs a fixed command, so it needs no
+secrets. It refuses to start while a dev stack or any agent container exists: it publishes the same
+ports, and `deploy down` removes every agent container on the host. `SATAT_E2E_KEEP=1` leaves the
+stack up to look at. CI runs it in its own job.
+
 **The platform.** `satat deploy up` brings it up on Compose
 ([ADR 0028](adr/0028-infrastructure-adapter-compose-first.md)). It needs Docker with the `compose`
 plugin (colima and Docker Desktop are what the docs cover) and one source for the secrets: the
