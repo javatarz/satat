@@ -518,7 +518,10 @@ record runs of it.
    the platform's data and the Hatchet token in `.env`, which is dead without that data.
 
    `deploy up` always runs the worker's `compose up`, so a changed worker is recreated, and agents
-   running at that moment are orphaned. An edited `satat.yaml` counts as a change: `deploy up`
+   running at that moment are orphaned. It tags the worker image with a hash of what the build
+   reads (`go.mod`, `go.sum`, every `.go` file, the Dockerfile and `compose.yaml`) and builds only
+   when no image has that tag: a rebuild from cache does not reliably keep the image ID, and a new
+   ID would recreate the worker with nothing changed. An edited `satat.yaml` counts as a change: `deploy up`
    passes its sha256 to the worker as `SATAT_CONFIG_SHA256`, so compose recreates the worker and
    remounts the file (a running worker does not see an edit until then). Orphaned agents: `agent rm` then reports them cancelled while their
    containers keep running, with their tokens, until they exit, the reaper removes them or

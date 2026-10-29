@@ -42,6 +42,10 @@ type fakeRunner struct {
 }
 
 func (f *fakeRunner) Run(_ context.Context, env []string, name string, args ...string) ([]byte, error) {
+	if name == "docker" && len(args) == 3 && args[0] == "image" && args[1] == "inspect" {
+		f.calls = append(f.calls, call{env: env, args: args})
+		return f.respond(args)
+	}
 	prefix := []string{"compose", "-f", filepath.Join(f.dir, "compose.yaml"), "--project-directory", f.dir}
 	if name != "docker" || len(args) < len(prefix) || !slices.Equal(args[:len(prefix)], prefix) {
 		f.t.Fatalf("unexpected command %s %q", name, args)
@@ -63,6 +67,8 @@ func (f *fakeRunner) summary() []string {
 			s = "exec hatchet-lite hatchet-admin"
 		case strings.HasPrefix(s, "exec -T worker /usr/local/bin/satat-worker healthcheck"):
 			s = "exec worker healthcheck"
+		case strings.HasPrefix(s, "image inspect satat-worker:"):
+			s = "image inspect worker"
 		}
 		out = append(out, s)
 	}
@@ -86,6 +92,7 @@ func setup(t *testing.T) (*Target, *fakeRunner, *bytes.Buffer, config.Config) {
 	if err := os.WriteFile(filepath.Join(dir, "satat.yaml"), []byte(testConfig), 0o644); err != nil {
 		t.Fatal(err)
 	}
+	writeSource(t, dir)
 	f := &fakeRunner{t: t, dir: dir}
 	out := &bytes.Buffer{}
 	tg := &Target{Dir: dir, Run: f, Out: out, poll: time.Millisecond, platformTimeout: time.Second, workerTimeout: 50 * time.Millisecond}
@@ -93,10 +100,20 @@ func setup(t *testing.T) (*Target, *fakeRunner, *bytes.Buffer, config.Config) {
 }
 
 // coldStack answers as a stack that starts from nothing and comes up healthy.
+// A running worker means its image exists; otherwise Up has to build it.
 func coldStack(platformUp, workerUp *bool) func([]string) ([]byte, error) {
+	built := *workerUp
 	return func(args []string) ([]byte, error) {
 		s := strings.Join(args, " ")
 		switch {
+		case strings.HasPrefix(s, "image inspect satat-worker:"):
+			if built {
+				return []byte("[{}]"), nil
+			}
+			return nil, errors.New("No such image")
+		case s == "build worker":
+			built = true
+			return nil, nil
 		case s == "ps --all --format json":
 			out := ""
 			if *platformUp {
@@ -109,7 +126,7 @@ func coldStack(platformUp, workerUp *bool) func([]string) ([]byte, error) {
 		case s == "up -d postgres hatchet-lite docker-proxy":
 			*platformUp = true
 			return nil, nil
-		case s == "up -d --build worker":
+		case s == "up -d --no-build worker":
 			*workerUp = true
 			return nil, nil
 		case strings.HasPrefix(s, "exec -T postgres psql"):
@@ -139,7 +156,9 @@ func TestUpRunsInOrder(t *testing.T) {
 		"ps --all --format json",
 		"exec postgres psql",
 		"exec hatchet-lite hatchet-admin",
-		"up -d --build worker",
+		"image inspect worker",
+		"build worker",
+		"up -d --no-build worker",
 		"ps --all --format json",
 	}
 	if got := f.summary(); !slices.Equal(got, want) {
@@ -176,8 +195,8 @@ func TestUpIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The worker's up always runs (compose recreates nothing unchanged); no platform up, no psql,
-	// no hatchet-admin.
-	want := []string{"ps --all --format json", "up -d --build worker", "ps --all --format json"}
+	// no hatchet-admin, and no build: an image with the source's tag exists.
+	want := []string{"ps --all --format json", "image inspect worker", "up -d --no-build worker", "ps --all --format json"}
 	if got := f.summary(); !slices.Equal(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -197,7 +216,7 @@ func TestUpStartsOnlyWhatIsNotHealthy(t *testing.T) {
 	if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"ps --all --format json", "up -d --build worker", "ps --all --format json"}
+	want := []string{"ps --all --format json", "image inspect worker", "build worker", "up -d --no-build worker", "ps --all --format json"}
 	if got := f.summary(); !slices.Equal(got, want) {
 		t.Fatalf("calls = %q, want %q", got, want)
 	}
@@ -259,14 +278,14 @@ func TestUpSecretsOnlyInChildEnv(t *testing.T) {
 	var workerUpEnv []string
 	for _, c := range f.calls {
 		joined := strings.Join(c.args, " ")
-		if joined == "up -d --build worker" {
+		if joined == "up -d --no-build worker" {
 			workerUpEnv = c.env
 		}
 		for name, v := range s {
 			if strings.Contains(joined, v) {
 				t.Errorf("%s value in args of %q", name, joined)
 			}
-			if joined != "up -d --build worker" && slices.Contains(c.env, name+"="+v) {
+			if joined != "up -d --no-build worker" && slices.Contains(c.env, name+"="+v) {
 				t.Errorf("%s value in env of %q", name, joined)
 			}
 		}
@@ -317,7 +336,7 @@ func TestUpRollsWorkerWhenSatatYAMLChanges(t *testing.T) {
 			t.Fatal(err)
 		}
 		for _, c := range f.calls {
-			if strings.Join(c.args, " ") != "up -d --build worker" {
+			if strings.Join(c.args, " ") != "up -d --no-build worker" {
 				continue
 			}
 			for _, kv := range c.env {
@@ -346,48 +365,111 @@ func TestUpRollsWorkerWhenSatatYAMLChanges(t *testing.T) {
 }
 
 // A config outside the repo root (the e2e stack's, say) still builds the worker from the repo:
-// Up passes Root as the build context. With no Root, compose.yaml's default (its own directory)
-// stands, as before.
+// Up passes Root as the build context, and Dir when there is no Root.
 func TestUpBuildsWorkerFromRoot(t *testing.T) {
 	tg, f, _, cfg := setup(t)
 	if !strings.Contains(string(mustRead(t, filepath.Join(tg.Dir, "compose.yaml"))), "context: ${SATAT_BUILD_CONTEXT:-.}") {
 		t.Fatal("compose.yaml does not take the worker's build context from SATAT_BUILD_CONTEXT")
 	}
-	platformUp, workerUp := true, true
-	f.respond = coldStack(&platformUp, &workerUp)
 	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	buildContext := func() (string, bool) {
+	buildContext := func() string {
+		t.Helper()
+		platformUp, workerUp := true, false
+		f.respond = coldStack(&platformUp, &workerUp)
+		f.calls = nil
+		if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+			t.Fatal(err)
+		}
+		for _, c := range f.calls {
+			if strings.Join(c.args, " ") != "build worker" {
+				continue
+			}
+			for _, kv := range c.env {
+				if v, ok := strings.CutPrefix(kv, "SATAT_BUILD_CONTEXT="); ok {
+					return v
+				}
+			}
+			t.Fatal("worker build env lacks SATAT_BUILD_CONTEXT")
+		}
+		t.Fatalf("no worker build in %q", f.summary())
+		return ""
+	}
+
+	if v := buildContext(); v != tg.Dir {
+		t.Errorf("SATAT_BUILD_CONTEXT = %q with no Root, want Dir %s", v, tg.Dir)
+	}
+	tg.Root = t.TempDir()
+	writeSource(t, tg.Root)
+	if v := buildContext(); v != tg.Root {
+		t.Errorf("SATAT_BUILD_CONTEXT = %q, want Root %s", v, tg.Root)
+	}
+}
+
+// Up tags the worker image with a hash of its source and builds only when no image has the tag:
+// a rebuild from cache is not reliably the same image ID, and compose recreates a worker whose
+// image ID changed, orphaning running agents (#224). The tag goes to the build and to the up.
+func TestUpBuildsWorkerOnlyWhenItsSourceChanged(t *testing.T) {
+	tg, f, _, cfg := setup(t)
+	if !strings.Contains(string(mustRead(t, filepath.Join(tg.Dir, "compose.yaml"))), "image: satat-worker:${SATAT_WORKER_TAG:-dev}") {
+		t.Fatal("compose.yaml does not tag the worker image with SATAT_WORKER_TAG")
+	}
+	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	images := map[string]bool{}
+	platformUp, workerUp := true, true
+	f.respond = func(args []string) ([]byte, error) {
+		s := strings.Join(args, " ")
+		if ref, ok := strings.CutPrefix(s, "image inspect "); ok {
+			if images[ref] {
+				return []byte("[{}]"), nil
+			}
+			return nil, errors.New("No such image")
+		}
+		return coldStack(&platformUp, &workerUp)(args)
+	}
+	up := func() (built bool, tag string) {
 		t.Helper()
 		f.calls = nil
 		if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
 			t.Fatal(err)
 		}
 		for _, c := range f.calls {
-			if strings.Join(c.args, " ") != "up -d --build worker" {
-				continue
-			}
-			for _, kv := range c.env {
-				if v, ok := strings.CutPrefix(kv, "SATAT_BUILD_CONTEXT="); ok {
-					return v, true
+			switch strings.Join(c.args, " ") {
+			case "build worker":
+				built = true
+			case "up -d --no-build worker":
+				for _, kv := range c.env {
+					if v, ok := strings.CutPrefix(kv, "SATAT_WORKER_TAG="); ok {
+						tag = v
+					}
 				}
 			}
-			return "", false
 		}
-		t.Fatal("no worker compose up")
-		return "", false
+		if tag == "" {
+			t.Fatal("worker compose up env lacks SATAT_WORKER_TAG")
+		}
+		if built {
+			images["satat-worker:"+tag] = true
+		}
+		return built, tag
 	}
 
-	t.Setenv("SATAT_BUILD_CONTEXT", "")
-	os.Unsetenv("SATAT_BUILD_CONTEXT")
-	if v, ok := buildContext(); ok {
-		t.Errorf("SATAT_BUILD_CONTEXT = %q with no Root, want it unset", v)
+	built, first := up()
+	if !built {
+		t.Fatal("no build with no image for the source")
 	}
-	tg.Root = "/src/satat"
-	if v, _ := buildContext(); v != "/src/satat" {
-		t.Errorf("SATAT_BUILD_CONTEXT = %q, want Root /src/satat", v)
+	if built, again := up(); built || again != first {
+		t.Fatalf("second up: built %v, tag %s then %s; want no build and the same tag", built, first, again)
+	}
+	if err := os.WriteFile(filepath.Join(tg.Dir, "main.go"), []byte("package main // edited\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if built, edited := up(); !built || edited == first {
+		t.Fatalf("after a .go edit: built %v, tag %s then %s; want a build and a new tag", built, first, edited)
 	}
 }
 
@@ -402,8 +484,26 @@ func TestUpRefusesMissingSatatYAML(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "satat.yaml") {
 		t.Fatalf("err = %v, want an error naming satat.yaml", err)
 	}
-	if slices.Contains(f.summary(), "up -d --build worker") {
+	if slices.Contains(f.summary(), "up -d --no-build worker") {
 		t.Fatal("worker brought up without satat.yaml to mount")
+	}
+}
+
+// writeSource writes the files workerSource reads, so dir can be a worker build context.
+func writeSource(t *testing.T, dir string) {
+	t.Helper()
+	for name, data := range map[string]string{
+		"go.mod":                   "module example\n",
+		"go.sum":                   "",
+		"main.go":                  "package main\n",
+		"images/worker/Dockerfile": "FROM scratch\n",
+	} {
+		if err := os.MkdirAll(filepath.Join(dir, filepath.Dir(name)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(data), 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 }
 
@@ -466,12 +566,12 @@ func TestUpTimeoutReportsFailingCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.respond = func(args []string) ([]byte, error) {
-		switch s := strings.Join(args, " "); s {
-		case "ps --all --format json":
+		switch s := strings.Join(args, " "); {
+		case s == "ps --all --format json":
 			return []byte(healthy + workerBad), nil
-		case "up -d --build worker":
+		case s == "up -d --no-build worker", strings.HasPrefix(s, "image inspect satat-worker:"):
 			return nil, nil
-		case "exec -T worker /usr/local/bin/satat-worker healthcheck":
+		case s == "exec -T worker /usr/local/bin/satat-worker healthcheck":
 			return []byte(`{"status":"unready","failing":{"hatchet":"worker not registered"}}` + "\n"), errors.New("exit status 1")
 		default:
 			return nil, errors.New("unscripted: " + s)

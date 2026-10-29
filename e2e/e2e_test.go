@@ -195,7 +195,7 @@ func testUpAgain(t *testing.T) {
 			t.Logf("which build steps a third build takes from cache:\n%s", buildSteps())
 		}
 	}
-	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres"} {
+	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres", "building the worker image"} {
 		if strings.Contains(out, s) {
 			t.Errorf("second up did %q, want nothing new:\n%s", s, out)
 		}

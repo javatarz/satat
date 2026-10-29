@@ -112,6 +112,13 @@ const (
 	keyConfigHash = "SATAT_CONFIG_SHA256"
 	// keyBuildContext is the worker's build context, Root, for a satat.yaml outside the repo root.
 	keyBuildContext = "SATAT_BUILD_CONTEXT"
+	// keyWorkerTag tags the worker image with a hash of what it is built from (workerSource). A
+	// rebuild from cache is not reliably the same image ID (on the containerd image store it carries
+	// the build's metadata, which varies with the BuildKit version), and compose recreates a
+	// container whose image ID changed, so Up builds only when no image has the tag.
+	keyWorkerTag = "SATAT_WORKER_TAG"
+	// workerImage is the worker image's name in compose.yaml.
+	workerImage = "satat-worker"
 
 	defaultPoll            = 2 * time.Second
 	defaultPlatformTimeout = 3 * time.Minute
@@ -200,12 +207,26 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 		env = append(env, name+"="+secrets[name])
 	}
 	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
+	root := t.Dir
 	if t.Root != "" {
-		env = append(env, keyBuildContext+"="+t.Root)
+		root = t.Root
+	}
+	tag, err := workerSource(root, t.file())
+	if err != nil {
+		return err
+	}
+	image := []string{keyBuildContext + "=" + root, keyWorkerTag + "=" + tag}
+	env = append(env, image...)
+	// The build gets no secret: compose reads the whole file for it, so placeholders do.
+	if _, err := t.Run.Run(ctx, os.Environ(), "docker", "image", "inspect", workerImage+":"+tag); err != nil {
+		t.say("building the worker image %s:%s", workerImage, tag)
+		if _, err := t.compose(ctx, append(t.env(), image...), "build", "worker"); err != nil {
+			return err
+		}
 	}
 	t.warnRunningAgents(ctx)
-	t.say("building and starting worker")
-	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
+	t.say("starting worker")
+	if _, err := t.compose(ctx, env, "up", "-d", "--no-build", "worker"); err != nil {
 		return err
 	}
 	timeout := or(t.workerTimeout, defaultWorkerTimeout)
@@ -218,6 +239,50 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	}
 	t.say("all services healthy")
 	return nil
+}
+
+// workerSource hashes what the worker image is built from: the files images/worker/Dockerfile's
+// build context lets through (Dockerfile.dockerignore: go.mod, go.sum and every .go file), the
+// Dockerfile and composeFile, which holds the base images' digests. It is the image's tag, so it
+// must change whenever the image would. TestWorkerSourceMatchesDockerignore holds the two together.
+func workerSource(root, composeFile string) (string, error) {
+	files := []string{"go.mod", "go.sum", "images/worker/Dockerfile"}
+	err := filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() && d.Name() == ".git" {
+			return filepath.SkipDir
+		}
+		if d.Type().IsRegular() && strings.HasSuffix(d.Name(), ".go") {
+			rel, err := filepath.Rel(root, path)
+			if err != nil {
+				return err
+			}
+			files = append(files, filepath.ToSlash(rel))
+		}
+		return nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("hashing the worker's source: %w", err)
+	}
+	sort.Strings(files)
+	h := sha256.New()
+	for _, f := range files {
+		data, err := os.ReadFile(filepath.Join(root, f))
+		if err != nil {
+			return "", fmt.Errorf("hashing the worker's source: %w", err)
+		}
+		fmt.Fprintf(h, "%s\x00%d\x00", f, len(data))
+		h.Write(data)
+	}
+	compose, err := os.ReadFile(composeFile)
+	if err != nil {
+		return "", fmt.Errorf("hashing the worker's source: %w", err)
+	}
+	fmt.Fprintf(h, "compose.yaml\x00%d\x00", len(compose))
+	h.Write(compose)
+	return hex.EncodeToString(h.Sum(nil))[:24], nil
 }
 
 // warnRunningAgents says when agents are running, because a recreated worker orphans them: they

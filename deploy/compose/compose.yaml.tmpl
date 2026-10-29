@@ -80,17 +80,15 @@ services:
   # other secrets (1Password or env) in order. scripts/hatchet-token.sh and scripts/compose-up.sh
   # still work, but they duplicate it.
   worker:
+    # `satat deploy up` tags the image with a hash of its source and builds only when no image has
+    # that tag, since a rebuild from cache does not reliably keep the image ID and compose recreates
+    # a worker whose image ID changed. `docker compose build` and compose-up.sh use the dev tag.
+    image: satat-worker:${SATAT_WORKER_TAG:-dev}
     build:
       # The repo, which `satat deploy up` sets when satat.yaml is elsewhere in it (the e2e stack's).
       context: ${SATAT_BUILD_CONTEXT:-.}
       dockerfile: images/worker/Dockerfile
-      # A rebuild from cache must give the same image ID, or compose recreates the worker on every
-      # deploy up and orphans running agents. On the containerd image store the build time is part
-      # of the ID twice: in the provenance attestation, and (BuildKit 0.29, Docker 29) in the image's
-      # created time. No attestation, and SOURCE_DATE_EPOCH pins created to 1970.
-      provenance: false
       args:
-        SOURCE_DATE_EPOCH: "0"
         GO_IMAGE: {{.GoImage}}
         BASE_IMAGE: {{.BaseImage}}
     restart: unless-stopped
