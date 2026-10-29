@@ -68,6 +68,9 @@ jobs:
           go-version-file: go.mod
 
       # Compose's recreate decisions depend on the image store, so the log says which one ran.
-      - run: docker info --format 'docker {{.ServerVersion}}, storage driver {{.Driver}}, {{json .DriverStatus}}'
+      - run: |
+          docker info --format 'docker {{.ServerVersion}}, storage driver {{.Driver}}, {{json .DriverStatus}}'
+          docker compose version
+          docker buildx ls
 
       - run: go test -tags e2e -count=1 -timeout 25m -v ./e2e/

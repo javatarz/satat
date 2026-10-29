@@ -186,6 +186,9 @@ func testUpAgain(t *testing.T) {
 	if after := workerFacts(t); after.id != before.id {
 		// Compose recreates a container when its config hash or its image changes; say which.
 		t.Errorf("worker recreated with nothing changed:\n before %+v\n after  %+v\n%s", before, after, out)
+		if before.image != after.image {
+			t.Logf("images:\n before %s\n after  %s", imageFacts(before.image), imageFacts(after.image))
+		}
 	}
 	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres"} {
 		if strings.Contains(out, s) {
@@ -308,6 +311,17 @@ func workerFacts(t *testing.T) facts {
 		t.Fatalf("docker inspect %s printed %q", id, out)
 	}
 	return facts{id: id, image: f[0], configHash: f[1]}
+}
+
+// imageFacts is what can make two builds of the same source differ: the creation time, the layers
+// and the config's labels.
+func imageFacts(id string) string {
+	out, err := exec.Command("docker", "image", "inspect", "--format",
+		`created {{.Created}} layers {{json .RootFS.Layers}} labels {{json .Config.Labels}}`, id).CombinedOutput()
+	if err != nil {
+		return fmt.Sprintf("docker image inspect %s: %v: %s", id, err, out)
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func satatOK(t *testing.T, timeout time.Duration, args ...string) string {
