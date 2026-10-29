@@ -116,10 +116,11 @@ func TestRenderMountsTheSocketOnlyInTheProxy(t *testing.T) {
 	}
 }
 
-// BuildKit's default provenance attestation records when the image was built, so on the containerd
-// image store every rebuild got a new image ID, even from cache, and compose recreated the worker on
-// every deploy up, orphaning running agents. The e2e suite found it (#224).
-func TestRenderBuildsWorkerWithoutProvenance(t *testing.T) {
+// On the containerd image store the build time was part of the worker's image ID, through the
+// provenance attestation and (BuildKit 0.29) the image's created time. So every rebuild got a new ID,
+// even from cache, and compose recreated the worker on every deploy up, orphaning running agents.
+// The e2e suite found it (#224).
+func TestRenderBuildsWorkerReproducibly(t *testing.T) {
 	cfg, err := config.Load("../../satat.yaml")
 	if err != nil {
 		t.Fatal(err)
@@ -127,14 +128,19 @@ func TestRenderBuildsWorkerWithoutProvenance(t *testing.T) {
 	var f struct {
 		Services map[string]struct {
 			Build struct {
-				Provenance *bool `yaml:"provenance"`
+				Provenance *bool             `yaml:"provenance"`
+				Args       map[string]string `yaml:"args"`
 			} `yaml:"build"`
 		} `yaml:"services"`
 	}
 	if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
 		t.Fatal(err)
 	}
-	if p := f.Services["worker"].Build.Provenance; p == nil || *p {
-		t.Fatal("the worker's build does not set provenance: false")
+	build := f.Services["worker"].Build
+	if p := build.Provenance; p == nil || *p {
+		t.Error("the worker's build does not set provenance: false")
+	}
+	if _, ok := build.Args["SOURCE_DATE_EPOCH"]; !ok {
+		t.Error("the worker's build does not set SOURCE_DATE_EPOCH")
 	}
 }

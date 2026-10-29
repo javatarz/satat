@@ -84,10 +84,13 @@ services:
       # The repo, which `satat deploy up` sets when satat.yaml is elsewhere in it (the e2e stack's).
       context: ${SATAT_BUILD_CONTEXT:-.}
       dockerfile: images/worker/Dockerfile
-      # No provenance attestation: it records the build time, so on the containerd image store a
-      # rebuild from cache got a new image ID and deploy up recreated the worker every time.
+      # A rebuild from cache must give the same image ID, or compose recreates the worker on every
+      # deploy up and orphans running agents. On the containerd image store the build time is part
+      # of the ID twice: in the provenance attestation, and (BuildKit 0.29, Docker 29) in the image's
+      # created time. No attestation, and SOURCE_DATE_EPOCH pins created to 1970.
       provenance: false
       args:
+        SOURCE_DATE_EPOCH: "0"
         GO_IMAGE: {{.GoImage}}
         BASE_IMAGE: {{.BaseImage}}
     restart: unless-stopped
