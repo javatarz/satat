@@ -21,24 +21,26 @@ import (
 // a dev stack's (project satat).
 const project = "satat-e2e"
 
-// configTmpl is the stack's satat.yaml. %s is the smoke lane's marker, which the config roll
-// changes. Every lane is agent: false, so no run needs a model or GitHub.
-const configTmpl = `# Written by the e2e tests (e2e/e2e_test.go). Do not edit.
-limits: {global: 2, per_repo: 1, per_account: 1}
-deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}
-lanes:
-` + `  smoke: {agent: false, image: "` + busybox + `", command: ["sh", "-c", "id && echo %s"], ` + laneShape + `}
-` + `  input: {agent: false, image: "` + busybox + `", command: ["cat", "/etc/satat/input.json"], ` + laneShape + `}
-`
+// stackConfig is the stack's satat.yaml. The smoke lane prints marker last, so the config roll can
+// see its edit arrive. Every lane is agent: false, so no run needs a model or GitHub; a test that
+// needs another lane adds one line here.
+func stackConfig(marker string) string {
+	lane := func(name, command string) string {
+		return fmt.Sprintf("  %s: {agent: false, image: %q, command: %s, "+
+			"memory: 128MiB, cpus: 0.25, pids: 16, workspace: 8MiB, timeout: 2m}\n", name, busybox, command)
+	}
+	return "# Written by the e2e tests (e2e/e2e_test.go). Do not edit.\n" +
+		"limits: {global: 2, per_repo: 1, per_account: 1}\n" +
+		"deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}\n" +
+		"lanes:\n" +
+		lane("smoke", `["sh", "-c", "id && echo `+marker+`"]`) +
+		lane("input", `["cat", "/etc/satat/input.json"]`)
+}
 
-const (
-	busybox   = "busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
-	laneShape = "memory: 128MiB, cpus: 0.25, pids: 16, workspace: 8MiB, timeout: 2m"
-)
+const busybox = "busybox:1.37.0@sha256:bdf57e528e45e4433820e045b29b4597825a1c9e38353532d90a01445013f82e"
 
 var (
 	satat      string // the satat CLI, built from this checkout
-	repoRoot   string // this checkout, the worker's build context
 	configPath string // the stack's satat.yaml
 )
 
@@ -56,7 +58,6 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 1, err
 	}
-	repoRoot = root
 	if err := refuseOtherStacks(); err != nil {
 		return 1, err
 	}
@@ -89,11 +90,11 @@ func run(m *testing.M) (int, error) {
 	if err := writeConfig("ok"); err != nil {
 		return 1, err
 	}
-	if out, err := satatCmd(context.Background(), "deploy", "render", "--config", configPath); err != nil {
+	if out, err := satatCmd(context.Background(), "deploy", "render"); err != nil {
 		return 1, fmt.Errorf("deploy render: %w\n%s", err, out)
 	}
 	// A run that was stopped part way leaves the project behind; start from nothing.
-	if out, err := satatCmd(context.Background(), "deploy", "down", "--volumes", "--config", configPath); err != nil {
+	if out, err := satatCmd(context.Background(), "deploy", "down", "--volumes"); err != nil {
 		return 1, fmt.Errorf("removing a stack left by an earlier run: %w\n%s", err, out)
 	}
 	if err := refusePortsInUse(); err != nil {
@@ -106,7 +107,7 @@ func run(m *testing.M) (int, error) {
 			"  COMPOSE_PROJECT_NAME=%s go run ./cmd/satat deploy down --volumes --config %s\n", project, configPath)
 		return code, nil
 	}
-	if out, err := satatCmd(context.Background(), "deploy", "down", "--volumes", "--config", configPath); err != nil {
+	if out, err := satatCmd(context.Background(), "deploy", "down", "--volumes"); err != nil {
 		return 1, fmt.Errorf("deploy down: %w\n%s", err, out)
 	}
 	return code, nil
@@ -163,8 +164,8 @@ func TestStack(t *testing.T) {
 }
 
 func testUpFromNothing(t *testing.T) {
-	satatOK(t, 10*time.Minute, "deploy", "up", "--config", configPath)
-	out := satatOK(t, time.Minute, "deploy", "status", "--config", configPath)
+	satatOK(t, 10*time.Minute, "deploy", "up")
+	out := satatOK(t, time.Minute, "deploy", "status")
 	want := map[string]bool{"postgres": false, "hatchet-lite": false, "docker-proxy": false, "worker": false}
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n")[1:] {
 		f := strings.Fields(line)
@@ -182,18 +183,13 @@ func testUpFromNothing(t *testing.T) {
 	}
 }
 
+// A recreated worker orphans running agents, so an unchanged stack must keep it. The worker image
+// is not rebuilt either: a rebuild from cache can get a new image ID, which compose recreates on.
 func testUpAgain(t *testing.T) {
-	before := workerFacts(t)
-	// Read now: compose deletes the old image when it replaces it.
-	beforeImage := imageFacts(before.image)
-	out := satatOK(t, 5*time.Minute, "deploy", "up", "--config", configPath)
-	if after := workerFacts(t); after.id != before.id {
-		// Compose recreates a container when its config hash or its image changes; say which.
-		t.Errorf("worker recreated with nothing changed:\n before %+v\n after  %+v\n%s", before, after, out)
-		if before.image != after.image {
-			t.Logf("images:\n before %s\n after  %s", beforeImage, imageFacts(after.image))
-			t.Logf("which build steps a third build takes from cache:\n%s", buildSteps())
-		}
+	before := workerID(t)
+	out := satatOK(t, 5*time.Minute, "deploy", "up")
+	if after := workerID(t); after != before {
+		t.Errorf("worker recreated (%s, then %s) with nothing changed:\n%s", before, after, out)
 	}
 	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres", "building the worker image"} {
 		if strings.Contains(out, s) {
@@ -230,7 +226,7 @@ func testConfigRoll(t *testing.T) {
 	if err := writeConfig(marker); err != nil {
 		t.Fatal(err)
 	}
-	satatOK(t, 5*time.Minute, "deploy", "up", "--config", configPath)
+	satatOK(t, 5*time.Minute, "deploy", "up")
 	if after := workerID(t); after == before {
 		t.Error("worker not recreated after satat.yaml changed")
 	}
@@ -240,7 +236,7 @@ func testConfigRoll(t *testing.T) {
 }
 
 func testDown(t *testing.T) {
-	satatOK(t, 5*time.Minute, "deploy", "down", "--volumes", "--config", configPath)
+	satatOK(t, 5*time.Minute, "deploy", "down", "--volumes")
 	for what, args := range map[string][]string{
 		"containers of the project": {"ps", "-a", "--filter", "label=com.docker.compose.project=" + project},
 		"agent containers":          {"ps", "-a", "--filter", "label=satat.managed=true"},
@@ -266,7 +262,7 @@ func testDown(t *testing.T) {
 // writeConfig replaces satat.yaml the way an editor saves: a new file renamed over the old one.
 func writeConfig(marker string) error {
 	tmp := configPath + ".tmp"
-	if err := os.WriteFile(tmp, []byte(fmt.Sprintf(configTmpl, marker)), 0o644); err != nil {
+	if err := os.WriteFile(tmp, []byte(stackConfig(marker)), 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, configPath)
@@ -274,7 +270,7 @@ func writeConfig(marker string) error {
 
 func agentRun(t *testing.T, lane string, args ...string) string {
 	t.Helper()
-	return satatOK(t, 3*time.Minute, append([]string{"agent", "run", lane, "--wait", "--config", configPath}, args...)...)
+	return satatOK(t, 3*time.Minute, append([]string{"agent", "run", lane, "--wait"}, args...)...)
 }
 
 // lastLineIs reports whether the step's stdout ends with the line want.
@@ -300,56 +296,6 @@ func workerID(t *testing.T) string {
 	return ids[0]
 }
 
-// facts is what compose decides a recreate on, with the container's ID.
-type facts struct{ id, image, configHash string }
-
-func workerFacts(t *testing.T) facts {
-	t.Helper()
-	id := workerID(t)
-	out, err := exec.Command("docker", "inspect", "--format",
-		`{{.Image}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id).Output()
-	if err != nil {
-		t.Fatalf("docker inspect %s: %v", id, err)
-	}
-	f := strings.Fields(string(out))
-	if len(f) != 2 {
-		t.Fatalf("docker inspect %s printed %q", id, out)
-	}
-	return facts{id: id, image: f[0], configHash: f[1]}
-}
-
-// buildSteps builds the worker once more with plain progress and returns the step lines, which say
-// CACHED for a step BuildKit did not run again.
-func buildSteps() string {
-	dir := filepath.Dir(configPath)
-	cmd := exec.Command("docker", "compose", "-f", filepath.Join(dir, "compose.yaml"), "--project-directory", dir,
-		"build", "--progress", "plain", "worker")
-	cmd.Env = append(os.Environ(), "SATAT_BUILD_CONTEXT="+repoRoot)
-	out, err := cmd.CombinedOutput()
-	var steps []string
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.Contains(line, "CACHED") || strings.Contains(line, "] RUN ") || strings.Contains(line, "] COPY ") ||
-			strings.Contains(line, "writing image") || strings.Contains(line, "naming to") {
-			steps = append(steps, line)
-		}
-	}
-	if err != nil {
-		steps = append(steps, fmt.Sprintf("build failed: %v", err))
-	}
-	return strings.Join(steps, "\n")
-}
-
-// imageFacts is what can make two builds of the same source differ: the creation time, the layers
-// and the config's labels.
-func imageFacts(id string) string {
-	out, err := exec.Command("docker", "image", "inspect", "--format",
-		`created {{.Created}} layers {{json .RootFS.Layers}} labels {{json .Config.Labels}}`, id).CombinedOutput()
-	if err != nil {
-		return fmt.Sprintf("docker image inspect %s: %v: %s", id, err, out)
-	}
-	return strings.TrimSpace(string(out))
-}
-
 func satatOK(t *testing.T, timeout time.Duration, args ...string) string {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
@@ -361,8 +307,9 @@ func satatOK(t *testing.T, timeout time.Duration, args ...string) string {
 	return out
 }
 
+// satatCmd runs the satat CLI on the stack's config.
 func satatCmd(ctx context.Context, args ...string) (string, error) {
-	out, err := exec.CommandContext(ctx, satat, args...).CombinedOutput()
+	out, err := exec.CommandContext(ctx, satat, append(args, "--config", configPath)...).CombinedOutput()
 	return string(out), err
 }
 

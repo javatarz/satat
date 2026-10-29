@@ -86,15 +86,18 @@ func repoRoot(dir string) (string, error) {
 // from; render, down and status build nothing, so they work outside the repo.
 func targetFor(cfg config.Config, configPath string, kube kubeFlags, needRoot bool) (deploy.Target, error) {
 	dir := filepath.Dir(configPath)
-	var root string
-	if needRoot && (cfg.Deploy.Target == config.TargetKubernetes || cfg.Deploy.Target == config.TargetCompose) {
-		var err error
-		if root, err = repoRoot(dir); err != nil {
-			return nil, err
+	findRoot := func() (string, error) {
+		if !needRoot {
+			return "", nil
 		}
+		return repoRoot(dir)
 	}
 	switch cfg.Deploy.Target {
 	case config.TargetKubernetes:
+		root, err := findRoot()
+		if err != nil {
+			return nil, err
+		}
 		kube = kubeDefaults(kube, os.LookupEnv)
 		return &kubernetes.Target{
 			Dir:      dir,
@@ -106,6 +109,10 @@ func targetFor(cfg config.Config, configPath string, kube kubeFlags, needRoot bo
 			Out:      os.Stdout,
 		}, nil
 	case config.TargetCompose:
+		root, err := findRoot()
+		if err != nil {
+			return nil, err
+		}
 		return &compose.Target{
 			Dir:  dir,
 			Root: root,

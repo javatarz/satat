@@ -63,8 +63,7 @@ func (ExecRunner) Run(ctx context.Context, env []string, name string, args ...st
 // Target deploys with Docker Compose in Dir, where compose.yaml and the env file live.
 type Target struct {
 	Dir string
-	// Root is the repo the worker image is built from, when it is not Dir. Empty keeps
-	// compose.yaml's default, its own directory.
+	// Root is the repo the worker image is built from. Empty means Dir.
 	Root string
 	Run  Runner
 	Out  io.Writer
@@ -110,7 +109,8 @@ const (
 	// satat.yaml as a single file, which an editor's save replaces, and compose recreates a container
 	// only when its config changes; the hash makes an edited satat.yaml such a change.
 	keyConfigHash = "SATAT_CONFIG_SHA256"
-	// keyBuildContext is the worker's build context, Root, for a satat.yaml outside the repo root.
+	// keyBuildContext is the worker's build context, Root, so satat.yaml can be anywhere in the
+	// repo (the e2e stack's is).
 	keyBuildContext = "SATAT_BUILD_CONTEXT"
 	// keyWorkerTag tags the worker image with a hash of what it is built from (workerSource). A
 	// rebuild from cache is not reliably the same image ID (on the containerd image store it carries
@@ -207,23 +207,11 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 		env = append(env, name+"="+secrets[name])
 	}
 	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
-	root := t.Dir
-	if t.Root != "" {
-		root = t.Root
-	}
-	tag, err := workerSource(root, t.file())
+	image, err := t.workerImage(ctx)
 	if err != nil {
 		return err
 	}
-	image := []string{keyBuildContext + "=" + root, keyWorkerTag + "=" + tag}
 	env = append(env, image...)
-	// The build gets no secret: compose reads the whole file for it, so placeholders do.
-	if _, err := t.Run.Run(ctx, os.Environ(), "docker", "image", "inspect", workerImage+":"+tag); err != nil {
-		t.say("building the worker image %s:%s", workerImage, tag)
-		if _, err := t.compose(ctx, append(t.env(), image...), "build", "worker"); err != nil {
-			return err
-		}
-	}
 	t.warnRunningAgents(ctx)
 	t.say("starting worker")
 	if _, err := t.compose(ctx, env, "up", "-d", "--no-build", "worker"); err != nil {
@@ -239,6 +227,29 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	}
 	t.say("all services healthy")
 	return nil
+}
+
+// workerImage builds the worker image if no image has its source's tag, and returns the
+// environment that names it to compose: the build context and the tag.
+func (t *Target) workerImage(ctx context.Context) ([]string, error) {
+	root := t.Root
+	if root == "" {
+		root = t.Dir
+	}
+	tag, err := workerSource(root, t.file())
+	if err != nil {
+		return nil, err
+	}
+	image := []string{keyBuildContext + "=" + root, keyWorkerTag + "=" + tag}
+	if _, err := t.Run.Run(ctx, os.Environ(), "docker", "image", "inspect", workerImage+":"+tag); err == nil {
+		return image, nil
+	}
+	t.say("building the worker image %s:%s", workerImage, tag)
+	// The build gets no secret: compose reads the whole file for it, so placeholders do.
+	if _, err := t.compose(ctx, append(t.env(), image...), "build", "worker"); err != nil {
+		return nil, err
+	}
+	return image, nil
 }
 
 // workerSource hashes what the worker image is built from: the files images/worker/Dockerfile's
