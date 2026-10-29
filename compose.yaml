@@ -80,8 +80,13 @@ services:
   # other secrets (1Password or env) in order. scripts/hatchet-token.sh and scripts/compose-up.sh
   # still work, but they duplicate it.
   worker:
+    # `satat deploy up` tags the image with a hash of its source and builds only when no image has
+    # that tag, since a rebuild from cache does not reliably keep the image ID and compose recreates
+    # a worker whose image ID changed. `docker compose build` and compose-up.sh use the dev tag.
+    image: satat-worker:${SATAT_WORKER_TAG:-dev}
     build:
-      context: .
+      # The repo, which `satat deploy up` sets when satat.yaml is elsewhere in it (the e2e stack's).
+      context: ${SATAT_BUILD_CONTEXT:-.}
       dockerfile: images/worker/Dockerfile
       args:
         GO_IMAGE: golang:1.27.2-bookworm@sha256:5cf287a799e6b94384bad13d16b14904c531f51ba65792237e122ce42b392f61

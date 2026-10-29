@@ -35,6 +35,7 @@ lint:
     pre-commit run --all-files
     @unformatted="$(git ls-files -z '*.go' | xargs -0 gofmt -l)"; [ -z "$unformatted" ] || { echo "$unformatted"; echo "run: gofmt -w on these"; exit 1; }
     go vet ./...
+    go vet -tags e2e ./e2e/
     scripts/check-compose-socket.sh
     go run ./cmd/satat deploy render --check
 
@@ -45,6 +46,10 @@ test:
 # Run the Go tests that don't start containers
 test-short:
     go test -short -p 1 ./...
+
+# Bring a throwaway stack up, run it end to end and take it down (needs Docker, no dev stack up)
+e2e:
+    go test -tags e2e -count=1 -timeout 25m -v ./e2e/
 
 # Build the Go binaries
 build:
