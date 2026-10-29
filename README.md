@@ -34,8 +34,20 @@ just test     # Go tests (needs Docker); just test-short skips the container tes
 just build    # build the Go binaries; just build-images builds the images
 ```
 
+Once the platform runs, these wrap `satat deploy`, `satat agent` and `docker compose`:
+
+```sh
+just up                  # satat deploy up: start or update the stack (args pass through, e.g. --config)
+just status              # each service and the worker's readiness
+just logs [service]      # follow a service's logs (default: worker)
+just smoke               # run a one-shot agent on the smoke lane and wait for it
+just agents              # list queued and running agent runs
+just enqueue owner/name N  # queue issue N (labelled ready-for-agent) for the worker
+just down [--volumes]    # stop the stack; --volumes also deletes its data
+```
+
 The Claude lane image is built locally: `just build-images`, then put the reference it prints
-in `satat.yaml`. Queue an issue with `go run ./cmd/satat-enqueue --repo owner/name --issue N` and
+in `satat.yaml`. Queue an issue with `just enqueue owner/name N` and
 watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#run-it-locally).
 
 ### Without 1Password
