@@ -38,6 +38,7 @@ const (
 
 var (
 	satat      string // the satat CLI, built from this checkout
+	repoRoot   string // this checkout, the worker's build context
 	configPath string // the stack's satat.yaml
 )
 
@@ -55,6 +56,7 @@ func run(m *testing.M) (int, error) {
 	if err != nil {
 		return 1, err
 	}
+	repoRoot = root
 	if err := refuseOtherStacks(); err != nil {
 		return 1, err
 	}
@@ -182,12 +184,15 @@ func testUpFromNothing(t *testing.T) {
 
 func testUpAgain(t *testing.T) {
 	before := workerFacts(t)
+	// Read now: compose deletes the old image when it replaces it.
+	beforeImage := imageFacts(before.image)
 	out := satatOK(t, 5*time.Minute, "deploy", "up", "--config", configPath)
 	if after := workerFacts(t); after.id != before.id {
 		// Compose recreates a container when its config hash or its image changes; say which.
 		t.Errorf("worker recreated with nothing changed:\n before %+v\n after  %+v\n%s", before, after, out)
 		if before.image != after.image {
-			t.Logf("images:\n before %s\n after  %s", imageFacts(before.image), imageFacts(after.image))
+			t.Logf("images:\n before %s\n after  %s", beforeImage, imageFacts(after.image))
+			t.Logf("which build steps a third build takes from cache:\n%s", buildSteps())
 		}
 	}
 	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres"} {
@@ -311,6 +316,27 @@ func workerFacts(t *testing.T) facts {
 		t.Fatalf("docker inspect %s printed %q", id, out)
 	}
 	return facts{id: id, image: f[0], configHash: f[1]}
+}
+
+// buildSteps builds the worker once more with plain progress and returns the step lines, which say
+// CACHED for a step BuildKit did not run again.
+func buildSteps() string {
+	dir := filepath.Dir(configPath)
+	cmd := exec.Command("docker", "compose", "-f", filepath.Join(dir, "compose.yaml"), "--project-directory", dir,
+		"build", "--progress", "plain", "worker")
+	cmd.Env = append(os.Environ(), "SATAT_BUILD_CONTEXT="+repoRoot)
+	out, err := cmd.CombinedOutput()
+	var steps []string
+	for _, line := range strings.Split(string(out), "\n") {
+		if strings.Contains(line, "CACHED") || strings.Contains(line, "] RUN ") || strings.Contains(line, "] COPY ") ||
+			strings.Contains(line, "writing image") || strings.Contains(line, "naming to") {
+			steps = append(steps, line)
+		}
+	}
+	if err != nil {
+		steps = append(steps, fmt.Sprintf("build failed: %v", err))
+	}
+	return strings.Join(steps, "\n")
 }
 
 // imageFacts is what can make two builds of the same source differ: the creation time, the layers
