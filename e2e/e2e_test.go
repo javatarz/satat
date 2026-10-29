@@ -181,10 +181,11 @@ func testUpFromNothing(t *testing.T) {
 }
 
 func testUpAgain(t *testing.T) {
-	before := workerID(t)
+	before := workerFacts(t)
 	out := satatOK(t, 5*time.Minute, "deploy", "up", "--config", configPath)
-	if after := workerID(t); after != before {
-		t.Errorf("worker recreated (%s, then %s) with nothing changed", before, after)
+	if after := workerFacts(t); after.id != before.id {
+		// Compose recreates a container when its config hash or its image changes; say which.
+		t.Errorf("worker recreated with nothing changed:\n before %+v\n after  %+v\n%s", before, after, out)
 	}
 	for _, s := range []string{"generated POSTGRES_PASSWORD", "created HATCHET_CLIENT_TOKEN", "starting postgres"} {
 		if strings.Contains(out, s) {
@@ -289,6 +290,24 @@ func workerID(t *testing.T) string {
 		t.Fatalf("want one running worker, found %d", len(ids))
 	}
 	return ids[0]
+}
+
+// facts is what compose decides a recreate on, with the container's ID.
+type facts struct{ id, image, configHash string }
+
+func workerFacts(t *testing.T) facts {
+	t.Helper()
+	id := workerID(t)
+	out, err := exec.Command("docker", "inspect", "--format",
+		`{{.Image}} {{index .Config.Labels "com.docker.compose.config-hash"}}`, id).Output()
+	if err != nil {
+		t.Fatalf("docker inspect %s: %v", id, err)
+	}
+	f := strings.Fields(string(out))
+	if len(f) != 2 {
+		t.Fatalf("docker inspect %s printed %q", id, out)
+	}
+	return facts{id: id, image: f[0], configHash: f[1]}
 }
 
 func satatOK(t *testing.T, timeout time.Duration, args ...string) string {
