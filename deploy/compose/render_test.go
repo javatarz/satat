@@ -115,3 +115,26 @@ func TestRenderMountsTheSocketOnlyInTheProxy(t *testing.T) {
 		}
 	}
 }
+
+// BuildKit's default provenance attestation records when the image was built, so on the containerd
+// image store every rebuild got a new image ID, even from cache, and compose recreated the worker on
+// every deploy up, orphaning running agents. The e2e suite found it (#224).
+func TestRenderBuildsWorkerWithoutProvenance(t *testing.T) {
+	cfg, err := config.Load("../../satat.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var f struct {
+		Services map[string]struct {
+			Build struct {
+				Provenance *bool `yaml:"provenance"`
+			} `yaml:"build"`
+		} `yaml:"services"`
+	}
+	if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
+		t.Fatal(err)
+	}
+	if p := f.Services["worker"].Build.Provenance; p == nil || *p {
+		t.Fatal("the worker's build does not set provenance: false")
+	}
+}
