@@ -1,0 +1,93 @@
+name: Wiki
+
+# Updates the DeepWiki wiki (docs/wiki/) with scripts/deepwiki/wiki.sh and
+# opens a pull request with it against the branch the run is on. Weekly runs
+# are differential: only the pages that cite a changed file are rewritten. A
+# manual run picks the mode and the OpenRouter models.
+#
+# The update goes to the branch wiki/<base>, rebuilt from the base on every run
+# and force-pushed, so there is at most one open wiki PR per base; a run while
+# it is unmerged replaces it (diff mode then covers both runs' changes).
+#
+# Needs the repository secret OPENROUTER_API_KEY, and "Allow GitHub Actions to
+# create and approve pull requests" (Settings > Actions > General). PRs opened
+# with GITHUB_TOKEN do not trigger other workflows, so lint skips them.
+#
+# Models resolve as dispatch
+# input > repository variable (WIKI_MODEL, WIKI_EMBED_MODEL) > wiki.sh default.
+# A manual run always has its inputs (pre-filled with defaults); a scheduled run
+# has none, so the variables, if set, choose its models. Keep the input defaults
+# below in step with wiki.sh's.
+
+on:
+  schedule:
+    - cron: "0 3 * * 1" # Mondays 03:00 UTC
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: diff = pages citing changed files; full = whole wiki
+        type: choice
+        options: [diff, full]
+        default: diff
+      model:
+        description: OpenRouter chat model that writes the pages
+        type: string
+        default: deepseek/deepseek-v4.1-flash
+      embed_model:
+        description: OpenRouter embedding model for retrieval
+        type: string
+        default: qwen/qwen3-embedding-8b
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: wiki-${{ github.ref }}
+
+jobs:
+  wiki:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+        with:
+          fetch-depth: 0 # diff mode needs the commit the wiki was built from
+
+      - name: Update the wiki
+        env:
+          MODE: ${{ inputs.mode || 'diff' }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          WIKI_MODEL: ${{ inputs.model || vars.WIKI_MODEL }}
+          WIKI_EMBED_MODEL: ${{ inputs.embed_model || vars.WIKI_EMBED_MODEL }}
+        run: scripts/deepwiki/wiki.sh "$MODE"
+
+      - name: Open or update the wiki pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BASE: ${{ github.ref_name }}
+          MODE: ${{ inputs.mode || 'diff' }}
+          BOT: github-actions[bot]
+          BOT_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+        run: |
+          git add -A docs/wiki
+          if git diff --cached --quiet; then
+            echo "docs/wiki is unchanged"
+            exit 0
+          fi
+          head="wiki/$BASE"
+          title="Update the wiki for ${GITHUB_SHA::7}"
+          git -c user.name="$BOT" -c user.email="$BOT_EMAIL" \
+            commit -q -m "$title"
+          git push -q --force origin "HEAD:refs/heads/$head"
+          repo="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          body="DeepWiki $MODE run of $BASE at $GITHUB_SHA:"
+          body="$body $repo/actions/runs/$GITHUB_RUN_ID"
+          pr=$(gh pr list --head "$head" --base "$BASE" --state open \
+            --json number --jq '.[0].number')
+          if [ -n "$pr" ]; then
+            gh pr edit "$pr" --title "$title" --body "$body"
+          else
+            gh pr create --base "$BASE" --head "$head" \
+              --title "$title" --body "$body"
+          fi

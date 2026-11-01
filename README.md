@@ -32,6 +32,7 @@ just run      # bring the platform up on Docker Compose
 just lint     # what CI runs: pre-commit, gofmt, go vet and the Docker socket check
 just test     # Go tests (needs Docker); just test-short skips the container tests
 just build    # build the Go binaries; just build-images builds the images
+just wiki      # update docs/wiki (DeepWiki, OPENROUTER_API_KEY): pages citing changed files; just wiki full rewrites all
 ```
 
 Once the platform runs, these wrap `satat deploy`, `satat agent` and `docker compose`:
