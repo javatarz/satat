@@ -2,10 +2,14 @@ name: Wiki
 
 # Updates the DeepWiki wiki (docs/wiki/) with scripts/deepwiki/wiki.sh and
 # commits it to the branch the run is on. Weekly runs are differential: only
-# the pages that cite a changed file are rewritten. A manual run picks the mode.
+# the pages that cite a changed file are rewritten. A manual run picks the mode
+# and the OpenRouter models.
 #
-# Needs the repository secret OPENROUTER_API_KEY. The optional repository
-# variables WIKI_MODEL and WIKI_EMBED_MODEL override the script's defaults.
+# Needs the repository secret OPENROUTER_API_KEY. Models resolve as dispatch
+# input > repository variable (WIKI_MODEL, WIKI_EMBED_MODEL) > wiki.sh default.
+# A manual run always has its inputs (pre-filled with defaults); a scheduled run
+# has none, so the variables, if set, choose its models. Keep the input defaults
+# below in step with wiki.sh's.
 
 on:
   schedule:
@@ -17,6 +21,14 @@ on:
         type: choice
         options: [diff, full]
         default: diff
+      model:
+        description: OpenRouter chat model that writes the pages
+        type: string
+        default: deepseek/deepseek-v4.1-flash
+      embed_model:
+        description: OpenRouter embedding model for retrieval
+        type: string
+        default: qwen/qwen3-embedding-8b
 
 permissions:
   contents: write
@@ -29,7 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 75
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
         with:
           fetch-depth: 0 # diff mode needs the commit the wiki was built from
 
@@ -37,8 +49,8 @@ jobs:
         env:
           MODE: ${{ inputs.mode || 'diff' }}
           OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-          WIKI_MODEL: ${{ vars.WIKI_MODEL }}
-          WIKI_EMBED_MODEL: ${{ vars.WIKI_EMBED_MODEL }}
+          WIKI_MODEL: ${{ inputs.model || vars.WIKI_MODEL }}
+          WIKI_EMBED_MODEL: ${{ inputs.embed_model || vars.WIKI_EMBED_MODEL }}
         run: scripts/deepwiki/wiki.sh "$MODE"
 
       - name: Commit docs/wiki

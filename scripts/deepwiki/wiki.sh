@@ -12,7 +12,9 @@
 #         no wiki.json yet
 #   full  plan a new structure and rewrite every page
 #
-# Optional: WIKI_MODEL, WIKI_EMBED_MODEL (OpenRouter model IDs) and
+# Optional: WIKI_MODEL, WIKI_EMBED_MODEL (OpenRouter model IDs; unset or empty
+# means the defaults below; CI passes its dispatch input, else the repository
+# variable of the same name, and its input defaults mirror these) and
 # DEEPWIKI_WIKI_PAGE_CONCURRENCY (pages written in parallel).
 set -euo pipefail
 
