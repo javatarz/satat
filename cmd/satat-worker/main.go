@@ -33,6 +33,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	hatchetrest "github.com/hatchet-dev/hatchet/pkg/client/rest"
 	"github.com/hatchet-dev/hatchet/pkg/cmdutils"
@@ -144,7 +145,7 @@ func run() error {
 	}
 	// The hostname makes the name unique per container, so readiness can find this process's own
 	// record and ignore the ones earlier containers left behind in Hatchet.
-	name := "satat-worker-" + host
+	name := workerName(host)
 
 	// The health server starts before lane setup, so a setup failure (a lane image that is not
 	// pullable, say) shows in /readyz as the lanes check instead of as a container that restarts.
@@ -274,6 +275,18 @@ func run() error {
 	}
 	log.Info("worker ready")
 	return <-done
+}
+
+// workerName is the name the worker registers with. Hatchet allows only letters, digits, ".", "-"
+// and "_", and a host's name can hold others (a Mac's "Amaan’s-MacBook-Pro"), so each of those
+// becomes "-". A container's hostname already fits.
+func workerName(host string) string {
+	return "satat-worker-" + strings.Map(func(r rune) rune {
+		if r < 0x80 && (r == '.' || r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			return r
+		}
+		return '-'
+	}, host)
 }
 
 func splitList(s string) []string {
