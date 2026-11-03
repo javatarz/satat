@@ -235,6 +235,7 @@ func run() error {
 		Gate:     limiter,
 		Secrets:  secretValues(cfg),
 		NoAgent:  cfg.NoAgent,
+		Log:      log,
 	})
 	if err != nil {
 		return err

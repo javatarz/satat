@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -38,6 +39,15 @@ type Options struct {
 	Run, Lane  string
 	Repo, Base string
 	Issue      runner.Issue
+
+	// Log, when set, gets one line per stage, so the worker's log shows where a run is.
+	Log *slog.Logger
+}
+
+func (o Options) log(msg string, args ...any) {
+	if o.Log != nil {
+		o.Log.Info(msg, append([]any{"run", o.Run, "issue", fmt.Sprintf("%s#%d", o.Repo, o.Issue.Number)}, args...)...)
+	}
 }
 
 // Report is everything the run produced. Runner is nil when the step left no result.json.
@@ -64,11 +74,13 @@ func Run(ctx context.Context, o Options) (Report, error) {
 		return rep, err
 	}
 	defer ck.Close()
+	o.log("cloned", "base_sha", ck.BaseSHA)
 	// The commands are the base commit's, read by the worker. The step gets them as input.
 	input, err := json.Marshal(runner.Input{Repo: o.Repo, Base: o.Base, Issue: o.Issue, Commands: ck.Commands})
 	if err != nil {
 		return rep, err
 	}
+	o.log("step starting", "lane", o.Lane)
 	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
 		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, Checkout: ck.Tar, CacheScope: launcher.CacheScope(o.Repo),
 	})
@@ -82,6 +94,11 @@ func Run(ctx context.Context, o Options) (Report, error) {
 		}
 		rep.Runner = &r
 	}
+	status := "no result"
+	if rep.Runner != nil {
+		status = rep.Runner.Status
+	}
+	o.log("step finished", "exit_code", rep.Launch.ExitCode, "status", status, "timed_out", rep.Launch.TimedOut, "oom_killed", rep.Launch.OOMKilled, "cancelled", rep.Launch.Cancelled)
 	if o.Pusher == nil || rep.Runner == nil || rep.Launch.ExitCode != 0 || rep.Runner.Status != "changes" {
 		return rep, nil
 	}
@@ -89,6 +106,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	// protected-paths policy from it, and the step's result.json is the agent's own word.
 	if rep.Runner.BaseSHA != ck.BaseSHA {
 		rep.PushErr = &pusher.Refusal{Reason: fmt.Sprintf("the step reports base %q but the worker cloned %q", rep.Runner.BaseSHA, ck.BaseSHA)}
+		o.log("not published", "err", rep.PushErr)
 		return rep, nil
 	}
 	out, err := o.Pusher.Push(ctx, pusher.Request{
@@ -99,9 +117,11 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	})
 	if err != nil {
 		rep.PushErr = err
+		o.log("not published", "err", err)
 		return rep, nil
 	}
 	rep.Push = &out
+	o.log("published", "branch", out.Branch, "pr_url", out.PRURL, "reused", out.Reused)
 	return rep, nil
 }
 
