@@ -83,6 +83,22 @@ go run ./cmd/satat deploy up   # creates the Hatchet token on first run, then st
 `go run ./cmd/satat deploy status` and `deploy down` check and stop it. `just doctor` still
 fails its `op` check on this path; the other checks apply.
 
+### Local mode
+
+To try a change without building the lane image or making a Claude token, run the worker and its
+steps on your machine with your own `claude` login. Hatchet and Postgres still run in Docker.
+
+```sh
+just run-local                     # Hatchet up, then the worker in the foreground (Ctrl-C stops it)
+just enqueue owner/name 42         # in another shell
+```
+
+Only a repo listed under `poller.repos` in `satat.yaml` can run. The GitHub tokens default to your
+`gh` login, so the branch and the draft PR are yours. Each step's `out/` (result, transcript,
+bundle) is kept under `$TMPDIR/satat-local`. **Local mode is not a sandbox:** the agent runs as you
+with permissions bypassed, so use it only on repos you trust. Don't run it beside `just run`, or
+two workers will take the same queue.
+
 ## Docs
 
 - [docs/design.md](./docs/design.md) — how Satat works today: flow, launcher, pusher, caps, evals

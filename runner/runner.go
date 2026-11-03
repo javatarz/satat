@@ -85,6 +85,10 @@ type Config struct {
 	Env      []string // the runner's environment, as os.Environ
 	Log      io.Writer
 	MaxTurns int
+	// LocalLogin accepts the operator's own Claude login (auth method "claude.ai") when
+	// CLAUDE_CODE_OAUTH_TOKEN is unset. Only the local launcher sets it; in a lane the token is
+	// the only way in.
+	LocalLogin bool
 }
 
 const (
@@ -181,7 +185,7 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 			return fmt.Errorf("%s is set; the Claude lane runs on the subscription token only", k)
 		}
 	}
-	if env[oauthVar] == "" {
+	if env[oauthVar] == "" && !cfg.LocalLogin {
 		return fmt.Errorf("%s is not set", oauthVar)
 	}
 	for _, b := range []struct{ name, path string }{{"claude", cfg.Claude}, {"mise", cfg.Mise}} {
@@ -209,7 +213,7 @@ func run(ctx context.Context, cfg Config, res *Result) error {
 		return err
 	}
 	res.AuthMethod = method
-	if method != "oauth_token" {
+	if method != "oauth_token" && !(cfg.LocalLogin && method == "claude.ai") {
 		return fmt.Errorf("claude auth method is %q, want oauth_token", method)
 	}
 
