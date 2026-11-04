@@ -30,9 +30,11 @@ import (
 	"maps"
 	"net/http"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	hatchetrest "github.com/hatchet-dev/hatchet/pkg/client/rest"
 	"github.com/hatchet-dev/hatchet/pkg/cmdutils"
@@ -47,6 +49,7 @@ import (
 	"github.com/javatarz/satat/launcher"
 	"github.com/javatarz/satat/launcher/docker"
 	k8slauncher "github.com/javatarz/satat/launcher/kubernetes"
+	"github.com/javatarz/satat/launcher/local"
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/poller"
 	"github.com/javatarz/satat/pusher"
@@ -144,7 +147,7 @@ func run() error {
 	}
 	// The hostname makes the name unique per container, so readiness can find this process's own
 	// record and ignore the ones earlier containers left behind in Hatchet.
-	name := "satat-worker-" + host
+	name := workerName(host)
 
 	// The health server starts before lane setup, so a setup failure (a lane image that is not
 	// pullable, say) shows in /readyz as the lanes check instead of as a container that restarts.
@@ -276,6 +279,18 @@ func run() error {
 	return <-done
 }
 
+// workerName is the name the worker registers with. Hatchet allows only letters, digits, ".", "-"
+// and "_", and a host's name can hold others (a Mac's "Amaan’s-MacBook-Pro"), so each of those
+// becomes "-". A container's hostname already fits.
+func workerName(host string) string {
+	return "satat-worker-" + strings.Map(func(r rune) rune {
+		if r < 0x80 && (r == '.' || r == '-' || r == '_' || unicode.IsLetter(r) || unicode.IsDigit(r)) {
+			return r
+		}
+		return '-'
+	}, host)
+}
+
 func splitList(s string) []string {
 	var out []string
 	for _, p := range strings.Split(s, ",") {
@@ -302,6 +317,17 @@ type stepLauncher interface {
 // newLauncher builds the launcher for deploy.target with its API readiness check. reap is nil
 // where there is no reaper (kubernetes); closeLauncher releases the launcher's client.
 func newLauncher(cfg config.Config, log *slog.Logger) (l stepLauncher, apiCheck health.Check, reap func(ctx context.Context, interval, maxAge time.Duration), closeLauncher func(), err error) {
+	// SATAT_LAUNCHER=local runs steps as processes on this machine with the operator's own Claude
+	// login: for a worker run on a laptop with go run, never in a container. It is not a sandbox.
+	if os.Getenv("SATAT_LAUNCHER") == "local" {
+		dir := os.Getenv("SATAT_LOCAL_DIR")
+		if dir == "" {
+			dir = filepath.Join(os.TempDir(), "satat-local")
+		}
+		log.Warn("local launcher: steps run unsandboxed on this machine", "dir", dir)
+		ok := health.Check{Name: "local", Run: func(context.Context) error { return nil }}
+		return local.New(cfg.Lanes, dir, log), ok, nil, func() {}, nil
+	}
 	if cfg.Deploy.Target == config.TargetKubernetes {
 		rc, err := rest.InClusterConfig()
 		if err != nil {
