@@ -102,6 +102,9 @@ go in `evals/results/`.
   (ran the tests itself, commit style), which the Go harness already checks, then the v2 trap
   tasks.
 - **Go tasks and tasks rebuilt from issues Satat already fixed**, towards the plan's ten.
-- **A trial takes about a minute, 22 seconds of it grading.** The separate verifier sandbox
-  costs about 20 seconds over a shared one (4 seconds measured). Running trials two at a time would
-  halve a run too, at the cost of the laptop's memory and of the one-run-at-a-time habit.
+- **A trial takes about 28 seconds, about 9 of them the agent's work.** The rest is containers:
+  Harbor rebuilds the task image from cache each trial, and the separate verifier starts a sandbox
+  and a no-network sidecar of its own (about 12 seconds; a shared verifier took 4). The sandbox
+  stops at once (`STOPSIGNAL SIGKILL`): Harbor keeps it alive with `sleep infinity`, which ignores
+  SIGTERM, so each stop had waited Docker's 10-second grace. Running trials in parallel (`-n`) is
+  the biggest remaining saving, since the agent mostly waits on the API.

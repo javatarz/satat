@@ -9,6 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends git ca-certific
   && npm install -g --omit=dev "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
   && npm cache clean --force \
   && rm -rf /var/lib/apt/lists/*
+# Harbor keeps the sandbox alive with `sh -c "sleep infinity"`, which ignores SIGTERM, so every
+# stop waited Docker's 10-second grace period: twice a trial, with the separate verifier. Nothing
+# in the sandbox needs a clean shutdown (Harbor copies /app out first), so stop it at once.
+STOPSIGNAL SIGKILL
 WORKDIR /app
 COPY repo/ /app/
 RUN git init -q -b main \
