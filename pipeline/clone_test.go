@@ -167,3 +167,58 @@ func TestCredentialHelperAnswersOnlyForItsHost(t *testing.T) {
 		}
 	}
 }
+
+// A snapshot is cloned from a local repo without a token: the committed base only, its commands,
+// and nothing left behind.
+func TestSnapshotClonesTheCommittedBase(t *testing.T) {
+	src := sourceRepo(t, goodCommands)
+	if err := os.WriteFile(filepath.Join(src, "uncommitted.txt"), []byte("x\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	tmp := t.TempDir()
+	ck, err := SnapshotCloner{Dir: src, TempDir: tmp}.Clone(context.Background(), "eval/greet", "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ck.Commands["test"] != "go test ./..." {
+		t.Errorf("commands: %v", ck.Commands)
+	}
+	want, _ := exec.Command("git", "-C", src, "rev-parse", "HEAD").Output()
+	if ck.BaseSHA != strings.TrimSpace(string(want)) {
+		t.Errorf("base sha %q, want %q", ck.BaseSHA, want)
+	}
+	names := map[string]bool{}
+	tr := tar.NewReader(ck.Tar)
+	for {
+		h, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		names[h.Name] = true
+	}
+	if !names["README.md"] || !names[".git/HEAD"] || names["uncommitted.txt"] {
+		t.Errorf("archive: %v", names)
+	}
+	ck.Close()
+	if left, _ := os.ReadDir(tmp); len(left) != 0 {
+		t.Errorf("clone left behind: %v", left)
+	}
+
+	for name, tc := range map[string]struct{ dir, base, want string }{
+		"no such repo":   {filepath.Join(tmp, "nope"), "main", "clone snapshot"},
+		"no such branch": {src, "nope", "clone snapshot"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := SnapshotCloner{Dir: tc.dir, TempDir: tmp}.Clone(context.Background(), "eval/greet", tc.base)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want one mentioning %q", err, tc.want)
+			}
+			if left, _ := os.ReadDir(tmp); len(left) != 0 {
+				t.Errorf("clone left behind: %v", left)
+			}
+		})
+	}
+}

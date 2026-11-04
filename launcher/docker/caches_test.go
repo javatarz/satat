@@ -26,17 +26,32 @@ type fakeVolumes struct {
 	items   []volume.Volume
 	removed []string
 	held    map[string]bool // VolumeRemove answers "in use"
+	// bareCreate makes VolumeCreate answer for an existing name without its labels, as Docker 28
+	// sometimes does.
+	bareCreate bool
 }
 
 func (f *fakeVolumes) VolumeCreate(_ context.Context, o client.VolumeCreateOptions) (client.VolumeCreateResult, error) {
 	for _, v := range f.items {
 		if v.Name == o.Name {
+			if f.bareCreate {
+				v.Labels = nil
+			}
 			return client.VolumeCreateResult{Volume: v}, nil
 		}
 	}
 	v := volume.Volume{Name: o.Name, Driver: "local", Labels: o.Labels, CreatedAt: now.Format(time.RFC3339)}
 	f.items = append(f.items, v)
 	return client.VolumeCreateResult{Volume: v}, nil
+}
+
+func (f *fakeVolumes) VolumeInspect(_ context.Context, name string, _ client.VolumeInspectOptions) (client.VolumeInspectResult, error) {
+	for _, v := range f.items {
+		if v.Name == name {
+			return client.VolumeInspectResult{Volume: v}, nil
+		}
+	}
+	return client.VolumeInspectResult{}, cerrdefs.ErrNotFound
 }
 
 func (f *fakeVolumes) VolumeList(_ context.Context, o client.VolumeListOptions) (client.VolumeListResult, error) {
@@ -256,5 +271,24 @@ func TestCacheUseKeepsOneMarkerPerKey(t *testing.T) {
 	}
 	if len(b) != 1 {
 		t.Errorf("touching a changed b: %v", b)
+	}
+}
+
+// Docker 28 can answer a create for an existing name without the volume's labels: the volume is
+// read back, so Satat's own cache is adopted and someone else's is still refused.
+func TestCreateVolumeReadsBackALabellessAnswer(t *testing.T) {
+	ctx := context.Background()
+	ours := client.VolumeCreateOptions{Name: "satat-cache-claude-s-pip", Labels: map[string]string{labelManaged: "true", labelKind: kindCache, labelLane: "claude", labelScope: "s", labelCache: "pip"}}
+	f := &fakeVolumes{bareCreate: true, items: []volume.Volume{
+		{Name: ours.Name, Driver: "local", Labels: ours.Labels},
+		{Name: "satat-cache-claude-s-npm", Driver: "local", Labels: map[string]string{"other": "x"}},
+	}}
+	if err := createVolume(ctx, f, ours); err != nil {
+		t.Fatalf("own volume refused: %v", err)
+	}
+	theirs := ours
+	theirs.Name = "satat-cache-claude-s-npm"
+	if err := createVolume(ctx, f, theirs); err == nil || !strings.Contains(err.Error(), "not the Satat volume") {
+		t.Fatalf("foreign volume: got %v, want a refusal", err)
 	}
 }

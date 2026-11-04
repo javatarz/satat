@@ -1,0 +1,4 @@
+version: 1
+commands:
+  setup: "true"
+  test: "python -m unittest -v"

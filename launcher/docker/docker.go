@@ -18,6 +18,7 @@ import (
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/pkg/stdcopy"
 	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/api/types/volume"
 	"github.com/moby/moby/client"
 	"golang.org/x/sync/singleflight"
 
@@ -263,11 +264,23 @@ func createVolume(ctx context.Context, api volumeAPI, o client.VolumeCreateOptio
 	if err != nil {
 		return err
 	}
-	v := got.Volume
-	if v.Driver != "local" || len(v.Options) != 0 || !sameLabels(v.Labels, o.Labels) {
-		return fmt.Errorf("volume %s exists and is not the Satat volume asked for", o.Name)
+	if isSatatVolume(got.Volume, o) {
+		return nil
+	}
+	// For a name that exists, Docker 28 can answer the create with the volume's labels missing.
+	// Read it back before refusing it.
+	found, err := api.VolumeInspect(ctx, o.Name, client.VolumeInspectOptions{})
+	if err != nil {
+		return fmt.Errorf("inspect volume %s: %w", o.Name, err)
+	}
+	if v := found.Volume; !isSatatVolume(v, o) {
+		return fmt.Errorf("volume %s exists and is not the Satat volume asked for (driver %q, options %v, labels %v; asked for labels %v)", o.Name, v.Driver, v.Options, v.Labels, o.Labels)
 	}
 	return nil
+}
+
+func isSatatVolume(v volume.Volume, o client.VolumeCreateOptions) bool {
+	return v.Driver == "local" && len(v.Options) == 0 && sameLabels(v.Labels, o.Labels)
 }
 
 func sameLabels(a, b map[string]string) bool {

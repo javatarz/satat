@@ -45,6 +45,7 @@ type CachePolicy struct {
 // has it; tests fake it.
 type volumeAPI interface {
 	VolumeCreate(context.Context, client.VolumeCreateOptions) (client.VolumeCreateResult, error)
+	VolumeInspect(context.Context, string, client.VolumeInspectOptions) (client.VolumeInspectResult, error)
 	VolumeList(context.Context, client.VolumeListOptions) (client.VolumeListResult, error)
 	VolumeRemove(context.Context, string, client.VolumeRemoveOptions) (client.VolumeRemoveResult, error)
 	DiskUsage(context.Context, client.DiskUsageOptions) (client.DiskUsageResult, error)

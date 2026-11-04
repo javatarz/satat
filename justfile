@@ -75,6 +75,33 @@ test:
 test-short:
     go test -short -p 1 ./...
 
+# Check the Harbor eval tasks: the reference solution must pass each one and doing nothing must fail
+eval-check:
+    harbor run -p evals/tasks -a oracle -n 4 -o docs/scratch/harbor-jobs --job-name "oracle-$(date +%Y%m%d-%H%M%S)"
+    harbor run -p evals/tasks -a nop -n 4 -o docs/scratch/harbor-jobs --job-name "nop-$(date +%Y%m%d-%H%M%S)"
+
+# Run the evals with Satat as the agent, 3 tries per task, 4 trials at a time: they mostly wait on
+# the API (e.g. `just eval-satat -i greet -k 1`, or `-n 1` for one at a time)
+eval-satat *args: _eval-token
+    PYTHONPATH=evals/agents harbor run -p evals/tasks -a satat_agent:SatatAgent -k 3 -n 4 \
+      -o docs/scratch/harbor-jobs --job-name "satat-$(date +%Y%m%d-%H%M%S)" {{args}}
+
+# Run the evals with Claude Code alone, at the Claude Code version Satat's image pins (the baseline),
+# 3 tries per task, 4 trials at a time.
+# CLAUDE_FORCE_OAUTH keeps it on the subscription token, as Satat's runner is.
+eval-baseline *args: _eval-token
+    CLAUDE_FORCE_OAUTH=1 harbor run -p evals/tasks -a claude-code --ak "version=$(sed -n "s/^CLAUDE_CODE_VERSION='\([^']*\)'.*/\1/p" scripts/build-claude-image.sh)" \
+      -k 3 -n 4 -o docs/scratch/harbor-jobs --job-name "baseline-$(date +%Y%m%d-%H%M%S)" {{args}}
+
+# Both agents need the Claude token in this shell; without it every trial fails, one by one.
+[private]
+_eval-token:
+    @[ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] || { echo "error: CLAUDE_CODE_OAUTH_TOKEN is not set in this shell (from claude setup-token; put it in .env and mise loads it in this repo)" >&2; exit 1; }
+
+# Summarise a Harbor job and save it in evals/results, compared with the agent's previous run
+eval-summary job:
+    python3 evals/summarize.py {{job}} --save
+
 # Build the Go binaries
 build:
     go build ./...

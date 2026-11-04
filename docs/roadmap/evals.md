@@ -1,9 +1,10 @@
 # Evals
 
-**Status:** Backlog (#172) · **Source:** calls on 2026-10-16 and 2026-10-21
+**Status:** In progress (#172) · **Source:** calls on 2026-10-16 and 2026-10-21
 
 - Code-based evals over agent and harness together, starting with one or two sample repos.
 - Stack-specific eval sets over time (UI, data engineering, Java, Python), so "can we use
   model X?" is answered from our own benchmark.
 - Agentic evals need their own repo structure and mechanics.
-- Explored: Harbor (task format) and Inspect AI (parallel runner). Pick one and experiment.
+- Explored: Harbor (task format) and Inspect AI (parallel runner). Harbor was picked
+  ([ADR 0034](../adr/0034-evals-on-harbor.md)); the first iteration is in `evals/`.

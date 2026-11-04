@@ -454,6 +454,12 @@ above). Lanes are opened at worker start, so a restart cannot leave one closed.
 
 ## The eval harness
 
+Evals now run on Harbor ([ADR 0034](adr/0034-evals-on-harbor.md)): tasks in `evals/tasks/`, Satat
+as the agent through `satat-step --snapshot`, Claude Code alone as the baseline, and
+`just eval-check`, `eval-satat`, `eval-baseline` and `eval-summary` to run them. The research note
+[evals.md](research/v2/evals.md) has how a run works and is scored. The Go harness below stays
+until the Harbor tasks also check scope, commit style and that the agent ran the tests.
+
 `cmd/satat-eval` runs one issue through the same pipeline and grades the result with checks a
 machine can run (`eval/`). It is a quick harness for the prototype, not a benchmark: one case
 (`eval/cases/sandbox-greet`, issue 1 of `javatarz/satat-sandbox`), deterministic checks, no model

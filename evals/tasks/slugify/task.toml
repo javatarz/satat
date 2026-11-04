@@ -1,0 +1,28 @@
+schema_version = "1.4"
+
+# The repo is all the verifier gets from the agent's sandbox.
+artifacts = ["/app"]
+
+[task]
+name = "satat/slugify"
+description = "Add a slugify(text) helper in a new module, with tests."
+keywords = ["python", "feature"]
+
+[metadata]
+kind = "feature"
+
+# The verifier runs the hidden tests offline, like Satat's check-python lane, in a fresh sandbox
+# from the same image, so nothing the agent changed outside /app can affect the grade.
+[verifier]
+timeout_sec = 120
+network_mode = "no-network"
+environment_mode = "separate"
+
+# The limits of Satat's claude lane (satat.yaml): a 20-minute step, 2 CPUs, 3 GiB.
+[agent]
+timeout_sec = 1200
+
+[environment]
+build_timeout_sec = 600
+cpus = 2
+memory_mb = 3072

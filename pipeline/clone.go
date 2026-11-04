@@ -116,6 +116,17 @@ func (g GitCloner) Clone(ctx context.Context, repo, base string) (*Checkout, err
 	if _, err := g.git(ctx, tmp, "-c", "credential.helper="+helper, "clone", "--quiet", "--depth", fmt.Sprint(depth), "--branch", base, "--single-branch", "--", url, dir); err != nil {
 		return nil, fmt.Errorf("clone %s: %w", repo, err)
 	}
+	ck, err := g.checkout(ctx, tmp, dir, base)
+	if err != nil {
+		return nil, err
+	}
+	keep = true
+	return ck, nil
+}
+
+// checkout reads the base commit and its commands file from the clone in dir, and hands it over as
+// a tar archive. Closing the Checkout removes tmp, which holds dir.
+func (g GitCloner) checkout(ctx context.Context, tmp, dir, base string) (*Checkout, error) {
 	sha, err := g.git(ctx, dir, "rev-parse", "HEAD")
 	if err != nil {
 		return nil, err
@@ -142,12 +153,52 @@ func (g GitCloner) Clone(ctx context.Context, repo, base string) (*Checkout, err
 		defer close(done)
 		pw.CloseWithError(tarDir(pw, dir))
 	}()
-	keep = true
 	return &Checkout{Tar: pr, BaseSHA: sha, Commands: cmds, closeFn: func() {
 		pr.Close() // unblocks the writer if the reader gave up early
 		<-done
 		os.RemoveAll(tmp)
 	}}, nil
+}
+
+// SnapshotCloner takes the checkout from a local git repo instead of GitHub, so a step can run on
+// code that is not in a GitHub repo: the eval harness hands Satat a task's repo this way (#172).
+// It needs no token. The repo name only labels the step and its caches.
+type SnapshotCloner struct {
+	// Dir is the local repo. Its base branch is cloned, so uncommitted changes are left out.
+	Dir string
+	// Git and TempDir are as for GitCloner.
+	Git     string
+	TempDir string
+}
+
+// Clone implements Cloner.
+func (s SnapshotCloner) Clone(ctx context.Context, repo, base string) (*Checkout, error) {
+	if err := runner.CheckRepo(repo); err != nil {
+		return nil, err
+	}
+	if err := runner.CheckBase(base); err != nil {
+		return nil, err
+	}
+	src, err := filepath.Abs(s.Dir)
+	if err != nil {
+		return nil, err
+	}
+	g := GitCloner{Git: s.Git, TempDir: s.TempDir}
+	tmp, err := os.MkdirTemp(g.TempDir, "satat-clone-")
+	if err != nil {
+		return nil, err
+	}
+	dir := filepath.Join(tmp, "repo")
+	if _, err := g.git(ctx, tmp, "clone", "--quiet", "--no-hardlinks", "--branch", base, "--single-branch", "--", src, dir); err != nil {
+		os.RemoveAll(tmp)
+		return nil, fmt.Errorf("clone snapshot %s: %w", s.Dir, err)
+	}
+	ck, err := g.checkout(ctx, tmp, dir, base)
+	if err != nil {
+		os.RemoveAll(tmp)
+		return nil, err
+	}
+	return ck, nil
 }
 
 // git runs git with an environment of its own: no user or system config, no prompts, and the read
@@ -169,7 +220,10 @@ func (g GitCloner) git(ctx context.Context, dir string, args ...string) (string,
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		msg := strings.ReplaceAll(stderr.String(), g.Token, "***")
+		msg := stderr.String()
+		if g.Token != "" {
+			msg = strings.ReplaceAll(msg, g.Token, "***")
+		}
 		return "", fmt.Errorf("git: %w: %s", err, strings.TrimSpace(msg))
 	}
 	return strings.TrimSpace(stdout.String()), nil
