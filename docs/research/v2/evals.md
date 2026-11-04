@@ -83,8 +83,29 @@ Run on 2026-11-04 on the owner's MacBook (colima, Docker 28.4.0), Harbor 0.25.0.
 | Baseline, fake token | Harbor installed Claude Code 2.1.301 in the task image, failed at Claude auth, recorded as a system error |
 | Applying a bundle in a task container | `git fetch` of the bundle and `reset --hard` to its head left the change in `/app` |
 
-The first real runs of both agents, with the subscription token, are still to do. Their summaries
-go in `evals/results/`.
+## First results
+
+Both agents on all four tasks, 3 tries each, 4 trials at a time, with Claude Code 2.1.301 and its
+default model (`claude-sonnet-5-5`) on the subscription token. Summaries are in `evals/results/`.
+
+| Agent | Pass rate | Reliability | System errors | Median tokens | Median turns | Median minutes | Whole run |
+|---|---|---|---|---|---|---|---|
+| Claude Code alone (baseline) | 12/12 (100%) | 4/4 | 0 | 50,634 | 4 | 0.15 | 99 s |
+| Satat | 12/12 (100%) | 4/4 | 0 | 51,449 | 3 | 0.17 | 106 s |
+
+Every Satat attempt made one commit, and its push rehearsal passed first time. No attempt hit a
+rate limit.
+
+**What it says:** the machinery works end to end for both agents, and the numbers are the starting
+point later runs compare with. It does not yet tell Satat and Claude Code apart: both solve every
+task, at about the same cost. These four tasks are too easy to separate them; harder tasks (below)
+are what will.
+
+**Run time:** a full run started at about 45 minutes for the baseline and is now under 2. A
+baseline trial installed Node and Claude Code each time (137 to 286 seconds of setup against about
+10 seconds of agent work), every container stop waited Docker's 10-second grace, and trials ran one
+at a time. The task images now carry Claude Code, stop at once, and the recipes run four trials at
+a time.
 
 ## Fixes found on the way
 
@@ -102,7 +123,9 @@ go in `evals/results/`.
 - **Measurements left for later:** easy to review (diff size, out-of-scope files) and repo rules
   (ran the tests itself, commit style), which the Go harness already checks, then the v2 trap
   tasks.
-- **Go tasks and tasks rebuilt from issues Satat already fixed**, towards the plan's ten.
+- **Harder tasks, Go tasks and tasks rebuilt from issues Satat already fixed**, towards the plan's
+  ten. Both agents pass all four current tasks, so they cannot yet show a difference. The plan's
+  refactor task is not among them yet.
 - **A trial takes about 28 seconds, about 9 of them the agent's work.** The rest is containers:
   Harbor rebuilds the task image from cache each trial, and the separate verifier starts a sandbox
   and a no-network sidecar of its own (about 12 seconds; a shared verifier took 4). The sandbox

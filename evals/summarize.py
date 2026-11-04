@@ -93,7 +93,10 @@ def load(job: Path) -> dict:
 
 def _median(xs):
     xs = [x for x in xs if x is not None]
-    return round(statistics.median(xs), 2) if xs else None
+    if not xs:
+        return None
+    m = round(statistics.median(xs), 2)
+    return int(m) if float(m).is_integer() else m
 
 
 def score(run: dict) -> dict:

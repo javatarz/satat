@@ -1,0 +1,239 @@
+{
+  "job": "baseline-20261104-162749",
+  "agent": "claude-code",
+  "version": "2.1.301",
+  "saved_at": "2026-11-04T17:10:30",
+  "score": {
+    "attempts": 12,
+    "system_errors": 0,
+    "pass_rate": 1.0,
+    "reliability": 1.0,
+    "median_tokens": 50634,
+    "median_turns": 4,
+    "median_minutes": 0.15,
+    "rate_limit_hits": 0,
+    "models": [
+      "claude-sonnet-5-5"
+    ],
+    "tasks": {
+      "fix-duration": {
+        "tries": "\u2713\u2713\u2713",
+        "all_passed": true,
+        "minutes": 0.19,
+        "tokens": 51885
+      },
+      "greet": {
+        "tries": "\u2713\u2713\u2713",
+        "all_passed": true,
+        "minutes": 0.12,
+        "tokens": 49302
+      },
+      "slugify": {
+        "tries": "\u2713\u2713\u2713",
+        "all_passed": true,
+        "minutes": 0.14,
+        "tokens": 50330
+      },
+      "test-split": {
+        "tries": "\u2713\u2713\u2713",
+        "all_passed": true,
+        "minutes": 0.16,
+        "tokens": 50636
+      }
+    }
+  },
+  "trials": [
+    {
+      "task": "fix-duration",
+      "trial": "fix-duration__Fech8Vc",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.18,
+      "tokens": 69235,
+      "turns": 6,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "fix-duration",
+      "trial": "fix-duration__THWVDgq",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.19,
+      "tokens": 51885,
+      "turns": 6,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "fix-duration",
+      "trial": "fix-duration__Z6rAWQd",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.21,
+      "tokens": 51846,
+      "turns": 6,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "greet",
+      "trial": "greet__Tjp7vcZ",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.12,
+      "tokens": 49456,
+      "turns": 3,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "greet",
+      "trial": "greet__Wovx2zu",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.12,
+      "tokens": 49252,
+      "turns": 3,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "greet",
+      "trial": "greet__zHxF6TK",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.1,
+      "tokens": 49302,
+      "turns": 3,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "slugify",
+      "trial": "slugify__QBgcm3p",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.14,
+      "tokens": 50330,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "slugify",
+      "trial": "slugify__T8XdaiB",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.13,
+      "tokens": 50326,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "slugify",
+      "trial": "slugify__bfNQdtt",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.14,
+      "tokens": 50784,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "test-split",
+      "trial": "test-split__ULfBDxr",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.16,
+      "tokens": 50636,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "test-split",
+      "trial": "test-split__gWPt83W",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.15,
+      "tokens": 50632,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    },
+    {
+      "task": "test-split",
+      "trial": "test-split__u57u4ez",
+      "error": null,
+      "timed_out": false,
+      "reward": 1,
+      "solved": 1,
+      "intact": 1,
+      "minutes": 0.16,
+      "tokens": 50695,
+      "turns": 4,
+      "rate_limits": 0,
+      "models": [
+        "claude-sonnet-5-5"
+      ]
+    }
+  ]
+}
