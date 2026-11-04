@@ -7,7 +7,7 @@ commits back into the sandbox for Harbor's verifier.
 
 Run it from the satat repo root with this directory on PYTHONPATH:
 
-    PYTHONPATH=evals/agents harbor run -p evals/tasks -a satat_agent:SatatAgent -n 1
+    PYTHONPATH=evals/agents harbor run -p evals/tasks -a satat_agent:SatatAgent -n 4
 
 The lane's pass_env (CLAUDE_CODE_OAUTH_TOKEN) must be in the environment. A step that leaves no
 result.json, or that the runner reports as failed (claude exited with an error), raises after its
@@ -88,6 +88,8 @@ def usage_from_transcript(path: Path) -> dict:
 
 class SatatAgent(BaseAgent):
     _binary: Path | None = None
+    # Trials run in parallel (-n) and each calls setup: only one may build the binary.
+    _build_lock = asyncio.Lock()
 
     @staticmethod
     def name() -> str:
@@ -98,16 +100,20 @@ class SatatAgent(BaseAgent):
 
     async def setup(self, environment: BaseEnvironment) -> None:
         # Build satat-step once per Harbor process, from the tree under test.
-        if SatatAgent._binary is None:
-            out = SATAT_ROOT / "docs" / "scratch" / "bin" / "satat-step"
-            proc = await asyncio.create_subprocess_exec(
-                "go", "build", "-o", str(out), "./cmd/satat-step",
-                cwd=SATAT_ROOT, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
-            )
-            log, _ = await proc.communicate()
-            if proc.returncode != 0:
-                raise RuntimeError(f"go build satat-step failed:\n{log.decode(errors='replace')}")
-            SatatAgent._binary = out
+        async with SatatAgent._build_lock:
+            if SatatAgent._binary is None:
+                await self._build()
+
+    async def _build(self) -> None:
+        out = SATAT_ROOT / "docs" / "scratch" / "bin" / "satat-step"
+        proc = await asyncio.create_subprocess_exec(
+            "go", "build", "-o", str(out), "./cmd/satat-step",
+            cwd=SATAT_ROOT, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT,
+        )
+        log, _ = await proc.communicate()
+        if proc.returncode != 0:
+            raise RuntimeError(f"go build satat-step failed:\n{log.decode(errors='replace')}")
+        SatatAgent._binary = out
 
     async def run(self, instruction: str, environment: BaseEnvironment, context: AgentContext) -> None:
         out = self.logs_dir / "satat"

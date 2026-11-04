@@ -42,8 +42,9 @@ previous run.
 
 ## Consequences
 
-- Evals run by hand (`just eval-satat`, `just eval-baseline`), not on real PRs, one trial at a time
-  because the subscription allows one run at a time. A batch uses the same quota as real work.
+- Evals run by hand (`just eval-satat`, `just eval-baseline`), not on real PRs, four trials at a
+  time: a trial mostly waits on the API. A batch uses the same quota as real work, in a shorter
+  window.
 - Tasks are public in this repo, hidden tests included. The agent never sees this repo, but the
   answers could reach training data. They can move to a private repo later without changing the
   format.

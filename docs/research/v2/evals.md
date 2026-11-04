@@ -30,7 +30,8 @@ just eval-satat                   # Satat, 3 tries per task
 just eval-summary docs/scratch/harbor-jobs/<job>   # summarise, save, compare
 ```
 
-Pass Harbor flags through, for example `just eval-satat -i greet -k 1` for one try of one task.
+Pass Harbor flags through, for example `just eval-satat -i greet -k 1` for one try of one task, or
+`-n 1` to run trials one at a time instead of four.
 
 **A task** is a Harbor task folder. `instruction.md` is the issue (title on the first line).
 `environment/` builds the repo the agent works on: `python:3.13.16-slim` by the same digest as
@@ -106,5 +107,6 @@ go in `evals/results/`.
   Harbor rebuilds the task image from cache each trial, and the separate verifier starts a sandbox
   and a no-network sidecar of its own (about 12 seconds; a shared verifier took 4). The sandbox
   stops at once (`STOPSIGNAL SIGKILL`): Harbor keeps it alive with `sleep infinity`, which ignores
-  SIGTERM, so each stop had waited Docker's 10-second grace. Running trials in parallel (`-n`) is
-  the biggest remaining saving, since the agent mostly waits on the API.
+  SIGTERM, so each stop had waited Docker's 10-second grace. The recipes run four trials at a time
+  (`-n 4`), the biggest saving, since the agent mostly waits on the API. Harbor interleaves tasks,
+  so parallel trials are different tasks and Satat's per-task caches do not collide.
