@@ -176,7 +176,11 @@ class SatatAgent(BaseAgent):
             "turns": u["turns"],
             "sessions": u["sessions"],
             "models": sorted(u["models"]),
-            "rate_limit_events": len(result.get("rate_limit_events") or []),
+            # Every session reports its quota with status "allowed"; only a refusal is a hit.
+            "rate_limit_hits": sum(
+                1 for e in result.get("rate_limit_events") or []
+                if (e.get("rate_limit_info") or {}).get("status") != "allowed"
+            ),
             "step_exit": code,
             "duration_ms": result.get("duration_ms"),
         }

@@ -46,7 +46,9 @@ def _stream_usage(agent_dir: Path) -> dict:
             if kind == "system" and ev.get("model"):
                 u["models"].add(ev["model"])
             elif kind == "rate_limit_event":
-                u["rate_limits"] += 1
+                # Every session reports its quota with status "allowed"; only a refusal is a hit.
+                if (ev.get("rate_limit_info") or {}).get("status") != "allowed":
+                    u["rate_limits"] += 1
             elif kind == "result":
                 us = ev.get("usage") or {}
                 u["tokens"] += sum(us.get(k) or 0 for k in (
@@ -81,7 +83,7 @@ def load(job: Path) -> dict:
             "minutes": round((end - start).total_seconds() / 60, 2) if start and end else None,
             "tokens": u["tokens"] if u["found"] else None,
             "turns": u["turns"] if u["found"] else None,
-            "rate_limits": max(u["rate_limits"], meta.get("rate_limit_events") or 0),
+            "rate_limits": max(u["rate_limits"], meta.get("rate_limit_hits") or 0),
             "models": sorted(u["models"] | set(meta.get("models") or [])),
         })
     if not trials:
