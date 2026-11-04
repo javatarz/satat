@@ -59,7 +59,7 @@ each `deploy.secrets` entry in `satat.yaml` to `env` (a local change, don't comm
 deploy:
   secrets:
     CLAUDE_CODE_OAUTH_TOKEN: env   # from claude setup-token
-    SATAT_GITHUB_TOKEN: env        # fine-grained PAT: Contents read, Issues read
+    SATAT_GITHUB_TOKEN: env        # fine-grained PAT: Contents, Issues and Pull requests read
     SATAT_PUSH_TOKEN: env          # fine-grained PAT: Contents and Pull requests read/write
 ```
 
