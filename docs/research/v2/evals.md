@@ -34,7 +34,9 @@ Pass Harbor flags through, for example `just eval-satat -i greet -k 1` for one t
 
 **A task** is a Harbor task folder. `instruction.md` is the issue (title on the first line).
 `environment/` builds the repo the agent works on: `python:3.13.16-slim` by the same digest as
-Satat's `check-python` lane, with the repo committed at `/app`. `task.toml` gives the agent the
+Satat's `check-python` lane, with the repo committed at `/app`. The image also has Claude Code at
+the version Satat's image pins, so Harbor's `claude-code` agent skips its own install: that install
+took 2 to 5 minutes a trial (measured 137 to 286 seconds), against about 10 seconds of agent work. `task.toml` gives the agent the
 `claude` lane's limits (20 minutes, 2 CPUs, 3 GiB). `solution/solve.sh` is the reference answer.
 
 **The verifier** runs in a separate sandbox built from the same image, with no network. Only
@@ -100,5 +102,6 @@ go in `evals/results/`.
   (ran the tests itself, commit style), which the Go harness already checks, then the v2 trap
   tasks.
 - **Go tasks and tasks rebuilt from issues Satat already fixed**, towards the plan's ten.
-- **The baseline installs Claude Code on every trial** (about a minute). Baking it into the task
-  image would save that, but then the image differs between the two agents.
+- **A trial takes about a minute, 22 seconds of it grading.** The separate verifier sandbox
+  costs about 20 seconds over a shared one (4 seconds measured). Running trials two at a time would
+  halve a run too, at the cost of the laptop's memory and of the one-run-at-a-time habit.
