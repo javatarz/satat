@@ -10,6 +10,8 @@ Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #1
 and ADR 0027's "the pusher runs inside the worker". Leaves ADR 0011 (never in git, Terraform
 state or cloud-init) unchanged. Amends ADR 0025 (2026-10-25): no broker, and the egress proxy holds no secret
 and needs no identity.
+Updated 2026-11-07: [ADR 0034](0034-llm-gateway-holds-model-credentials.md) selects LiteLLM as the
+gateway proxy, after the #155 spike.
 
 ## Context
 
@@ -68,8 +70,9 @@ operator-only policy, and unsealing itself after a restart.
 
 - `scripts/compose-up.sh` and `check_op` go; starting Satat no longer needs `op`.
 - One more service (about 54 MiB idle) and one more to upgrade. The OpenBao Go client goes into
-  the pusher, gateway proxy and worker. LiteLLM likely needs OpenBao Agent beside it.
-- Until the gateway proxy is proven (spike below), the worker's policy includes the Claude token
+  the pusher and worker. LiteLLM gets its token through OpenBao Agent
+  ([ADR 0034](0034-llm-gateway-holds-model-credentials.md)).
+- Until Satat has the gateway proxy, the worker's policy includes the Claude token
   and the launcher passes it into the Claude step on Compose, as today: the one known break of
   "use, never see". On Kubernetes no interim delivery path is built; Claude steps there wait for
   the proxy. When it lands, the grant moves to the proxy's policy and the worker loses it.
@@ -90,10 +93,8 @@ operator-only policy, and unsealing itself after a restart.
 - k3d with Kubernetes auth and a NetworkPolicy keeping step pods from OpenBao (#153). If it
   fails in a way that cannot be fixed, the store choice is reopened for all environments
   together, not split.
-- The Claude CLI through the gateway proxy on the OAuth token, with the token never in the lane
-  and OpenBao Agent feeding the proxy (#155).
 - `kubectl port-forward` reaching the pod as loopback, for the operator login.
-- A colima restart; OpenBao Agent for LiteLLM; Raft snapshot and restore; anything on EKS.
+- A colima restart; Raft snapshot and restore; anything on EKS.
 
 Revisit when a second cluster must share secrets, when the host stops being trusted (then a
 KMS or hardware seal), or when a secret needs a TTL shorter than a manual rotation.
