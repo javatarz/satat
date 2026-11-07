@@ -328,7 +328,8 @@ token through a credential helper in that one clone process, and the clone's rem
 `https://github.com/<repo>.git`. `launcher/docker/exposure_test.go` starts a process in the step
 and fails if a GitHub credential is visible by name, value or file. The Claude token is the one
 known gap: the planned fix is an LLM gateway proxy that issues each step a short-lived key
-([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md), #155). Until
+([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md),
+[ADR 0034](adr/0034-llm-gateway-holds-model-credentials.md)). Until
 OpenBao exists the worker reads `github-read-token` from its environment as
 `SATAT_GITHUB_TOKEN`.
 
@@ -587,6 +588,7 @@ The v0.1 stack (OpenHands Canvas on EC2) lives on the
 | [0030](adr/0030-on-demand-agent-runs.md) | On-demand one-shot agent runs through Hatchet: `satat agent run/ls/rm` (proposed) |
 | [0032](adr/0032-secret-store.md) | Secrets live in OpenBao, read per component identity |
 | [0033](adr/0033-lane-toolchain-and-build-caches.md) | Lean lane image; mise installs toolchains at step start; persistent per-repo cache volumes; toolchain and registry egress |
+| [0034](adr/0034-llm-gateway-holds-model-credentials.md) | LiteLLM holds the model credentials; each agent run gets a short-lived virtual key that the worker creates; Claude Code uses the Anthropic pass-through route |
 
 Research behind them is in [docs/research/v2/](research/v2/), in particular
 [docker-prototype.md](research/v2/docker-prototype.md) (measurements and findings per slice),
