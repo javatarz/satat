@@ -1,8 +1,9 @@
 # Security
 
-**Status:** Decided (secret store) · Backlog (parts) · **Related:** [ADR 0025](../adr/0025-github-token-broker.md),
-[ADR 0032](../adr/0032-secret-store.md), #97, #143, #166 · **Source:** calls on 2026-10-16
-and 2026-10-25
+**Status:** Decided (secret store, LLM gateway) · Backlog (parts) · **Related:**
+[ADR 0025](../adr/0025-github-token-broker.md), [ADR 0032](../adr/0032-secret-store.md),
+[ADR 0034](../adr/0034-llm-gateway-holds-model-credentials.md), #97, #143, #166 · **Source:**
+calls on 2026-10-16 and 2026-10-25
 
 - Agents never hold tokens (ADR 0025: the worker clones, the pusher pushes, no broker in v0.2). Guard against prompt injection in issue text.
 - Prove it with container tests: start a process in the container and check which secrets it can see.
@@ -19,8 +20,8 @@ Direction from the 2026-10-25 conversation (research in
   load, never part of the run path.
 - **Each component reads only what it is entitled to.** The coding agent gets no secrets, only
   non-secret config such as git name and email. Only the pusher can push and sign. The worker
-  reads a read-only token and the LLM gateway proxy holds the Claude token. Nothing mints tokens
-  in v0.2.
+  reads a read-only token and the LLM gateway proxy holds the Claude token. The worker creates
+  short-lived LiteLLM virtual keys (ADR 0034).
 - **The agent cannot bypass it.** No network path to the store, no credential, credentials
   bound to the holder's address or service account, and read-only policies. Defence in depth,
   so one mistake does not open the store.
@@ -45,9 +46,9 @@ Next, in order:
 3. Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
    `scripts/compose-up.sh` stops calling `op`.
 4. ~~The worker clones the repo before the step starts, so the step holds no GitHub token.~~ Done (#167).
-5. An LLM gateway proxy takes the Claude token and issues each step a short-lived virtual key
-   (ADR 0032, #155). Until then the Compose Claude step still holds the token: the one known
-   break of "use, never see".
+5. An LLM gateway proxy takes the Claude token and issues each step a short-lived virtual key.
+   Decided in ADR 0034 (#155), to build in #238. Until then the Compose Claude step still holds
+   the token: the one known break of "use, never see".
 6. Checks that run repo code move to a step with no credentials, before the pusher.
 7. A hostname-allowlist egress proxy on the lane network.
 8. A container test: start a process in a step and list what it can see and reach.
