@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # A recording wrapper of git for the meeting-digest proofs.
 #
-# For `git push ...` with FAKE_GH_DIR set, appends ["git", "push", <args>...] to
-# $FAKE_GH_DIR/calls.log. Every call, push included, then runs the real git: the next git on
-# PATH after this script's own directory. With FAKE_GH_DIR unset it only passes through.
+# For a push with FAKE_GH_DIR set, appends the full argv ["git", <args>...] to
+# $FAKE_GH_DIR/calls.log. A push is any call whose first subcommand, after git's global options
+# (`-C <path>`, `-c <name>=<value>`, `--git-dir=<path>`, `--no-pager`, ...), is `push`. Every
+# call, push included, then runs the real git: the next git on PATH after this script's own
+# directory. With FAKE_GH_DIR unset it only passes through.
 set -euo pipefail
 
 self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
@@ -22,7 +24,22 @@ if [[ -z $real_git ]]; then
   exit 127
 fi
 
-if [[ ${1:-} == push && -n ${FAKE_GH_DIR:-} ]]; then
+subcommand_of() {
+  while [[ $# -gt 0 ]]; do
+    case $1 in
+      -C | -c | --git-dir | --work-tree | --namespace | --config-env | --attr-source)
+        shift 2 || return 0
+        ;;
+      -*) shift ;;
+      *)
+        echo "$1"
+        return 0
+        ;;
+    esac
+  done
+}
+
+if [[ -n ${FAKE_GH_DIR:-} && "$(subcommand_of "$@")" == push ]]; then
   mkdir -p "$FAKE_GH_DIR"
   printf '%s\0' git "$@" | jq -Rsc 'split("\u0000") | .[:-1]' >>"$FAKE_GH_DIR/calls.log"
 fi

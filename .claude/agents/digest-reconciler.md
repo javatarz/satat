@@ -77,8 +77,9 @@ names are fine.
    - a decision: `- Decided in call <date> (no ADR yet): <paraphrase>. [Call record](../calls/<date>.md)`
    - a direction: `- Raised in call <date>: <paraphrase>. [Call record](../calls/<date>.md)`
 
-   Only add lines. Never edit `README.md`, never touch a `**Status:**` line, never create,
-   rename or delete a theme file.
+   Write each added bullet as one line, however long, and never wrap it, even though the theme
+   files wrap their own bullets. Only add lines. Never edit `README.md`, never touch a
+   `**Status:**` line, never create, rename or delete a theme file.
 3. The outbox at `outbox=`: `{"date": "<date>", "pr": {"body": "<overview>"}}`. The overview is
    markdown in your own words: what the call settled, the themes it edits, the conflicts it
    flags, and a pointer to the call record for the full item list.
