@@ -11,8 +11,16 @@ file other than the ones named under Output.
 
 ## Input
 
-The session's prompt gives `key=value` lines: `date`, `items`, `issues`, `record`, `outbox`
-(and `transcript`, `summary`, `repo`, which you do not need). Read:
+The session's prompt gives `key=value` lines: `root`, `date`, `items`, `issues`, `record`,
+`outbox` (and `transcript`, `summary`, `repo`, which you do not need).
+
+`root=` is the absolute repo root. Every path in the `key=value` lines, and every repo path you
+use (`docs/roadmap/*.md`, `docs/adr/*.md`, the template), is relative to it: Read, Grep, Glob,
+Write and Edit always take `<root>/<relative path>`. Never derive the root any other way: not
+from directory names, not from the environment, not by searching. If `root=` is missing, reply
+`status: root-missing` and stop.
+
+Read:
 
 - the item list at `items=`: `{date, items[], topics[]}`, each item with `id`, `type`,
   `summary`, `speaker`, `ts`, `quote`, `confidence`, and by type `agreement`, `owner`, `due`,
@@ -40,6 +48,22 @@ Compare each item with the themes, the ADRs and the open issues, and give it one
   you add a line to.
 - `no change — <ref>`: Satat already holds it as said, and you edit nothing for it.
 - `new`: nothing Satat holds covers it, and you edit no theme for it.
+
+A theme file holds ideas and proposals, not decisions. For a `decision` item that touches a
+theme:
+
+- It contradicts an ADR: mark it `conflict — <ADR link>` and add no `Decided in call` line. The
+  contradiction is only flagged.
+- The theme only proposes it (its `**Status:**` is Idea, Shaping or otherwise open, or it
+  describes the idea without recording it as decided): mark it `update — <theme link>` and add
+  the `Decided in call` bullet (see Output) to that theme. Describing the same idea is not
+  holding it, so this is never `no change`.
+- The theme already records this same decision as decided (a `Decided in call` line for it, or
+  a Decided `**Status:**` that covers it): mark it `no change — <theme link>` and add no line,
+  since a second line would duplicate it.
+
+You never edit a `**Status:**` line. `no change` stays valid for directions, questions, actions
+and deferrals that Satat already holds as said.
 
 A ref is a link from the call record, `[ADR 0026](../adr/0026-docker-first-runtime.md)` or
 `[Skill distribution](../roadmap/skill-distribution.md)`, or an issue named as `#<number>`.
@@ -93,6 +117,6 @@ you add lines to and the outbox.
 ## Reply
 
 Reply with exactly one line and nothing else: the `record=` value exactly as the prompt gives it
-(repo-relative, never an absolute path), or `status: <code>` where `<code>` is `no-items` (the
-item list has no items), `template-missing` (the template cannot be read) or `write-failed` (a
-write did not succeed).
+(repo-relative, never an absolute path), or `status: <code>` where `<code>` is `root-missing`
+(the prompt has no `root=` line), `no-items` (the item list has no items), `template-missing`
+(the template cannot be read) or `write-failed` (a write did not succeed).
