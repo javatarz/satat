@@ -19,6 +19,15 @@
       "Edit(/.tool-versions)",
       "Edit(/.envrc)",
       "Edit(/docs/scratch/calls/*.txt)",
+      "Edit(/.worktrees/**)",
+      "Edit(/.git)",
+      "Edit(**/mise*.toml)",
+      "Edit(**/.mise*)",
+      "Edit(**/.config/mise*)",
+      "Edit(**/.config/miserc*)",
+      "Edit(**/.envrc)",
+      "Edit(**/.tool-versions)",
+      "Edit(**/.claude/**)",
       "Read(/.env)",
       "Read(/.env.*)"
     ]
