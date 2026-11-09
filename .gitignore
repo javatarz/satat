@@ -3,6 +3,7 @@
 *.auto.tfvars
 terraform.tfvars
 secrets.*
+!secrets.example.env
 *.pem
 
 # IDE

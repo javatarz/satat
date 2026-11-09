@@ -84,8 +84,8 @@ var _ deploy.Target = (*Target)(nil)
 func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	var buf bytes.Buffer
 	data := struct {
-		WorkerEnv, OptionalEnv                              []string
-		PostgresImage, HatchetLiteImage, GoImage, BaseImage string
+		WorkerEnv, OptionalEnv                                            []string
+		PostgresImage, HatchetLiteImage, GoImage, BaseImage, OpenBaoImage string
 	}{
 		WorkerEnv:        cfg.SecretNames(),
 		OptionalEnv:      cfg.OptionalEnvNames(),
@@ -93,6 +93,7 @@ func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 		HatchetLiteImage: deploy.HatchetLiteImage,
 		GoImage:          deploy.GoImage,
 		BaseImage:        deploy.BaseImage,
+		OpenBaoImage:     deploy.OpenBaoImage,
 	}
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("render compose.yaml: %w", err)

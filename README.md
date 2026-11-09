@@ -27,6 +27,8 @@ You need Docker ([colima](https://github.com/abiosoft/colima) or Docker Desktop)
 
 ```sh
 just setup    # install the pinned tools and git hooks, create .env, then run doctor
+just secrets-init              # once: set up the secret store (see Secret store below)
+just secrets-load < secrets.env  # once: load the store's entries
 just doctor   # check this machine can run Satat; names what is missing
 just run      # bring the platform up on Docker Compose
 just lint     # what CI runs: pre-commit, gofmt, go vet and the Docker socket check
@@ -49,6 +51,27 @@ just down [--volumes]    # stop the stack; --volumes also deletes its data
 The Claude lane image is built locally: `just build-images`, then put the reference it prints
 in `satat.yaml`. Queue an issue with `just enqueue owner/name N` and
 watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#run-it-locally).
+
+### Secret store
+
+Secrets live in an OpenBao store, one per environment ([ADR 0032](docs/adr/0032-secret-store.md)).
+The worker does not read from it yet: it still gets its tokens as below. The worker waits for the
+store to be up and unsealed, so set it up before the first `just run`:
+
+```sh
+just secrets-init                   # once per environment
+cp secrets.example.env secrets.env  # fill in the values; secrets.* is gitignored
+just secrets-load < secrets.env     # then delete secrets.env
+```
+
+`secrets-init` prints a recovery key and the operator password once. Save both in your password
+manager: nothing else holds them, and `secrets-load` and `secrets-grant` ask for the password
+(or read `SATAT_OPERATOR_PASSWORD`). Any `NAME=value` source can feed the load, for example
+`op inject -i secrets.env.tpl | just secrets-load`. To change one value later, load only that
+name. `just secrets-grant <component> <name>` lets a component read one more entry.
+
+The store unseals itself on every start. `just down --volumes` deletes it; then run
+`just secrets-init` and `just secrets-load` again.
 
 ### Without 1Password
 

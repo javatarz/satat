@@ -121,7 +121,9 @@ We follow these
 Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 [pre-commit](https://pre-commit.com/), then run `just setup`. It installs the tools pinned in
 `mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
-`just doctor`, which names anything else that is missing, such as `actionlint`.
+`just doctor`, which names anything else that is missing, such as `actionlint`. Then set up the
+secret store once with `just secrets-init` and `just secrets-load` (see
+[Secret store](README.md#secret-store) in the README).
 
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.

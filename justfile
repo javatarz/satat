@@ -43,7 +43,19 @@ status *args:
 down *args:
     go run ./cmd/satat deploy down {{args}}
 
-# Follow a service's logs (postgres, hatchet-lite, docker-proxy or worker)
+# Initialise the secret store once per environment; prints the recovery key and operator password once
+secrets-init:
+    scripts/secret-store.sh init
+
+# Load secrets as NAME=value lines on stdin, e.g. `just secrets-load < file` (names: secrets.example.env)
+secrets-load:
+    scripts/secret-store.sh load
+
+# Let a component read one more store entry, e.g. `just secrets-grant worker github-read-token`
+secrets-grant component name:
+    scripts/secret-store.sh grant {{component}} {{name}}
+
+# Follow a service's logs (postgres, hatchet-lite, docker-proxy, openbao or worker)
 logs service="worker":
     {{compose_placeholders}} docker compose logs -f {{service}}
 
