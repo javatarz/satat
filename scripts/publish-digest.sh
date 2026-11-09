@@ -126,9 +126,11 @@ fi
 readonly gitleaks="${DIGEST_GITLEAKS:-gitleaks}"
 command -v "$gitleaks" >/dev/null || die "gitleaks not found"
 rm -rf "$outgoing" && mkdir -p "$outgoing"
+# Each scan copy starts with a fixed text line: gitleaks skips a file whose first bytes look like
+# a known file type (a %PDF- prefix, say), which would hide a secret in a commit path.
 for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
   mkdir -p "$outgoing/$(dirname "$path")"
-  cp -- "$path" "$outgoing/$path"
+  { echo 'gitleaks scan copy'; cat -- "$path"; } >"$outgoing/$path"
 done
 jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$outgoing/pr-body.md"
 if ! env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$gitleaks" dir --no-banner --redact \
