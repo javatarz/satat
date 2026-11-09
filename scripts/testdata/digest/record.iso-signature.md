@@ -102,6 +102,8 @@ Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
+
+Filler line: ordinary text that moves the signature line deeper into the file
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
@@ -201,6 +203,8 @@ Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
+
+Filler line: ordinary text that moves the signature line deeper into the file
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
@@ -300,6 +304,8 @@ Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
+
+Filler line: ordinary text that moves the signature line deeper into the file
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
@@ -399,10 +405,8 @@ Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
-Filler line: ordinary text that moves the signature line deeper into the file.
-Filler line: ordinary text that moves the signature line deeper into the file.
-Filler line: ordinary text that moves the signature line deeper into the file.
-Filler line: ordinary text that moves the signature line deeper into the file.
+
+Filler line: ordinary text that moves the signature line deeper into the file
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
@@ -415,5 +419,7 @@ Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Filler line: ordinary text that moves the signature line deeper into the file.
 Signature line: xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxCD001 xxxxxxxxxxxxxxxxxxxx
+
+Regression fixture for the old 19-byte scan header; today's header outgrows gitleaks's first chunk.
 
 - token: @TOKEN@

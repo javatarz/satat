@@ -4,9 +4,10 @@
 # In order: checks the target is origin, refuses any working-tree change outside the exact
 # allowlist (docs/calls/<date>.md, and edits to tracked docs/roadmap/<name>.md themes other
 # than README.md), refuses git attributes or binary content on those paths (both can hide a
-# diff), runs scripts/check-digest.sh, then runs gitleaks over the files it will commit and the
-# PR body it will send. Only then does it commit those paths on digest/<date>, push that branch
-# fast-forward only and open a draft PR, or reuse its open PR.
+# diff), runs scripts/check-digest.sh, refuses a paragraph of 20,000 bytes or more in those
+# paths or the PR body, then runs gitleaks over the files it will commit and the PR body it will
+# send. Only then does it commit those paths on digest/<date>, push that branch fast-forward only
+# and open a draft PR, or reuse its open PR.
 #
 # --dry-run stops after gitleaks and prints the files to commit and the PR draft.
 #
@@ -125,6 +126,28 @@ if ! check_output="$(scripts/check-digest.sh "$date")"; then
   die "check-digest failed"
 fi
 
+# Refuses a paragraph of 20,000 bytes or more, which gitleaks could cut mid-line (see the scan
+# header below). A paragraph is an awk RS="" record: a run of bytes split only at a literal \n\n,
+# so \r and whitespace-only lines stay inside it. gitleaks also breaks at \n[ \t\r]*\n, so its
+# runs are never longer than these and this measure can only refuse more, never less.
+# awk exits 1 when no paragraph is that long; any other failure refuses, so the check fails closed.
+refuse_long_paragraph() {
+  local status=0
+  LC_ALL=C awk 'BEGIN { RS = "" } length($0) >= 20000 { found = 1 } END { exit !found }' "$1" ||
+    status=$?
+  case $status in
+    0) die "paragraph too long in $1" ;;
+    1) ;;
+    *) die "cannot measure paragraphs in $1" ;;
+  esac
+}
+
+for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
+  refuse_long_paragraph "$path"
+done
+jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$pr_body"
+refuse_long_paragraph "$pr_body"
+
 readonly gitleaks="${DIGEST_GITLEAKS:-gitleaks}"
 command -v "$gitleaks" >/dev/null || die "gitleaks not found"
 rm -rf "$outgoing" && mkdir -p "$outgoing"
@@ -132,12 +155,15 @@ rm -rf "$outgoing" && mkdir -p "$outgoing"
 # at 0, tar's ustar at 257, ISO's CD001 at 32769), and skips the whole file on a match, which
 # would hide a secret. Each scan copy starts with 131072 bytes of fixed header text, so all the
 # real content lands past that first chunk.
-{ head -c 131072 < <(yes 'gitleaks scan copy: padding line'); echo; } >"$scan_header"
+# After that chunk gitleaks reads about 4 KB at a time and extends each piece to the next blank
+# line, but by at most 25,000 bytes; past that it cuts mid-line and can split a secret. The header
+# ends in a blank line so the cut before the content is safe, and the 20,000-byte paragraph limit
+# above keeps every later blank line within reach.
+{ head -c 131072 < <(yes 'gitleaks scan copy: padding line'); printf '\n\n'; } >"$scan_header"
 for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
   mkdir -p "$outgoing/$(dirname "$path")"
   cat -- "$scan_header" "$path" >"$outgoing/$path"
 done
-jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$pr_body"
 cat -- "$scan_header" "$pr_body" >"$outgoing/pr-body.md"
 if ! env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$gitleaks" dir --no-banner --redact \
   --ignore-gitleaks-allow --gitleaks-ignore-path "$outgoing" "$outgoing" >&2; then
