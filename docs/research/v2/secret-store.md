@@ -285,6 +285,24 @@ Entry names (also in `secrets.example.env`):
 - `deploy.secrets` in `satat.yaml` now maps each variable to its entry name
   (`SATAT_GITHUB_TOKEN: github-read-token`). The kubernetes target has no store yet, so its
   `deploy up` takes the values from its own environment. `op://` resolution is gone.
+- The agent has no path to the store, checked three ways. The launcher's floor
+  (`ValidateRequest`) refuses the `secrets` network and the `cred-*`, `bao-seal` and `bao-data`
+  volumes, also with the Compose project prefix (`satat_secrets`) and as a bind of the volume's
+  host path. Test: `TestFloorRefuses`. `scripts/check-compose-secrets.sh` (`just lint` and CI)
+  fails if a service other than `openbao` and the worker joins `secrets`, or shares the network
+  of one that does, or if a service other than these two and `secrets-setup` mounts a store
+  volume. The three must have exactly their mounts, read-only included.
+- The check reads every profile (`--profile '*'`). Without it, `docker compose config` leaves
+  out `secrets-setup`. `scripts/check-compose-socket.sh` does not do this yet.
+- The step test runs a real OpenBao, not the spike's listener stand-in: the pinned image in dev
+  mode, alias `openbao`, at `10.157.2.2` on an internal `10.157.2.0/24` network. That is the
+  `secrets` layout in a subnet of its own, so a running stack, which holds `10.157.0.0/24`, is
+  not touched. A step on each lane of `satat.yaml` gets no answer from `openbao:8200` or
+  `10.157.2.2:8200` and no DNS answer for `openbao`. It has no `/run/satat/cred`, no `role_id`
+  or `secret_id` file, and no environment name outside its `pass_env`, its `optional_env`, the
+  launcher's own (`HOME`, `SATAT_*`) and `PATH`, `HOSTNAME`, `PWD` and `SHLVL`. Test:
+  `TestConfiguredLanesExposure` in `launcher/docker/exposure_test.go`. As in the spike, a
+  container on the store's network reaches it by name and address.
 
 ## Kubernetes findings that still apply
 
@@ -342,7 +360,7 @@ So on k3d the seal key Secret, and OpenBao's Raft volume, survive stop and start
 - Raft snapshot and restore (`bao operator raft snapshot`), if re-initialising per environment
   ever stops being acceptable.
 - Anything on EKS; from AWS docs only.
-- The real pusher, broker and proxy using the Go client. The spike used the CLI.
+- The real pusher and LLM gateway proxy using the Go client. The worker uses it (#157).
 
 ## Sources
 

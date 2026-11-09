@@ -289,7 +289,9 @@ proxy with a hostname allowlist is not built ([ADR 0026](adr/0026-docker-first-r
 narrows the endpoints (no exec start, build, swarm or secrets). It does not inspect request
 bodies, so the real gate is that the worker builds every create request from lane config and
 runs it through the floor. `scripts/check-compose-socket.sh` fails if any other Compose service
-can reach the socket. The worker container is itself hardened: read-only root, all capabilities
+can reach the socket. The floor also refuses the secret store's network and volumes, and
+`scripts/check-compose-secrets.sh` fails if a service that is not on its allow list joins the
+`secrets` network or mounts a store volume ([ADR 0032](adr/0032-secret-store.md)). The worker container is itself hardened: read-only root, all capabilities
 dropped, `no-new-privileges`, 512 MiB.
 
 ## Why the write token lives only in the pusher

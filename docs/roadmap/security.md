@@ -41,8 +41,8 @@ allowlist with no secrets. Part of v0.2 (#99).
 Next, in order:
 
 1. The pusher moves out of the worker into its own service, with its own identity (#156, #157).
-2. The worker's builder refuses the store's network and credential volumes for a lane, and a CI
-   check confirms it.
+2. ~~The worker's builder refuses the store's network and credential volumes for a lane, and a CI
+   check confirms it.~~ Done (#157): the launcher's floor and `scripts/check-compose-secrets.sh`.
 3. ~~Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
    `scripts/compose-up.sh` stops calling `op`.~~ Done (#157): the worker reads the store, and
    `compose-up.sh` is gone.

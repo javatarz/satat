@@ -3,7 +3,7 @@
 ## Status
 
 Accepted (2026-10-25). Research in [secret-store.md](../research/v2/secret-store.md), #143.
-The Kubernetes half is checked on k3d in #153.
+The Kubernetes half is checked on k3d in #153. The Compose half is built in #157.
 Amended 2026-10-25: one store on every environment, and the Claude token held by an LLM gateway
 proxy (see Decision). Settles the "where secrets live" question left open in `AGENTS.md`, for Compose now and
 Kubernetes later. Amends the secret source in ADR 0028 and ADR 0031 (open PRs #129 and #130)
