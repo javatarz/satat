@@ -92,6 +92,7 @@ you add lines to and the outbox.
 
 ## Reply
 
-Reply with exactly one line and nothing else: the `record=` path, or `status: <code>` where
-`<code>` is `no-items` (the item list has no items), `template-missing` (the template cannot be
-read) or `write-failed` (a write did not succeed).
+Reply with exactly one line and nothing else: the `record=` value exactly as the prompt gives it
+(repo-relative, never an absolute path), or `status: <code>` where `<code>` is `no-items` (the
+item list has no items), `template-missing` (the template cannot be read) or `write-failed` (a
+write did not succeed).
