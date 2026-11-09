@@ -48,6 +48,10 @@ var (
 	uidgidRE  = regexp.MustCompile(`^([1-9][0-9]*):([1-9][0-9]*)$`)
 	envNameRE = regexp.MustCompile(`^[A-Z][A-Z0-9_]*$`)
 	volumeRE  = regexp.MustCompile(`^satat-[a-zA-Z0-9][a-zA-Z0-9_.-]{0,190}$`)
+	// The secret store's network and volumes (ADR 0032), bare or with the Compose project prefix
+	// ("satat_secrets", "satat_cred-worker"). A volume also matches as one element of a host path.
+	storeNetworkRE = regexp.MustCompile(`^([^/]*_)?secrets$`)
+	storeVolumeRE  = regexp.MustCompile(`(^|/|_)(cred-[^/]*|bao-seal|bao-data)(/|$)`)
 )
 
 // ValidateRequest is the hardening floor of ADR 0026 and the access gate of ADR 0027. It looks at
@@ -149,6 +153,12 @@ func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *ne
 	if len(host.Binds) != 0 {
 		bad("bind mounts are not allowed: %v", host.Binds)
 	}
+	for _, b := range host.Binds {
+		src, _, _ := strings.Cut(b, ":")
+		if storeVolumeRE.MatchString(src) {
+			bad("bind mount %q is the secret store's volume", src)
+		}
+	}
 	if len(host.VolumesFrom) != 0 || len(host.Links) != 0 {
 		bad("volumes-from and links are not allowed")
 	}
@@ -158,6 +168,9 @@ func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *ne
 		}
 	}
 	for _, m := range host.Mounts {
+		if storeVolumeRE.MatchString(m.Source) {
+			bad("mount %q is the secret store's volume", m.Source)
+		}
 		switch m.Type {
 		case mount.TypeVolume:
 			if !strings.HasPrefix(m.Source, resourcePrefix) {
@@ -226,6 +239,16 @@ func ValidateRequest(cfg *container.Config, host *container.HostConfig, nets *ne
 	}
 	if len(nets.EndpointsConfig) != 1 || nets.EndpointsConfig[mode] == nil {
 		bad("the step must attach to exactly its lane network")
+	}
+	// By name as well: a Compose project named satat-lane-x calls its store network
+	// satat-lane-x_secrets, which has the lane prefix.
+	for n := range nets.EndpointsConfig {
+		if storeNetworkRE.MatchString(n) {
+			bad("network %q is the secret store's network", n)
+		}
+	}
+	if _, ok := nets.EndpointsConfig[mode]; !ok && storeNetworkRE.MatchString(mode) {
+		bad("network %q is the secret store's network", mode)
 	}
 	if len(host.DNS) != 0 || len(host.DNSOptions) != 0 || len(host.DNSSearch) != 0 || len(host.ExtraHosts) != 0 {
 		bad("dns and extra hosts overrides are not allowed")

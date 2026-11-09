@@ -111,6 +111,31 @@ func TestFloorRefuses(t *testing.T) {
 			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x", Target: "/cache/b"})
 		}, "volume at \"/cache/b\" is not allowed"},
 		{"input volume moved", func(r *request) { r.host.Mounts[0].Target = "/etc" }, "volume at \"/etc\" is not allowed"},
+		// The secret store (ADR 0032): its network and volumes, as Compose names them in project satat.
+		{"store network", func(r *request) { r.host.NetworkMode = "satat_secrets" }, `network "satat_secrets" is the secret store's network`},
+		{"store network unprefixed", func(r *request) { r.host.NetworkMode = "secrets" }, `network "secrets" is the secret store's network`},
+		{"store network as a second endpoint", func(r *request) {
+			r.networking.EndpointsConfig["satat_secrets"] = &network.EndpointSettings{}
+		}, `network "satat_secrets" is the secret store's network`},
+		{"store network of a project with the lane prefix", func(r *request) {
+			r.host.NetworkMode = "satat-lane-x_secrets"
+			r.networking.EndpointsConfig = map[string]*network.EndpointSettings{"satat-lane-x_secrets": {}}
+		}, `network "satat-lane-x_secrets" is the secret store's network`},
+		{"credential volume", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat_cred-worker", Target: "/workspace"})
+		}, `mount "satat_cred-worker" is the secret store's volume`},
+		{"credential volume with the Satat prefix", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "satat-x_cred-worker", Target: "/workspace"})
+		}, `mount "satat-x_cred-worker" is the secret store's volume`},
+		{"seal key volume", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeVolume, Source: "bao-seal", Target: "/workspace"})
+		}, `mount "bao-seal" is the secret store's volume`},
+		{"credential volume as a bind", func(r *request) {
+			r.host.Binds = []string{"/var/lib/docker/volumes/satat_cred-worker/_data:/x:ro"}
+		}, `bind mount "/var/lib/docker/volumes/satat_cred-worker/_data" is the secret store's volume`},
+		{"credential volume as a typed bind", func(r *request) {
+			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeBind, Source: "/var/lib/docker/volumes/satat_cred-worker/_data", Target: "/x"})
+		}, `mount "/var/lib/docker/volumes/satat_cred-worker/_data" is the secret store's volume`},
 		{"typed tmpfs elsewhere", func(r *request) {
 			r.host.Mounts = append(r.host.Mounts, mount.Mount{Type: mount.TypeTmpfs, Target: "/etc"})
 		}, "tmpfs at"},
@@ -344,6 +369,7 @@ func TestLaneConfigIsCheckedWhenBuilt(t *testing.T) {
 		{"workspace bigger than memory", func(l *launcher.Lane) { l.WorkspaceBytes = l.MemoryBytes }, "smaller than its memory"},
 		{"lower-case env name", func(l *launcher.Lane) { l.PassEnv = []string{"token"} }, "not allowed"},
 		{"bad lane name", func(l *launcher.Lane) { l.Name = "../x" }, "identifier"},
+		{"lane named like the store network", func(l *launcher.Lane) { l.Name = "x_secrets" }, "secret store's network"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
