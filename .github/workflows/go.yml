@@ -12,6 +12,7 @@ on:
       - "satat.yaml"
       - "deploy/**"
       - "scripts/check-compose-socket.sh"
+      - "scripts/check-compose-secrets.sh"
       - "images/worker/**"
       - ".github/workflows/go.yml"
 
@@ -43,6 +44,9 @@ jobs:
 
       - name: Only docker-proxy mounts the Docker socket
         run: scripts/check-compose-socket.sh
+
+      - name: Only allowed services reach the secret store
+        run: scripts/check-compose-secrets.sh
 
       # Catches a package the worker imports but the image build does not copy.
       - name: Build the worker image
