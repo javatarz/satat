@@ -176,6 +176,19 @@ check_op() {
   fi
 }
 
+# The secret store (ADR 0032): running, unsealed, and an entry for every name a policy grants.
+# scripts/secret-store.sh check lists names with a list-only identity, never values.
+check_openbao() {
+  local out rc=0
+  if [ "$docker_ok" -ne 1 ]; then skip "openbao: needs docker"; return; fi
+  out="$(scripts/secret-store.sh check 2>&1)" || rc=$?
+  case "$rc" in
+    0) ok "openbao: $out" ;;
+    3) warn "openbao: $out" ;;
+    *) fail "openbao: $out" ;;
+  esac
+}
+
 check_env() {
   local pw
   if [ ! -f .env ]; then
@@ -274,6 +287,7 @@ CHECKS=(
   check_terraform
   check_gh
   check_op
+  check_openbao
   check_env
   check_lane_images
   check_ports
