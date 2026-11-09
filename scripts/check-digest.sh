@@ -8,7 +8,9 @@
 # transcript it also checks that every quote occurs verbatim in one utterance, that each item's
 # ts is the marker before an occurrence, and that no 8 consecutive words of an utterance, nor
 # a whole 3-7 word utterance, appear in a target. A .json target is scanned string by string.
-# No output line repeats a quote: schema errors are reported on a copy with the quotes redacted.
+# No output line repeats item or transcript content: a schema error is reported as its JSON
+# path and the schema keyword it breaks, and an item as its index, plus its id and ts when
+# they are well formed.
 #
 # Prints `fail: <file>: <reason>` lines and exits 1, or prints `ok` and exits 0. Exits 2 on
 # bad usage.
@@ -66,7 +68,8 @@ add_roadmap_targets() {
     fail docs/roadmap "no merge-base with origin/HEAD"
     return
   fi
-  if ! roadmap_added="$(git diff --no-color -U0 "$base" -- docs/roadmap | awk '/^\+\+\+ / { next } /^\+/ { print substr($0, 2) }')"; then
+  if ! roadmap_added="$(git diff --no-color -U0 "$base" -- docs/roadmap |
+    awk '/^diff --git / { in_hunk = 0; next } /^@@/ { in_hunk = 1; next } in_hunk && /^\+/ { print substr($0, 2) }')"; then
     fail docs/roadmap "git diff failed"
     return
   fi
@@ -116,26 +119,40 @@ check_schema() {
   if ! command -v check-jsonschema >/dev/null; then
     validator=(uvx --quiet --from check-jsonschema==0.38.2 check-jsonschema)
   fi
-  local redacted output line reported=0
-  if ! redacted="$(jq '(.items[]? | objects | .quote, (.agreement | objects | .quote)) |=
-      (if type == "string" and length > 0 then "[quote]" else . end)' "$items" 2>/dev/null)"; then
-    fail "$items" "schema: not a JSON item list"
+  local report reasons reason reported=0
+  if report="$("${validator[@]}" --output-format json --schemafile "$schema" "$items" 2>/dev/null)"; then
     return
   fi
-  if output="$("${validator[@]}" --schemafile "$schema" - <<<"$redacted" 2>&1)"; then
-    return
-  fi
-  while IFS= read -r line; do
-    line="${line#"${line%%[![:space:]]*}"}"
-    if [[ -n $line && $line != "Schema validation errors were encountered." ]]; then
-      fail "$items" "schema: ${line#-::}"
+  reasons="$(jq -r "$schema_report_reasons" <<<"$report" 2>/dev/null)" || reasons=""
+  while IFS= read -r reason; do
+    if [[ -n $reason ]]; then
+      fail "$items" "schema: $reason"
       reported=1
     fi
-  done <<<"$output"
+  done <<<"$reasons"
   if [[ $reported -eq 0 ]]; then
     fail "$items" "schema check failed"
   fi
 }
+
+schema_report_reasons="$(cat <<'JQ'
+def keyword:
+  if startswith("Additional properties are not allowed") then "additionalProperties"
+  elif test("is not of type '[^']*'(, '[^']*')*$") then "type"
+  elif test("is a required property$") then "required"
+  elif test("is not one of \\[.*\\]$") then "enum"
+  elif test("does not match '.*'$") then "pattern"
+  elif test("(should be non-empty|is too short)$") then "minLength"
+  elif test("should not be valid under \\{.*\\}$") then "not"
+  else "invalid"
+  end;
+def safe_path:
+  if test("^\\$(\\.[a-z]+|\\[[0-9]+\\])*$") then . else "$" end;
+(.parse_errors[]? | "not a JSON item list"),
+(.errors[]? | "\(.path | safe_path): breaks \(.message | keyword)")
+JQ
+)"
+readonly schema_report_reasons
 
 checker="$(cat <<'PY'
 import json
@@ -145,6 +162,7 @@ import sys
 LEAK_RUN = 8
 SHORTEST_CHECKED_UTTERANCE = 3
 MARKER = re.compile(r"^\d{2}:\d{2}:\d{2}$")
+ITEM_ID = re.compile(r"^i\d{2,}$")
 UTTERANCE = re.compile(r"^([^:]+): (.*)$")
 
 failures = []
@@ -217,16 +235,27 @@ def target_token_streams(label, path):
 def read_utterances(path):
     utterances = []
     marker = None
-    with open(path, encoding="utf-8") as handle:
-        for line_number, line in enumerate(handle, start=1):
-            line = line.rstrip("\n")
-            if MARKER.match(line):
-                marker = line
-                continue
-            match = UTTERANCE.match(line)
-            if marker and match:
-                utterances.append((line_number, marker, match.group(2)))
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = [line.rstrip("\n") for line in handle]
+    except UnicodeDecodeError:
+        fail(path, "not UTF-8 text")
+        return None
+    for line_number, line in enumerate(lines, start=1):
+        if MARKER.match(line):
+            marker = line
+            continue
+        match = UTTERANCE.match(line)
+        if marker and match:
+            utterances.append((line_number, marker, match.group(2)))
     return utterances
+
+
+def item_label(index, item):
+    item_id = item.get("id")
+    if isinstance(item_id, str) and ITEM_ID.match(item_id):
+        return f"items[{index}] ({item_id})"
+    return f"items[{index}]"
 
 
 def agreement_quote(item):
@@ -235,12 +264,11 @@ def agreement_quote(item):
     return quote if isinstance(quote, str) else None
 
 
-def labelled_quotes(item):
-    item_id = item.get("id", "?")
+def labelled_quotes(index, item):
     if isinstance(item.get("quote"), str):
-        yield f"{item_id} quote", item["quote"]
+        yield f"{item_label(index, item)} quote", item["quote"]
     if agreement_quote(item) is not None:
-        yield f"{item_id} agreement", agreement_quote(item)
+        yield f"{item_label(index, item)} agreement", agreement_quote(item)
 
 
 def markers_before(quote, utterances):
@@ -250,19 +278,21 @@ def markers_before(quote, utterances):
 
 
 def check_decisions(items_path, items):
-    for item in items:
+    for index, item in items:
         if item.get("type") == "decision" and not (agreement_quote(item) or "").strip():
-            fail(items_path, f"{item.get('id', '?')}: decision without an agreement quote")
+            fail(items_path, f"{item_label(index, item)}: decision without an agreement quote")
 
 
 def check_quotes_in_transcript(items_path, transcript_path, items, utterances):
-    for item in items:
-        for label, quote in labelled_quotes(item):
+    for index, item in items:
+        for label, quote in labelled_quotes(index, item):
             if not markers_before(quote, utterances):
                 fail(items_path, f"{label} does not occur verbatim in {transcript_path}")
         markers = markers_before(item.get("quote"), utterances)
-        if markers and item.get("ts") not in markers:
-            fail(items_path, f"{item.get('id', '?')}: ts {item.get('ts')} is not the marker before its quote ({markers[0]})")
+        ts = item.get("ts")
+        if markers and ts not in markers:
+            shown_ts = f" {ts}" if isinstance(ts, str) and MARKER.match(ts) else ""
+            fail(items_path, f"{item_label(index, item)}: ts{shown_ts} is not the marker before its quote ({markers[0]})")
 
 
 def check_leaks(targets, quote_sources, utterance_sources):
@@ -280,7 +310,10 @@ def load_items(items_path):
     try:
         with open(items_path, encoding="utf-8") as handle:
             document = json.load(handle)
-        return [item for item in document.get("items", []) if isinstance(item, dict)]
+        return [(index, item) for index, item in enumerate(document.get("items", [])) if isinstance(item, dict)]
+    except UnicodeDecodeError:
+        fail(items_path, "not UTF-8 text")
+        return []
     except (json.JSONDecodeError, AttributeError, TypeError):
         fail(items_path, "not a valid item list")
         return []
@@ -289,10 +322,10 @@ def load_items(items_path):
 def main(items_path, transcript_path, *target_args):
     items = load_items(items_path)
     check_decisions(items_path, items)
-    quote_sources = [(label, tokens(quote)) for item in items for label, quote in labelled_quotes(item)]
+    quote_sources = [(label, tokens(quote)) for index, item in items for label, quote in labelled_quotes(index, item)]
     utterance_sources = []
-    if transcript_path:
-        utterances = read_utterances(transcript_path)
+    utterances = read_utterances(transcript_path) if transcript_path else None
+    if utterances is not None:
         check_quotes_in_transcript(items_path, transcript_path, items, utterances)
         utterance_tokens = [(line_number, tokens(text)) for line_number, _, text in utterances]
         utterance_sources = [(n, t) for n, t in utterance_tokens if len(t) >= SHORTEST_CHECKED_UTTERANCE]
