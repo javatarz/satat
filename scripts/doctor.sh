@@ -153,29 +153,6 @@ check_gh() {
   fi
 }
 
-# scripts/compose-up.sh reads the worker's tokens from 1Password.
-# op can wait on the 1Password app indefinitely, so every call has a timeout.
-check_op() {
-  local accounts rc=0
-  if ! has op; then
-    fail "op: not installed (brew install 1password-cli; scripts/compose-up.sh reads tokens with it)"
-    return
-  fi
-  if with_timeout "$TIMEOUT" op whoami >/dev/null 2>&1; then
-    ok "op: installed, signed in"
-    return
-  fi
-  accounts="$(with_timeout "$TIMEOUT" op account list 2>/dev/null)" || rc=$?
-  if [ -n "$accounts" ]; then
-    # With the desktop app integration there is no session until a command asks; compose-up.sh will.
-    warn "op: account set up, no active session (1Password will ask to unlock when the stack starts)"
-  elif [ "$rc" -ge 128 ]; then
-    warn "op: no answer within ${TIMEOUT}s (check the 1Password app; compose-up.sh needs it)"
-  else
-    fail "op: no 1Password account (run: op account add, or turn on the desktop app integration)"
-  fi
-}
-
 # The secret store (ADR 0032): running, unsealed, and an entry for every name a policy grants.
 # scripts/secret-store.sh check lists names with a list-only identity, never values.
 check_openbao() {
@@ -286,7 +263,6 @@ CHECKS=(
   check_actionlint
   check_terraform
   check_gh
-  check_op
   check_openbao
   check_env
   check_lane_images

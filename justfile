@@ -2,8 +2,8 @@
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
-# compose.yaml requires the worker's variables to parse, even for commands that don't start it.
-compose_placeholders := "HATCHET_CLIENT_TOKEN=unused CLAUDE_CODE_OAUTH_TOKEN=unused SATAT_GITHUB_TOKEN=unused SATAT_PUSH_TOKEN=unused"
+# compose.yaml requires the worker's Hatchet token to parse, even for commands that don't start it.
+compose_placeholders := "HATCHET_CLIENT_TOKEN=unused"
 
 # List the recipes
 [private]
@@ -21,7 +21,7 @@ setup:
 doctor:
     @scripts/doctor.sh
 
-# Bring the platform up: Hatchet, the worker's token, then the worker
+# Bring the platform up: Hatchet, the worker's token, then the worker (it reads its secrets from the store)
 run: doctor
     #!/usr/bin/env bash
     set -euo pipefail
@@ -29,7 +29,7 @@ run: doctor
       {{compose_placeholders}} docker compose up -d --wait hatchet-lite
       scripts/hatchet-token.sh
     fi
-    scripts/compose-up.sh
+    docker compose up -d --build
 
 # Start or update the stack with satat deploy up (creates the Hatchet token on first run)
 up *args:

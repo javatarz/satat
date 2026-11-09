@@ -48,8 +48,5 @@ jobs:
       - name: Build the worker image
         env:
           HATCHET_CLIENT_TOKEN: unused
-          CLAUDE_CODE_OAUTH_TOKEN: unused
-          SATAT_GITHUB_TOKEN: unused
-          SATAT_PUSH_TOKEN: unused
           POSTGRES_PASSWORD: unused
         run: docker compose build worker
