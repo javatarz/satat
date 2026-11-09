@@ -3,9 +3,10 @@
 #
 # In order: checks the target is origin, refuses any working-tree change outside the exact
 # allowlist (docs/calls/<date>.md, and edits to tracked docs/roadmap/<name>.md themes other
-# than README.md), runs scripts/check-digest.sh, then runs gitleaks over the files it will
-# commit and the PR body it will send. Only then does it commit those paths on digest/<date>,
-# push that branch fast-forward only and open a draft PR, or reuse its open PR.
+# than README.md), refuses git attributes on those paths (they can hide a diff), runs
+# scripts/check-digest.sh, then runs gitleaks over the files it will commit and the PR body it
+# will send. Only then does it commit those paths on digest/<date>, push that branch
+# fast-forward only and open a draft PR, or reuse its open PR.
 #
 # --dry-run stops after gitleaks and prints the files to commit and the PR draft.
 #
@@ -76,6 +77,12 @@ is_allowed() {
   fi
 }
 
+mkdir -p docs/scratch/calls
+status_file="$(mktemp docs/scratch/calls/status.XXXXXX)" || die "cannot create a status file"
+readonly status_file
+trap 'rm -f "$status_file"' EXIT
+git status --porcelain=v1 -z --untracked-files=all >"$status_file" || die "git status failed"
+
 commit_paths=()
 is_refused=0
 while IFS= read -r -d '' entry; do
@@ -92,9 +99,14 @@ while IFS= read -r -d '' entry; do
     echo "refused: path not allowed: $status $path" >&2
     is_refused=1
   fi
-done < <(git status --porcelain=v1 -z --untracked-files=all)
+done <"$status_file"
 [[ $is_refused -eq 0 ]] || exit 1
 [[ -f $outbox ]] || die "$outbox missing"
+
+if [[ ${#commit_paths[@]} -gt 0 ]]; then
+  commit_path_attributes="$(git check-attr -a -- "${commit_paths[@]}")" || die "git check-attr failed"
+  [[ -z $commit_path_attributes ]] || die "git attributes set on a commit path"
+fi
 
 if ! check_output="$(scripts/check-digest.sh "$date")"; then
   grep '^fail: ' <<<"$check_output" >&2 || true
