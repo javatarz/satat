@@ -25,3 +25,11 @@
   and the digest scripts are in `protected.add` in `.satat/commands.yaml`, and why
   `.claude/settings.json` denies Claude Code edits to them, to `.git/` and to the mise and
   direnv config.
+
+## Reviewing a call record
+
+- Set each item's `status:` to accepted, edited or rejected. Use edited for a wording fix only.
+- Record an item with the wrong type as rejected, plus a missed item with the right type.
+- Add any item the digest missed, with an id like `m01` and `status: missed`.
+- Run `scripts/digest-tally.sh docs/calls` to see strict precision (accepted / reviewed),
+  (accepted + edited) / reviewed, and the missed and unreviewed counts per call and overall.
