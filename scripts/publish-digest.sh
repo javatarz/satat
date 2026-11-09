@@ -59,6 +59,8 @@ cd "$(dirname "${BASH_SOURCE[0]}")/.."
 readonly record="docs/calls/$date.md"
 readonly outbox="docs/scratch/calls/$date.outbox.json"
 readonly outgoing="docs/scratch/calls/$date.outgoing"
+readonly scan_header="docs/scratch/calls/$date.scan-header"
+readonly pr_body="docs/scratch/calls/$date.pr-body.md"
 readonly branch="digest/$date"
 readonly title="Digest call $date"
 
@@ -126,13 +128,17 @@ fi
 readonly gitleaks="${DIGEST_GITLEAKS:-gitleaks}"
 command -v "$gitleaks" >/dev/null || die "gitleaks not found"
 rm -rf "$outgoing" && mkdir -p "$outgoing"
-# Each scan copy starts with a fixed text line: gitleaks skips a file whose first bytes look like
-# a known file type (a %PDF- prefix, say), which would hide a secret in a commit path.
+# gitleaks type-sniffs the first 100,000 bytes of a file, each signature at its own offset (%PDF-
+# at 0, tar's ustar at 257, ISO's CD001 at 32769), and skips the whole file on a match, which
+# would hide a secret. Each scan copy starts with 131072 bytes of fixed header text, so all the
+# real content lands past that first chunk.
+{ head -c 131072 < <(yes 'gitleaks scan copy: padding line'); echo; } >"$scan_header"
 for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
   mkdir -p "$outgoing/$(dirname "$path")"
-  { echo 'gitleaks scan copy'; cat -- "$path"; } >"$outgoing/$path"
+  cat -- "$scan_header" "$path" >"$outgoing/$path"
 done
-jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$outgoing/pr-body.md"
+jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$pr_body"
+cat -- "$scan_header" "$pr_body" >"$outgoing/pr-body.md"
 if ! env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$gitleaks" dir --no-banner --redact \
   --ignore-gitleaks-allow --gitleaks-ignore-path "$outgoing" "$outgoing" >&2; then
   die "gitleaks found a secret"
@@ -190,6 +196,6 @@ pr_url="$("$gh_cli" pr list --repo "$repo" --head "$branch" --state open --json 
   die "gh pr list failed"
 if [[ -z $pr_url ]]; then
   pr_url="$("$gh_cli" pr create --repo "$repo" --draft --base "$default_branch" --head "$branch" \
-    --title "$title" --body-file "$outgoing/pr-body.md")" || die "gh pr create failed"
+    --title "$title" --body-file "$pr_body")" || die "gh pr create failed"
 fi
 echo "$pr_url"
