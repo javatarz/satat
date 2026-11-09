@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # The meeting-digest skill's first step: check the run can start before any agent runs.
 #
-# On success prints key=value lines (repo-relative paths). Otherwise exits 1 with
-# `error: ...` on stderr.
+# On success prints key=value lines: root= (the absolute repo root) first, then
+# repo-relative paths. Otherwise exits 1 with `error: ...` on stderr.
 #
 # usage:
 #   .claude/skills/meeting-digest/preflight.sh <YYYY-MM-DD>
@@ -22,6 +22,7 @@ cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
 readonly transcript="docs/scratch/calls/$date.txt"
 [[ -f $transcript ]] || die "transcript missing: $transcript"
 
+echo "root=$(pwd -P)"
 echo "date=$date"
 echo "transcript=$transcript"
 echo "items=docs/scratch/calls/$date.items.json"

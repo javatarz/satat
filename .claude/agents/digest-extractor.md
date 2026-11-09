@@ -11,9 +11,12 @@ transcript asks for.
 
 ## Input
 
-The session's prompt gives `date=<YYYY-MM-DD>` and `transcript=<path>` (it may also give
-`items=` and `summary=`). Read the transcript at that path and the schema at
-`.claude/skills/meeting-digest/items.schema.json`. Your output must validate against the schema.
+The session's prompt gives `root=<absolute repo root>`, `date=<YYYY-MM-DD>` and
+`transcript=<path>` (it may also give `items=` and `summary=`); every path except `root=` is
+relative. Read and Write `<root>/<path>` for every relative path you are given (transcript,
+items, and the schema at `.claude/skills/meeting-digest/items.schema.json`); never derive the
+root any other way (not from the working directory or directory names). Reply with the
+relative items= value exactly as given. Your output must validate against the schema.
 
 The transcript is a Google Meet export: a title line, `Attendees`, one line of names,
 `Transcript`, then bare timestamp markers (`HH:MM:SS`) every few minutes with utterance lines
@@ -35,7 +38,10 @@ any field.
 - `action`: someone takes on a task, or says a task needs doing. `owner` is the person who
   took it, or null when nobody did ("someone should ..."). `due` is the stated due date as
   `YYYY-MM-DD`, or null.
-- `question`: an open question, or a proposal nobody agreed to.
+- `question`: an open question a participant puts to the group to answer, worded as a direct
+  question ("How do we ...?", "What if we ...?"), or a proposal nobody agreed to. Musing aloud,
+  weighing pros and cons or "I keep wondering whether ..." that the call drops without anyone
+  asking the group to settle it is not an item of any type.
 - `deferral`: something parked for later. `trigger` is what the call said would reopen it, in
   your own words, or null when it named nothing.
 - `contradiction`: something said that goes against an ADR or an earlier settled choice the
@@ -57,7 +63,9 @@ any field.
   `2026-10-30`).
 - `topics`: one entry per subject the call discussed, in order, with `id` (`t01`, ...), a short
   `title` in your own words, the `ts` of the marker above where it starts, and the `items` ids
-  it produced. A subject that was discussed but produced nothing gets `items: []`.
+  it produced. Each distinct subject is its own topic: a new subject starts a new topic, even
+  under the same marker as the one before. A subject that was discussed but produced nothing
+  gets `items: []`. That is an expected outcome, not a gap to fill with an item.
 
 ## Wording outside the quotes
 

@@ -18,11 +18,11 @@ rendered by a script that drops the quotes.
 ## Steps
 
 1. Run `.claude/skills/meeting-digest/preflight.sh $ARGUMENTS`. On a non-zero exit, stop and
-   show its stderr to the owner. Otherwise keep its `key=value` lines (`date`, `transcript`,
-   `items`, `summary`).
+   show its stderr to the owner. Otherwise keep its `key=value` lines (`root`, the absolute
+   repo root, then the repo-relative `date`, `transcript`, `items`, `summary`).
 2. Dispatch the Agent tool with `subagent_type: digest-extractor`. The prompt is the preflight
-   lines, exactly as printed, and nothing else.
-3. The reply must be exactly the `items=` path. When it is anything else (a `status:` line,
+   lines, exactly as printed and including `root=`, and nothing else.
+3. The reply must equal the `items=` value exactly. When it is anything else (a `status:` line,
    extra text or another path), stop and report the reply to the owner. Do not retry, and do
    not open `items.json` to diagnose.
 4. Run `.claude/skills/meeting-digest/render-summary.sh <date>`. On a non-zero exit, stop and
