@@ -25,3 +25,4 @@
   and the digest scripts are in `protected.add` in `.satat/commands.yaml`, and why
   `.claude/settings.json` denies Claude Code edits to them, to `.git/` and to the mise and
   direnv config.
+- The speaker map `.claude/skills/meeting-digest/speakers.json` is committed and public, so anyone can see the names and handles in it.

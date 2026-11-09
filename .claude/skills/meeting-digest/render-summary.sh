@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Render the local, unpublished summary of a call's items, grouped by type, then the preview
-# of what publishing would send: the roadmap edits, the call record and the PR draft. Its last
+# of what publishing would send: the roadmap edits, the call record, the PR draft and the issue
+# drafts (with the assignee each would get from the speaker map). Its last
 # line is the publish command for the owner to run outside Claude Code.
 #
 # The quote fields are dropped before anything else reads the items, so the summary (and the
@@ -37,8 +38,10 @@ readonly items="docs/scratch/calls/$date.items.json"
 readonly summary="docs/scratch/calls/$date.summary.md"
 readonly record="docs/calls/$date.md"
 readonly outbox="docs/scratch/calls/$date.outbox.json"
+readonly speakers="${DIGEST_SPEAKERS:-$skill_dir/speakers.json}"
 [[ -f $items ]] || die "items missing: $items"
 [[ -f $record ]] || die "call record missing: $record"
+jq -e 'type == "object"' "$speakers" >/dev/null 2>&1 || die "speaker map is not a JSON object: $speakers"
 repo="$(origin_repo)"
 readonly repo
 [[ $repo =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "cannot read owner/name from the origin URL"
@@ -87,6 +90,9 @@ roadmap_diff="$(git diff --no-color -U0 -- docs/roadmap)"
   if [[ -f $outbox ]]; then
     printf '\n'
     jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_preview($date)' "$outbox"
+    printf '\n'
+    jq -r -L "$skill_dir" --arg date "$date" --slurpfile map "$speakers" --slurpfile items "$items" \
+      'include "bodies"; issue_preview($date; $map; $items)' "$outbox"
   fi
   printf '\n## Publish\n\n'
   printf 'Publish (run in a terminal outside Claude Code): scripts/publish-digest.sh digest %s %s\n' "$repo" "$date"

@@ -4,11 +4,19 @@
 # In order: checks the target is origin, refuses any working-tree change outside the exact
 # allowlist (docs/calls/<date>.md, and edits to tracked docs/roadmap/<name>.md themes other
 # than README.md), refuses git attributes or binary content on those paths (both can hide a
-# diff), runs scripts/check-digest.sh, then runs gitleaks over the files it will commit and the
-# PR body it will send. Only then does it commit those paths on digest/<date>, push that branch
-# fast-forward only and open a draft PR, or reuse its open PR.
+# diff), runs scripts/check-digest.sh, then renders the PR body and the issue drafts (title and
+# body per drafted action, from the outbox) and runs gitleaks over the files it will commit and
+# everything it will send. Only then does it commit those paths on digest/<date>, push that
+# branch fast-forward only, file the drafted issues with `gh issue create` (skipping an issue
+# whose marker already exists) and fill each action's `- issue:` slot in the record, and open a
+# draft PR, or reuse its open PR.
 #
-# --dry-run stops after gitleaks and prints the files to commit and the PR draft.
+# --dry-run stops after gitleaks and prints the files to commit, the PR draft and the issue
+# drafts. It makes no gh call.
+#
+# The speaker map is DIGEST_SPEAKERS, else .claude/skills/meeting-digest/speakers.json. An
+# override is accepted only for a file git tracks with no change. PUBLISH_DIGEST_STOP_AFTER=<n>
+# (tests only) exits 1 after filing n issues.
 #
 # Exits 0 when done, 1 with `refused: <reason>` on stderr, 2 on bad usage. Calls
 # "${DIGEST_GH:-gh}" and "${DIGEST_GITLEAKS:-gitleaks}".
@@ -61,6 +69,13 @@ readonly outbox="docs/scratch/calls/$date.outbox.json"
 readonly outgoing="docs/scratch/calls/$date.outgoing"
 readonly branch="digest/$date"
 readonly title="Digest call $date"
+readonly items_file="docs/scratch/calls/$date.items.json"
+readonly issues_snapshot="docs/scratch/calls/$date.issues.json"
+readonly transcript="docs/scratch/calls/$date.txt"
+readonly speakers="${DIGEST_SPEAKERS:-$skill_dir/speakers.json}"
+readonly gh_cli="${DIGEST_GH:-gh}"
+readonly stop_after="${PUBLISH_DIGEST_STOP_AFTER:-}"
+[[ -z $stop_after || $stop_after =~ ^[1-9][0-9]*$ ]] || die "PUBLISH_DIGEST_STOP_AFTER must be a positive integer"
 
 origin="$(origin_repo)"
 readonly origin
@@ -123,6 +138,124 @@ if ! check_output="$(scripts/check-digest.sh "$date")"; then
   die "check-digest failed"
 fi
 
+# D57 7a. Every check that can refuse a draft runs here, before any gh call.
+refuse_if() {
+  local message="$1"
+  [[ -z $message ]] || die "$message"
+}
+
+# Prints "<id>\t<mark kind>\t<number of issue lines>\t<text after "- issue:">" per action block.
+record_action_blocks() {
+  awk '
+    function flush() { if (id != "") print id "\t" kind "\t" slots "\t" slot; id = "" }
+    /^##/ {
+      flush()
+      if ($0 ~ /^### i[0-9]+ · action · /) { id = $2; kind = "none"; slots = 0; slot = "" }
+      next
+    }
+    id == "" { next }
+    /^- issue:/ { slots++; slot = substr($0, 9); next }
+    /^- mark: / && kind == "none" {
+      mark = substr($0, 9)
+      if (mark == "new") kind = "new"
+      else if (index(mark, "conflict — ") == 1) kind = "conflict"
+      else if (index(mark, "update — ") == 1) kind = "update"
+      else if (index(mark, "no change — ") == 1) kind = "no change"
+      else kind = "unknown"
+    }
+    END { flush() }
+  ' "$record"
+}
+
+check_speaker_map() {
+  if [[ -n ${DIGEST_SPEAKERS:-} ]]; then
+    if ! git ls-files --error-unmatch -- "$speakers" >/dev/null 2>&1 ||
+      ! git diff --quiet -- "$speakers" || ! git diff --cached --quiet -- "$speakers"; then
+      die "speaker map override is not a tracked, unchanged file: $speakers"
+    fi
+  fi
+  jq -e 'type == "object"' "$speakers" >/dev/null 2>&1 || die "speaker map is not a JSON object: $speakers"
+}
+
+check_drafts() {
+  local message drafted_items new_or_conflict_items block_id kind slot_count slot_text
+  local block_lines duplicate_blocks slot_number
+  local -r filled_slot=' #[0-9]+'
+
+  [[ -f $items_file ]] || die "$items_file missing"
+  [[ -f $issues_snapshot ]] || die "$issues_snapshot missing"
+  [[ -f $transcript ]] || die "$transcript missing"
+  [[ -f $record ]] || die "$record missing"
+  jq -e '(.issues // []) | type == "array" and all(.[]; type == "object")' "$outbox" >/dev/null 2>&1 ||
+    die "drafts do not match the new or conflict actions"
+
+  message="$(jq -r --slurpfile items "$items_file" '
+    def printable: tostring | gsub("[^ -~]"; "?");
+    def is_action($id): any($items[0].items[]; .id == $id and .type == "action");
+    first((.issues // [])[]
+      | select((.item | type) != "string"
+          or ((.item | test("\\Ai[0-9]+\\z")) | not)
+          or (is_action(.item) | not))
+      | "draft \(.item | printable): invalid item id") // empty' "$outbox")" || die "cannot read $outbox"
+  refuse_if "$message"
+
+  drafted_items="$(jq -r '(.issues // [])[].item' "$outbox" | sort)"
+  new_or_conflict_items="$(record_action_blocks | awk -F '\t' '$2 == "new" || $2 == "conflict" { print $1 }' | sort -u)"
+  [[ -z $(printf '%s\n' "$drafted_items" | uniq -d) && "$drafted_items" == "$new_or_conflict_items" ]] ||
+    die "drafts do not match the new or conflict actions"
+
+  message="$(jq -r '
+    first((.issues // [])[]
+      | select((.title | type) != "string" or (.title | test("[\\r\\n]")) or (.title | length) < 1 or (.title | length) > 80)
+      | "draft \(.item): bad title") // empty' "$outbox")"
+  refuse_if "$message"
+
+  message="$(jq -r '
+    def forbidden: type != "string" or contains("<!--") or contains("digest:") or contains("~~~~");
+    first((.issues // [])[] | select((.title | forbidden) or (.body | forbidden))
+      | "draft \(.item): forbidden text") // empty' "$outbox")"
+  refuse_if "$message"
+
+  block_lines="$(record_action_blocks)"
+  duplicate_blocks="$(printf '%s\n' "$block_lines" | cut -f1 | sort | uniq -d)"
+  while IFS=$'\t' read -r block_id kind slot_count slot_text; do
+    [[ -n $block_id ]] || continue
+    case "$kind" in
+      new | conflict)
+        if grep -Fxq -- "$block_id" <<<"$duplicate_blocks" || [[ $slot_count -ne 1 ]] ||
+          [[ -n $slot_text && ! $slot_text =~ ^$filled_slot$ ]]; then
+          die "slot $block_id: bad shape"
+        fi
+        ;;
+      update | "no change")
+        slot_number="${slot_text# \#}"
+        if grep -Fxq -- "$block_id" <<<"$duplicate_blocks" || [[ $slot_count -ne 1 ]] ||
+          [[ ! $slot_text =~ ^$filled_slot$ ]] ||
+          ! jq -e --argjson number "$slot_number" 'any(.[]; .number == $number)' "$issues_snapshot" >/dev/null; then
+          die "slot $block_id: bad shape"
+        fi
+        ;;
+      *) die "slot $block_id: bad shape" ;;
+    esac
+  done <<<"$block_lines"
+}
+
+render_drafts() {
+  local item
+  while IFS= read -r item; do
+    jq -j --arg item "$item" '.issues[] | select(.item == $item) | .title' "$outbox" >"$outgoing/issue-$item.title"
+    jq -r -L "$skill_dir" --arg date "$date" --arg item "$item" --slurpfile items "$items_file" \
+      'include "bodies"; .issues[] | select(.item == $item) | issue_body($date; $items)' "$outbox" >"$outgoing/issue-$item.md"
+  done < <(jq -r '(.issues // [])[].item' "$outbox")
+  local rendered=("$outgoing"/issue-*.md "$outgoing"/issue-*.title)
+  if [[ -e ${rendered[0]} ]]; then
+    if ! check_output="$(scripts/check-digest.sh --items "$items_file" --transcript "$transcript" "${rendered[@]}")"; then
+      grep '^fail: ' <<<"$check_output" >&2 || true
+      die "check-digest failed"
+    fi
+  fi
+}
+
 readonly gitleaks="${DIGEST_GITLEAKS:-gitleaks}"
 command -v "$gitleaks" >/dev/null || die "gitleaks not found"
 rm -rf "$outgoing" && mkdir -p "$outgoing"
@@ -133,6 +266,9 @@ for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
   { echo 'gitleaks scan copy'; cat -- "$path"; } >"$outgoing/$path"
 done
 jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$outgoing/pr-body.md"
+check_speaker_map
+check_drafts
+render_drafts
 if ! env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$gitleaks" dir --no-banner --redact \
   --ignore-gitleaks-allow --gitleaks-ignore-path "$outgoing" "$outgoing" >&2; then
   die "gitleaks found a secret"
@@ -145,6 +281,8 @@ if [[ $is_dry_run -eq 1 ]]; then
   fi
   printf '\n'
   jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_preview($date), ""' "$outbox"
+  jq -r -L "$skill_dir" --arg date "$date" --slurpfile map "$speakers" --slurpfile items "$items_file" \
+    'include "bodies"; issue_preview($date; $map; $items), ""' "$outbox"
   exit 0
 fi
 
@@ -175,6 +313,80 @@ else
   git switch -q -c "$branch" || die "cannot create $branch"
 fi
 
+# D57 7b, the first gh calls. Refuses before the first create when a slot or a marker conflicts.
+fill_slot() {
+  local item="$1" number="$2" updated
+  updated="$(mktemp docs/scratch/calls/record.XXXXXX)" || die "cannot create a temp file"
+  awk -v id="$item" -v number="$number" '
+    index($0, "### " id " · ") == 1 { on = 1; print; next }
+    /^##/ { on = 0 }
+    on && /^- issue:/ { print "- issue: #" number; on = 0; next }
+    { print }
+  ' "$record" >"$updated" || die "cannot fill the slot of $item"
+  cat -- "$updated" >"$record"
+  rm -f "$updated"
+}
+
+file_issues() {
+  local me listing filed_numbers item slot marker found found_count handle created number filed_count=0
+  local assignee_args
+  declare -A slot_of=()
+  declare -A number_of=()
+  local block_id kind slot_count slot_text
+
+  while IFS=$'\t' read -r block_id kind slot_count slot_text; do
+    slot_of["$block_id"]="${slot_text# \#}"
+  done < <(record_action_blocks)
+
+  me="$("$gh_cli" api user --jq .login)" || die "gh api user failed"
+  listing="$("$gh_cli" api --paginate "repos/$repo/issues?state=all&per_page=100")" ||
+    die "gh api issues failed"
+  filed_numbers="$(jq -s -r --arg me "$me" '
+    [.[][] | select((has("pull_request") | not) and .user.login == $me)
+      | {number, last: ((.body // "") | rtrimstr("\n") | split("\n") | last)}]
+    | .[] | "\(.number)\t\(.last)"' <<<"$listing")" || die "cannot read the issue list"
+
+  while IFS= read -r item; do
+    marker="<!-- digest:$date:$item -->"
+    found="$(awk -F '\t' -v marker="$marker" '$2 == marker { print $1 }' <<<"$filed_numbers")"
+    found_count="$(grep -c . <<<"$found" || true)"
+    slot="${slot_of[$item]}"
+    [[ $found_count -le 1 ]] || die "slot $item: conflicts with filed issue"
+    [[ -z $slot || -z $found || $slot == "$found" ]] || die "slot $item: conflicts with filed issue"
+    number_of["$item"]="$found"
+  done < <(jq -r '(.issues // [])[].item' "$outbox")
+
+  while IFS= read -r item; do
+    if [[ -n ${number_of[$item]} ]]; then
+      [[ -n ${slot_of[$item]} ]] || fill_slot "$item" "${number_of[$item]}"
+      continue
+    fi
+    [[ -z ${slot_of[$item]} ]] || continue
+    assignee_args=()
+    handle="$(jq -r -L "$skill_dir" --arg item "$item" --slurpfile map "$speakers" --slurpfile items "$items_file" \
+      'include "bodies"; .issues[] | select(.item == $item) | assignee($map; $items) // empty' "$outbox")"
+    if [[ -n $handle ]]; then
+      if "$gh_cli" api "repos/$repo/assignees/$handle" >/dev/null 2>&1; then
+        assignee_args=(--assignee "$handle")
+      else
+        echo "warning: $handle cannot be assigned on $repo; filing $item unassigned" >&2
+      fi
+    fi
+    created="$("$gh_cli" issue create --repo "$repo" --title "$(cat -- "$outgoing/issue-$item.title")" \
+      --body-file "$outgoing/issue-$item.md" --label needs-triage ${assignee_args[@]+"${assignee_args[@]}"})" ||
+      die "gh issue create failed for $item"
+    number="${created##*/}"
+    [[ $number =~ ^[0-9]+$ ]] || die "cannot read the issue number for $item"
+    fill_slot "$item" "$number"
+    filed_count=$((filed_count + 1))
+    if [[ -n $stop_after && $filed_count -ge $stop_after ]]; then
+      die "stopped after $filed_count issues (PUBLISH_DIGEST_STOP_AFTER)"
+    fi
+  done < <(jq -r '(.issues // [])[].item' "$outbox")
+}
+
+file_issues
+
 if [[ ${#commit_paths[@]} -gt 0 ]]; then
   git add -- "${commit_paths[@]}"
 fi
@@ -184,7 +396,6 @@ fi
 
 git push origin "$branch" || die "git push failed"
 
-gh_cli="${DIGEST_GH:-gh}"
 pr_url="$("$gh_cli" pr list --repo "$repo" --head "$branch" --state open --json number,url,isCrossRepository |
   jq -r '[.[] | select(.isCrossRepository == false)][0].url // empty')" ||
   die "gh pr list failed"

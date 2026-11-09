@@ -12,7 +12,7 @@ file other than the ones named under Output.
 ## Input
 
 The session's prompt gives `key=value` lines: `root`, `date`, `items`, `issues`, `record`,
-`outbox` (and `transcript`, `summary`, `repo`, which you do not need).
+`outbox` (and `transcript`, `summary`, `repo`, `speakers`, which you do not need).
 
 `root=` is the absolute repo root. Every path in the `key=value` lines, and every repo path you
 use (`docs/roadmap/*.md`, `docs/adr/*.md`, the template), is relative to it: Read, Grep, Glob,
@@ -45,7 +45,8 @@ Compare each item with the themes, the ADRs and the open issues, and give it one
   this first: a contradiction item that names an ADR is a conflict with that ADR.
 - `update — <ref>`: it adds to or changes something Satat holds. The ref is the open issue
   covering the same work (an action matching an issue is an update of that issue), or the theme
-  you add a line to.
+  you add a line to. An action is never marked `update` or `no change` for a theme: only an open
+  issue covers an action.
 - `no change — <ref>`: Satat already holds it as said, and you edit nothing for it.
 - `new`: nothing Satat holds covers it, and you edit no theme for it.
 
@@ -62,8 +63,9 @@ theme:
   a Decided `**Status:**` that covers it): mark it `no change — <theme link>` and add no line,
   since a second line would duplicate it.
 
-You never edit a `**Status:**` line. `no change` stays valid for directions, questions, actions
-and deferrals that Satat already holds as said.
+You never edit a `**Status:**` line. `no change` stays valid for directions, questions and
+deferrals that Satat already holds as said, and for an action an open issue already covers as
+said.
 
 A ref is a link from the call record, `[ADR 0026](../adr/0026-docker-first-runtime.md)` or
 `[Skill distribution](../roadmap/skill-distribution.md)`, or an issue named as `#<number>`.
@@ -93,7 +95,9 @@ names are fine.
 
    The heading is `### <id> · <type> · <ts>`. Add `agreed by:` only for a decision (the
    agreement's speaker), `owner:`, `due:` and an empty `issue:` only for an action, and
-   `trigger:` only for a deferral, in the template's order. Every item gets `summary:`,
+   `trigger:` only for a deferral, in the template's order. For an action marked `update` or
+   `no change`, write `- issue: #<n>`, the number of the matched snapshot issue (the same issue
+   as in its mark), instead of leaving `issue:` empty; every other action keeps it empty. Every item gets `summary:`,
    `speaker:`, `mark:` and `status: unreviewed`. Separate blocks with one blank line. Keep
    `## Critic` last, with its comment and no flags.
 2. The roadmap: for a decision or direction that belongs to an existing theme, add one bullet at
@@ -104,9 +108,19 @@ names are fine.
    Write each added bullet as one line, however long, and never wrap it, even though the theme
    files wrap their own bullets. Only add lines. Never edit `README.md`, never touch a
    `**Status:**` line, never create, rename or delete a theme file.
-3. The outbox at `outbox=`: `{"date": "<date>", "pr": {"body": "<overview>"}}`. The overview is
-   markdown in your own words: what the call settled, the themes it edits, the conflicts it
-   flags, and a pointer to the call record for the full item list.
+3. The outbox at `outbox=`:
+   `{"date": "<date>", "pr": {"body": "<overview>"}, "issues": [{"item": "<id>", "title": "<title>", "body": "<body>"}]}`.
+   The overview is markdown in your own words: what the call settled, the themes it edits, the
+   conflicts it flags, and a pointer to the call record for the full item list.
+
+   `issues` holds one draft for each action you marked `new` or `conflict`, and none for any
+   other item, so it is `[]` when there is no such action. An action marked `update` or
+   `no change` gets no draft. A draft's `item` is that action's id.
+   - `title`: one line, 1 to 80 characters, saying what is to be done.
+   - `body`: markdown in your own words: what the action asks for and why it came up. Do not
+     write a label, an assignee, the owner or speaker, a link to the call record or a banner:
+     publishing adds them. Never write `<!--`, `digest:` or `~~~~` in a title or a body.
+   - A title and a body obey Wording: no quote, not even in part.
 
 Every file you write uses LF line endings, has no trailing whitespace (an empty `issue:` ends
 right after the colon) and ends with exactly one newline.

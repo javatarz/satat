@@ -7,3 +7,5 @@ mkdir -p "$FAKE_GH_DIR"
 export PATH="$PWD/scripts/testdata/fake-bin:$PATH"
 export DIGEST_GH="$PWD/scripts/testdata/fake-bin/gh"
 export GH_TOKEN=fake-proof-token-not-valid
+# The speaker map the proofs use: it assigns the fixture's owners, and leaves Dana Silva out.
+export DIGEST_SPEAKERS="$PWD/.claude/skills/meeting-digest/fixtures/speakers.json"
