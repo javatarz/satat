@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Meeting digest item list",
+  "description": "What one Satat design call produced, extracted from its transcript by the digest-extractor agent. items.json is the hand-off between agents within one run; scripts/check-digest.sh reads it at publish, so it stays in docs/scratch/calls/ until publish. No later run reads it.",
+  "type": "object",
+  "required": ["date", "items", "topics"],
+  "additionalProperties": false,
+  "properties": {
+    "date": {
+      "description": "The call date.",
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "summary", "speaker", "ts", "quote", "confidence"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "i01, i02, ... in transcript order.",
+            "type": "string",
+            "pattern": "^i[0-9]{2,}$"
+          },
+          "type": {
+            "description": "A decision needs explicit agreement from another participant; a proposal nobody agreed to is a question.",
+            "enum": ["decision", "direction", "action", "question", "deferral", "contradiction"]
+          },
+          "summary": {
+            "description": "A paraphrase in the extractor's own words, never 8 consecutive words of any quote.",
+            "type": "string",
+            "minLength": 1
+          },
+          "speaker": {
+            "description": "The speaker's name as the transcript writes it.",
+            "type": "string",
+            "minLength": 1
+          },
+          "ts": {
+            "description": "The nearest timestamp marker before the quote, HH:MM:SS.",
+            "type": "string",
+            "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+          },
+          "quote": {
+            "description": "A verbatim, contiguous span of one utterance.",
+            "type": "string",
+            "minLength": 1
+          },
+          "confidence": {
+            "description": "high: explicit wording, one reading. medium: clear intent, some inference. low: inferred from context.",
+            "enum": ["high", "medium", "low"]
+          },
+          "agreement": {
+            "description": "Decision only: who agreed, and the whole agreeing utterance.",
+            "type": "object",
+            "required": ["speaker", "quote"],
+            "additionalProperties": false,
+            "properties": {
+              "speaker": {"type": "string", "minLength": 1},
+              "quote": {"type": "string", "minLength": 1}
+            }
+          },
+          "owner": {
+            "description": "Action only: the person who took it, or null when nobody did.",
+            "type": ["string", "null"],
+            "minLength": 1
+          },
+          "due": {
+            "description": "Action only: the stated due date, or null.",
+            "type": ["string", "null"],
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+          },
+          "trigger": {
+            "description": "Deferral only: what reopens it, or null when the call named nothing.",
+            "type": ["string", "null"],
+            "minLength": 1
+          },
+          "contradicts": {
+            "description": "Contradiction only: what the item goes against, such as an ADR.",
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "allOf": [
+          {
+            "if": {"required": ["type"], "properties": {"type": {"const": "decision"}}},
+            "then": {"required": ["agreement"]},
+            "else": {"not": {"required": ["agreement"]}}
+          },
+          {
+            "if": {"required": ["type"], "properties": {"type": {"const": "action"}}},
+            "then": {"required": ["owner", "due"]},
+            "else": {"not": {"anyOf": [{"required": ["owner"]}, {"required": ["due"]}]}}
+          },
+          {
+            "if": {"required": ["type"], "properties": {"type": {"const": "deferral"}}},
+            "then": {"required": ["trigger"]},
+            "else": {"not": {"required": ["trigger"]}}
+          },
+          {
+            "if": {"required": ["type"], "properties": {"type": {"const": "contradiction"}}},
+            "then": {"required": ["contradicts"]},
+            "else": {"not": {"required": ["contradicts"]}}
+          }
+        ]
+      }
+    },
+    "topics": {
+      "description": "Each topic the call discussed, in order. A topic with no items had no outcome.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "ts", "items"],
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "description": "t01, t02, ... in transcript order.",
+            "type": "string",
+            "pattern": "^t[0-9]{2,}$"
+          },
+          "title": {"type": "string", "minLength": 1},
+          "ts": {
+            "description": "The nearest timestamp marker before the topic starts, HH:MM:SS.",
+            "type": "string",
+            "pattern": "^[0-9]{2}:[0-9]{2}:[0-9]{2}$"
+          },
+          "items": {
+            "description": "The ids of the items this topic produced.",
+            "type": "array",
+            "items": {"type": "string", "pattern": "^i[0-9]{2,}$"}
+          }
+        }
+      }
+    }
+  }
+}

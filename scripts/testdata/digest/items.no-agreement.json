@@ -1,0 +1,240 @@
+{
+  "date": "2026-10-28",
+  "items": [
+    {
+      "id": "i01",
+      "type": "decision",
+      "summary": "Ship skills centrally, with a per-repo list of needed skills",
+      "speaker": "Asha Rao",
+      "ts": "00:05:00",
+      "quote": "skills ship from one central repo, and every repo keeps one manifest that lists the skills it needs",
+      "confidence": "high",
+      "agreement": {
+        "speaker": "Ben Okafor",
+        "quote": "Yes, let's go with the skills manifest."
+      }
+    },
+    {
+      "id": "i02",
+      "type": "direction",
+      "summary": "Retro agent might use gateway cost data to find expensive runs",
+      "speaker": "Chen Wei",
+      "ts": "00:05:00",
+      "quote": "the retro agent could read gateway spend to spot which runs burn the most money",
+      "confidence": "medium"
+    },
+    {
+      "id": "i03",
+      "type": "question",
+      "summary": "Should the poller run on a cron timer rather than a loop? Nobody agreed",
+      "speaker": "Chen Wei",
+      "ts": "00:10:00",
+      "quote": "What if we moved the poller to a cron schedule instead of keeping the long-running loop?",
+      "confidence": "medium"
+    },
+    {
+      "id": "i04",
+      "type": "action",
+      "summary": "Poller retries get exponential backoff",
+      "speaker": "Ben Okafor",
+      "ts": "00:10:00",
+      "quote": "I'll add the exponential backoff to the poller retries this week.",
+      "confidence": "high",
+      "owner": "Ben Okafor",
+      "due": null
+    },
+    {
+      "id": "i05",
+      "type": "action",
+      "summary": "Runbook for the smoke test",
+      "speaker": "Asha Rao",
+      "ts": "00:15:00",
+      "quote": "I'll write the smoke test runbook",
+      "confidence": "high",
+      "owner": "Asha Rao",
+      "due": null
+    },
+    {
+      "id": "i06",
+      "type": "action",
+      "summary": "Lane quota proposal draft",
+      "speaker": "Ben Okafor",
+      "ts": "00:15:00",
+      "quote": "I'll draft the lane quota proposal by October 30.",
+      "confidence": "high",
+      "owner": "Ben Okafor",
+      "due": "2026-10-30"
+    },
+    {
+      "id": "i07",
+      "type": "action",
+      "summary": "Sandbox deploy key needs rotating; nobody took it",
+      "speaker": "Asha Rao",
+      "ts": "00:20:00",
+      "quote": "someone should rotate the sandbox deploy key",
+      "confidence": "medium",
+      "owner": null,
+      "due": null
+    },
+    {
+      "id": "i08",
+      "type": "action",
+      "summary": "Prototype an image for the OpenCode lane",
+      "speaker": "Dana Silva",
+      "ts": "00:20:00",
+      "quote": "I'll prototype the OpenCode lane image",
+      "confidence": "high",
+      "owner": "Dana Silva",
+      "due": null
+    },
+    {
+      "id": "i09",
+      "type": "question",
+      "summary": "How can the judge separate flaky tests from genuine failures?",
+      "speaker": "Ben Okafor",
+      "ts": "00:25:00",
+      "quote": "How do we tell a flaky test from a real failure in the judge?",
+      "confidence": "high"
+    },
+    {
+      "id": "i10",
+      "type": "deferral",
+      "summary": "Pi lane on hold",
+      "speaker": "Asha Rao",
+      "ts": "00:30:00",
+      "quote": "park the Pi lane until after October 30",
+      "confidence": "high",
+      "trigger": "after 2026-10-30"
+    },
+    {
+      "id": "i11",
+      "type": "deferral",
+      "summary": "Dashboards in Grafana wait",
+      "speaker": "Ben Okafor",
+      "ts": "00:30:00",
+      "quote": "the Grafana dashboards",
+      "confidence": "high",
+      "trigger": null
+    },
+    {
+      "id": "i12",
+      "type": "deferral",
+      "summary": "Memory work waits for steadier evals",
+      "speaker": "Chen Wei",
+      "ts": "00:30:00",
+      "quote": "revisit memory once the evals feel stable",
+      "confidence": "medium",
+      "trigger": "when evals are stable"
+    },
+    {
+      "id": "i13",
+      "type": "contradiction",
+      "summary": "Laptop to start on k3d, against the Docker-first choice",
+      "speaker": "Dana Silva",
+      "ts": "00:35:00",
+      "quote": "The laptop should run k3d first; I know that goes against ADR 0026.",
+      "confidence": "high",
+      "contradicts": "ADR 0026 (Docker first)"
+    },
+    {
+      "id": "i14",
+      "type": "decision",
+      "summary": "Notifications move from ntfy to email digests",
+      "speaker": "Ben Okafor",
+      "ts": "00:40:00",
+      "quote": "I would rather we send email digests instead of ntfy pushes",
+      "confidence": "high",
+      "agreement": {
+        "speaker": "Asha Rao",
+        "quote": "Agreed, email digests it is."
+      }
+    },
+    {
+      "id": "i15",
+      "type": "decision",
+      "summary": "Poller on a timer",
+      "speaker": "Chen Wei",
+      "ts": "00:10:00",
+      "quote": "moved the poller to a cron schedule",
+      "confidence": "low"
+    }
+  ],
+  "topics": [
+    {
+      "id": "t01",
+      "title": "Where skills live",
+      "ts": "00:05:00",
+      "items": [
+        "i01"
+      ]
+    },
+    {
+      "id": "t02",
+      "title": "Retro agent cost data",
+      "ts": "00:05:00",
+      "items": [
+        "i02"
+      ]
+    },
+    {
+      "id": "t03",
+      "title": "Poller",
+      "ts": "00:10:00",
+      "items": [
+        "i03",
+        "i04"
+      ]
+    },
+    {
+      "id": "t04",
+      "title": "Release and lane work",
+      "ts": "00:15:00",
+      "items": [
+        "i05",
+        "i06",
+        "i07",
+        "i08"
+      ]
+    },
+    {
+      "id": "t05",
+      "title": "Judge reliability",
+      "ts": "00:25:00",
+      "items": [
+        "i09"
+      ]
+    },
+    {
+      "id": "t06",
+      "title": "Langfuse for tracing",
+      "ts": "00:25:00",
+      "items": []
+    },
+    {
+      "id": "t07",
+      "title": "Parked work",
+      "ts": "00:30:00",
+      "items": [
+        "i10",
+        "i11",
+        "i12"
+      ]
+    },
+    {
+      "id": "t08",
+      "title": "Laptop runtime",
+      "ts": "00:35:00",
+      "items": [
+        "i13"
+      ]
+    },
+    {
+      "id": "t09",
+      "title": "Notifications",
+      "ts": "00:40:00",
+      "items": [
+        "i14"
+      ]
+    }
+  ]
+}

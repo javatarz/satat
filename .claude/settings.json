@@ -1,0 +1,42 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Edit(/.claude/**)",
+      "Edit(/scripts/check-digest.sh)",
+      "Edit(/scripts/publish-digest.sh)",
+      "Edit(/.git/**)",
+      "Edit(/mise.toml)",
+      "Edit(/mise.local.toml)",
+      "Edit(/.mise.toml)",
+      "Edit(/.mise.local.toml)",
+      "Edit(/mise.*.toml)",
+      "Edit(/.mise.*.toml)",
+      "Edit(/.mise/**)",
+      "Edit(/mise/**)",
+      "Edit(/.config/**)",
+      "Edit(/.miserc*.toml)",
+      "Edit(/.tool-versions)",
+      "Edit(/.envrc)",
+      "Edit(/docs/scratch/calls/*.txt)",
+      "Edit(/.worktrees/**)",
+      "Edit(/.git)",
+      "Edit(**/mise*.toml)",
+      "Edit(**/.mise*)",
+      "Edit(**/.config/mise*)",
+      "Edit(**/.config/miserc*)",
+      "Edit(**/.envrc)",
+      "Edit(**/.tool-versions)",
+      "Edit(**/.claude/**)",
+      "Edit(**/.githooks/**)",
+      "Edit(**/compose.override.y*ml)",
+      "Edit(**/docker-compose.override.y*ml)",
+      "Edit(**/.env)",
+      "Edit(**/mise/**)",
+      "Edit(**/.config/**)",
+      "Read(/.env)",
+      "Read(/.env.*)",
+      "Read(**/.env)"
+    ]
+  }
+}

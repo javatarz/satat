@@ -150,6 +150,7 @@ flowchart LR
 | Harness self-improvement | A schedule | An issue with a hypothesis about the harness | Idea | [Observability](observability.md), [memory](memory.md) |
 | Docs sync | A merged PR (weekly for now) | A docs PR | Shaping | [Self-documenting repos](self-documenting-repos.md) |
 | Eval run | A change to the agent, model or harness | Scores to compare against the last run | Shaping | [Evals](evals.md) |
+| Meeting intake | A Satat design call's Meet transcript, digested locally | A draft PR with roadmap edits and a call record, and needs-triage issues | Shaping | [Meeting intake](meeting-intake.md) |
 
 ## Sequencing: why this order
 
@@ -185,5 +186,6 @@ developer already does with Claude Code today.
 | [Self-documenting repos](self-documenting-repos.md) | Shaping | |
 | [Security](security.md) | Decided (secret store), Backlog (parts) | ADR 0025, ADR 0032, #97, #143, #166 |
 | [Signal-driven intake](signal-driven-intake.md) | Idea | ADR 0023 |
+| [Meeting intake](meeting-intake.md) | Shaping | #227 |
 
 Sources are the team calls on 2026-10-16 and 2026-10-21.
