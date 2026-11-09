@@ -32,6 +32,8 @@
       "Edit(**/compose.override.y*ml)",
       "Edit(**/docker-compose.override.y*ml)",
       "Edit(**/.env)",
+      "Edit(**/mise/**)",
+      "Edit(**/.config/**)",
       "Read(/.env)",
       "Read(/.env.*)",
       "Read(**/.env)"
