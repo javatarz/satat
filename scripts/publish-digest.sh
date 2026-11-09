@@ -3,9 +3,9 @@
 #
 # In order: checks the target is origin, refuses any working-tree change outside the exact
 # allowlist (docs/calls/<date>.md, and edits to tracked docs/roadmap/<name>.md themes other
-# than README.md), refuses git attributes on those paths (they can hide a diff), runs
-# scripts/check-digest.sh, then runs gitleaks over the files it will commit and the PR body it
-# will send. Only then does it commit those paths on digest/<date>, push that branch
+# than README.md), refuses git attributes or binary content on those paths (both can hide a
+# diff), runs scripts/check-digest.sh, then runs gitleaks over the files it will commit and the
+# PR body it will send. Only then does it commit those paths on digest/<date>, push that branch
 # fast-forward only and open a draft PR, or reuse its open PR.
 #
 # --dry-run stops after gitleaks and prints the files to commit and the PR draft.
@@ -106,6 +106,16 @@ done <"$status_file"
 if [[ ${#commit_paths[@]} -gt 0 ]]; then
   commit_path_attributes="$(git check-attr -a -- "${commit_paths[@]}")" || die "git check-attr failed"
   [[ -z $commit_path_attributes ]] || die "git attributes set on a commit path"
+  for path in "${commit_paths[@]}"; do
+    nul_count="$(LC_ALL=C tr -dc '\000' <"$path" | wc -c)" || die "cannot read $path"
+    [[ $nul_count -eq 0 ]] || die "binary content in a commit path: $path"
+  done
+  commit_path_numstat="$(git diff --numstat HEAD -- "${commit_paths[@]}")" || die "git diff --numstat failed"
+  while IFS=$'\t' read -r added deleted path; do
+    if [[ $added == - && $deleted == - ]]; then
+      die "binary content in a commit path: $path"
+    fi
+  done <<<"$commit_path_numstat"
 fi
 
 if ! check_output="$(scripts/check-digest.sh "$date")"; then
