@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "deny": [
+      "Edit(/.claude/**)",
+      "Edit(/scripts/check-digest.sh)",
+      "Edit(/scripts/publish-digest.sh)",
+      "Edit(/.git/**)",
+      "Edit(/mise.toml)",
+      "Edit(/mise.local.toml)",
+      "Edit(/.mise.toml)",
+      "Edit(/.mise.local.toml)",
+      "Edit(/mise.*.toml)",
+      "Edit(/.mise.*.toml)",
+      "Edit(/.mise/**)",
+      "Edit(/mise/**)",
+      "Edit(/.config/mise*/**)",
+      "Edit(/.tool-versions)",
+      "Edit(/.envrc)",
+      "Read(/.env)",
+      "Read(/.env.*)"
+    ]
+  }
+}

@@ -537,3 +537,34 @@ func TestAllowIsAnchoredAtTheRoot(t *testing.T) {
 		t.Fatalf("error = %v, want only the nested file refused", err)
 	}
 }
+
+func TestRepoCommandsProtectDigestPaths(t *testing.T) {
+	b, err := os.ReadFile("../.satat/commands.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sec, err := parseProtected(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pol, err := buildPolicy(sec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		name string
+		want bool
+	}{
+		{".claude/settings.json", true},
+		{".claude/agents/digest-extractor.md", true},
+		{".claude/skills/meeting-digest/SKILL.md", true},
+		{"scripts/check-digest.sh", true},
+		{"scripts/publish-digest.sh", true},
+		{"scripts/doctor.sh", false},
+	}
+	for _, tc := range cases {
+		if _, got := pol.protected(tc.name); got != tc.want {
+			t.Errorf("protected(%q) = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
