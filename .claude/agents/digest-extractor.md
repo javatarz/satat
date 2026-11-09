@@ -72,4 +72,5 @@ Write `summary`, `title`, `trigger` and `contradicts` short and in your own word
 
 Write only `docs/scratch/calls/<date>.items.json`, as `{"date": ..., "items": [...],
 "topics": [...]}`. Reply to the session with exactly one line: that path, or
-`status: <reason>` when you could not write it. Nothing else.
+`status: <reason>` when you could not write it. Nothing else. Reply with the items= value
+exactly as given in the prompt (repo-relative), never an absolute path.

@@ -14,9 +14,11 @@
       "Edit(/.mise.*.toml)",
       "Edit(/.mise/**)",
       "Edit(/mise/**)",
-      "Edit(/.config/mise*/**)",
+      "Edit(/.config/**)",
+      "Edit(/.miserc*.toml)",
       "Edit(/.tool-versions)",
       "Edit(/.envrc)",
+      "Edit(/docs/scratch/calls/*.txt)",
       "Read(/.env)",
       "Read(/.env.*)"
     ]

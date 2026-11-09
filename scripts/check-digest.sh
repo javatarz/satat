@@ -68,8 +68,8 @@ add_roadmap_targets() {
     fail docs/roadmap "no merge-base with origin/HEAD"
     return
   fi
-  if ! roadmap_added="$(git diff --no-color -U0 "$base" -- docs/roadmap |
-    awk '/^diff --git / { in_hunk = 0; next } /^@@/ { in_hunk = 1; next } in_hunk && /^\+/ { print substr($0, 2) }')"; then
+  if ! roadmap_added="$(git diff --text --no-color -U0 "$base" -- docs/roadmap |
+    LC_ALL=C awk '/^diff --git / { in_hunk = 0; next } /^@@/ { in_hunk = 1; next } in_hunk && /^\+/ { print substr($0, 2) }')"; then
     fail docs/roadmap "git diff failed"
     return
   fi
