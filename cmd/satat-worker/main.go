@@ -3,11 +3,16 @@
 // the Docker API (through the socket proxy, ADR 0027); on kubernetes it uses the in-cluster
 // config to create sandboxes, with no Docker client, reaper or Docker ping.
 //
+// Secrets: SATAT_PUSH_TOKEN, SATAT_GITHUB_TOKEN (read-only, to check an issue is labelled
+// ready-for-agent and to clone the repo before each step; it is not in any lane's pass_env, so no
+// step holds it) and, on compose, every name a lane lists in pass_env. On compose the worker reads
+// them once at start from the secret store (ADR 0032), the entries deploy.secrets names, with the
+// AppRole credential in /run/satat/cred, and keeps them in memory. To rotate one, load the new value
+// and restart the worker. On kubernetes, which has no store yet, SATAT_PUSH_TOKEN and
+// SATAT_GITHUB_TOKEN come from the environment and lane secrets are not the worker's.
+//
 // Environment: the Hatchet client settings (HATCHET_CLIENT_TOKEN, HATCHET_CLIENT_HOST_PORT,
-// HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST (compose only), SATAT_PUSH_TOKEN, SATAT_GITHUB_TOKEN
-// (read-only, to check an issue is labelled ready-for-agent and to clone the repo before each step;
-// it is not in any lane's pass_env, so no step holds it), and on compose every name a lane lists in
-// pass_env (on kubernetes lane secrets are not in the worker env). SATAT_CONFIG overrides the path
+// HATCHET_CLIENT_TLS_STRATEGY), DOCKER_HOST (compose only). SATAT_CONFIG overrides the path
 // of satat.yaml. SATAT_INTAKE_REPOS (comma-separated owner/name) turns on the GitHub webhook intake
 // for those repos only. With repos under poller: in satat.yaml the worker also polls them for
 // ready-for-agent issues, which needs Issues: read and Pull requests: read on SATAT_GITHUB_TOKEN.
@@ -50,6 +55,7 @@ import (
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/poller"
 	"github.com/javatarz/satat/pusher"
+	"github.com/javatarz/satat/secrets"
 	"github.com/javatarz/satat/workflows"
 )
 
@@ -62,6 +68,9 @@ const (
 	// exits because Hatchet went away.
 	startGrace        = 2 * time.Minute
 	defaultHealthAddr = "127.0.0.1:8001"
+	// The secret store and the worker's credential volume in compose.yaml.
+	storeAddr = "http://openbao:8200"
+	credDir   = "/run/satat/cred"
 )
 
 func main() {
@@ -115,24 +124,22 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	token := os.Getenv("SATAT_PUSH_TOKEN")
-	if token == "" {
-		return fmt.Errorf("SATAT_PUSH_TOKEN is not set: the worker publishes the PR, so it needs the write token")
+	ctx, cancel := cmdutils.NewInterruptContext()
+	defer cancel()
+	vals, err := loadSecrets(ctx, cfg)
+	if err != nil {
+		return err
 	}
-	// The read-only token (ADR 0032: github-read-token) is the worker's alone: it checks the issue,
-	// polls, and clones the repo before each step starts. No step receives it.
-	readToken := os.Getenv("SATAT_GITHUB_TOKEN")
-	if readToken == "" {
-		return fmt.Errorf("SATAT_GITHUB_TOKEN is not set: the worker reads each issue's labels before it runs, so it needs the read token")
-	}
+	// The push token publishes the PR. The read-only token is the worker's alone: it checks the
+	// issue, polls, and clones the repo before each step starts. No step receives either.
+	token := vals["SATAT_PUSH_TOKEN"]
+	readToken := vals["SATAT_GITHUB_TOKEN"]
 
-	l, apiCheck, reap, closeLauncher, err := newLauncher(cfg, log)
+	l, apiCheck, reap, closeLauncher, err := newLauncher(cfg, vals, log)
 	if err != nil {
 		return err
 	}
 	defer closeLauncher()
-	ctx, cancel := cmdutils.NewInterruptContext()
-	defer cancel()
 
 	hc, err := hatchet.NewClient()
 	if err != nil {
@@ -230,7 +237,7 @@ func run() error {
 		Issues:   pipeline.GitHubIssues{Token: readToken},
 		Allowed:  allowed,
 		Gate:     limiter,
-		Secrets:  secretValues(cfg),
+		Secrets:  slices.Collect(maps.Values(vals)),
 		NoAgent:  cfg.NoAgent,
 	})
 	if err != nil {
@@ -300,8 +307,9 @@ type stepLauncher interface {
 }
 
 // newLauncher builds the launcher for deploy.target with its API readiness check. reap is nil
-// where there is no reaper (kubernetes); closeLauncher releases the launcher's client.
-func newLauncher(cfg config.Config, log *slog.Logger) (l stepLauncher, apiCheck health.Check, reap func(ctx context.Context, interval, maxAge time.Duration), closeLauncher func(), err error) {
+// where there is no reaper (kubernetes); closeLauncher releases the launcher's client. On compose
+// a lane's pass_env values come from vals, and its optional_env from the worker's environment.
+func newLauncher(cfg config.Config, vals map[string]string, log *slog.Logger) (l stepLauncher, apiCheck health.Check, reap func(ctx context.Context, interval, maxAge time.Duration), closeLauncher func(), err error) {
 	if cfg.Deploy.Target == config.TargetKubernetes {
 		rc, err := rest.InClusterConfig()
 		if err != nil {
@@ -325,7 +333,13 @@ func newLauncher(cfg config.Config, log *slog.Logger) (l stepLauncher, apiCheck 
 	if err != nil {
 		return nil, health.Check{}, nil, nil, err
 	}
-	dl, err := docker.New(api, cfg.Lanes, docker.WithLogger(log))
+	lookup := func(name string) (string, bool) {
+		if v, ok := vals[name]; ok {
+			return v, true
+		}
+		return os.LookupEnv(name)
+	}
+	dl, err := docker.New(api, cfg.Lanes, docker.WithLogger(log), docker.WithEnv(lookup))
 	if err != nil {
 		api.Close()
 		return nil, health.Check{}, nil, nil, err
@@ -337,14 +351,30 @@ func newLauncher(cfg config.Config, log *slog.Logger) (l stepLauncher, apiCheck 
 	return dl, ping, dl.RunReaper, func() { api.Close() }, nil
 }
 
-// secretValues are the non-empty values, from this process's environment, of every secret name in
-// the config. An agent run's output is scrubbed of them before it reaches the Hatchet history.
-func secretValues(cfg config.Config) []string {
-	var vals []string
-	for _, n := range cfg.SecretNames() {
-		if v := os.Getenv(n); v != "" {
-			vals = append(vals, v)
+// loadSecrets returns the value of each secret the worker holds, by name (deploy.secrets). An
+// agent run's output is scrubbed of them before it reaches the Hatchet history.
+func loadSecrets(ctx context.Context, cfg config.Config) (map[string]string, error) {
+	vals := map[string]string{}
+	if cfg.Deploy.Target == config.TargetKubernetes {
+		for _, n := range config.WorkerSecrets {
+			v := os.Getenv(n)
+			if v == "" {
+				return nil, fmt.Errorf("%s is not set", n)
+			}
+			vals[n] = v
 		}
+		return vals, nil
 	}
-	return vals
+	if cfg.Deploy.Secrets == nil {
+		return nil, errors.New("satat.yaml has no deploy.secrets: name the store entry of every secret the lanes and the worker use")
+	}
+	entries := slices.Compact(slices.Sorted(maps.Values(cfg.Deploy.Secrets)))
+	read, err := secrets.Read(ctx, storeAddr, secrets.AppRole{Dir: credDir}, entries)
+	if err != nil {
+		return nil, err
+	}
+	for name, entry := range cfg.Deploy.Secrets {
+		vals[name] = read[entry]
+	}
+	return vals, nil
 }

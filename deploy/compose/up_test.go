@@ -17,7 +17,7 @@ import (
 
 const testConfig = `
 limits: {global: 1, per_repo: 1, per_account: 1}
-deploy: {target: compose, secrets: {FOO: env, SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}
+deploy: {target: compose, secrets: {FOO: foo, SATAT_GITHUB_TOKEN: github-read-token, SATAT_PUSH_TOKEN: github-push-token}}
 lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12", memory: 1GiB, cpus: 1, pids: 64, workspace: 64MiB, timeout: 1m, pass_env: [FOO], account: a, max_runs: 1}}
 `
 
@@ -121,16 +121,12 @@ func coldStack(platformUp, workerUp *bool) func([]string) ([]byte, error) {
 	}
 }
 
-func secrets() deploy.Secrets {
-	return deploy.Secrets{"FOO": "foo-secret-value", "SATAT_GITHUB_TOKEN": "read-secret-value", "SATAT_PUSH_TOKEN": "push-secret-value"}
-}
-
 func TestUpRunsInOrder(t *testing.T) {
 	tg, f, _, cfg := setup(t)
 	var platformUp, workerUp bool
 	f.respond = coldStack(&platformUp, &workerUp)
 
-	if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+	if err := tg.Up(context.Background(), cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{
@@ -172,7 +168,7 @@ func TestUpIsIdempotent(t *testing.T) {
 	platformUp, workerUp := true, true
 	f.respond = coldStack(&platformUp, &workerUp)
 
-	if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+	if err := tg.Up(context.Background(), cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 	// The worker's up always runs (compose recreates nothing unchanged); no platform up, no psql,
@@ -194,7 +190,7 @@ func TestUpStartsOnlyWhatIsNotHealthy(t *testing.T) {
 	platformUp, workerUp := true, false
 	f.respond = coldStack(&platformUp, &workerUp)
 
-	if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+	if err := tg.Up(context.Background(), cfg, nil); err != nil {
 		t.Fatal(err)
 	}
 	want := []string{"ps --all --format json", "up -d --build worker", "ps --all --format json"}
@@ -209,7 +205,7 @@ func TestUpRefusesStaleCompose(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(tg.Dir, "compose.yaml"), []byte("name: satat\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	err := tg.Up(context.Background(), cfg, secrets())
+	err := tg.Up(context.Background(), cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "out of date") {
 		t.Fatalf("err = %v, want out of date", err)
 	}
@@ -233,7 +229,7 @@ func TestUpRefusesEmptyEnvValue(t *testing.T) {
 			if err := os.WriteFile(env, []byte(content), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			err := tg.Up(context.Background(), cfg, secrets())
+			err := tg.Up(context.Background(), cfg, nil)
 			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "empty") {
 				t.Fatalf("err = %v, want an error naming %s as empty", err, key)
 			}
@@ -247,48 +243,23 @@ func TestUpRefusesEmptyEnvValue(t *testing.T) {
 	}
 }
 
-func TestUpSecretsOnlyInChildEnv(t *testing.T) {
+// The worker reads its secrets from the store; up gives it no placeholder and prints no token.
+func TestUpGivesTheWorkerNoPlaceholder(t *testing.T) {
 	tg, f, out, cfg := setup(t)
 	var platformUp, workerUp bool
 	f.respond = coldStack(&platformUp, &workerUp)
 
-	s := secrets()
-	if err := tg.Up(context.Background(), cfg, s); err != nil {
+	if err := tg.Up(context.Background(), cfg, nil); err != nil {
 		t.Fatal(err)
 	}
-	var workerUpEnv []string
 	for _, c := range f.calls {
-		joined := strings.Join(c.args, " ")
-		if joined == "up -d --build worker" {
-			workerUpEnv = c.env
+		if strings.Join(c.args, " ") != "up -d --build worker" {
+			continue
 		}
-		for name, v := range s {
-			if strings.Contains(joined, v) {
-				t.Errorf("%s value in args of %q", name, joined)
+		for _, kv := range c.env {
+			if strings.HasSuffix(kv, "=unused") {
+				t.Errorf("worker compose up env has placeholder %s", kv)
 			}
-			if joined != "up -d --build worker" && slices.Contains(c.env, name+"="+v) {
-				t.Errorf("%s value in env of %q", name, joined)
-			}
-		}
-	}
-	// Placeholders are for the other commands only; the worker container must never get one.
-	for _, kv := range workerUpEnv {
-		if strings.HasSuffix(kv, "=unused") {
-			t.Errorf("worker compose up env has placeholder %s", kv)
-		}
-	}
-	for name, v := range s {
-		if !slices.Contains(workerUpEnv, name+"="+v) {
-			t.Errorf("worker compose up env lacks %s", name)
-		}
-		if strings.Contains(out.String(), v) {
-			t.Errorf("%s value in Out", name)
-		}
-	}
-	data, _ := os.ReadFile(filepath.Join(tg.Dir, ".env"))
-	for name, v := range s {
-		if strings.Contains(string(data), v) {
-			t.Errorf("%s value in .env", name)
 		}
 	}
 	if strings.Contains(out.String(), token) {
@@ -313,7 +284,7 @@ func TestUpRollsWorkerWhenSatatYAMLChanges(t *testing.T) {
 	hash := func() string {
 		t.Helper()
 		f.calls = nil
-		if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+		if err := tg.Up(context.Background(), cfg, nil); err != nil {
 			t.Fatal(err)
 		}
 		for _, c := range f.calls {
@@ -352,7 +323,7 @@ func TestUpRefusesMissingSatatYAML(t *testing.T) {
 	if err := os.Remove(filepath.Join(tg.Dir, "satat.yaml")); err != nil {
 		t.Fatal(err)
 	}
-	err := tg.Up(context.Background(), cfg, secrets())
+	err := tg.Up(context.Background(), cfg, nil)
 	if err == nil || !strings.Contains(err.Error(), "satat.yaml") {
 		t.Fatalf("err = %v, want an error naming satat.yaml", err)
 	}
@@ -397,7 +368,7 @@ func TestUpWarnsAboutRunningAgents(t *testing.T) {
 				}
 			}
 
-			if err := tg.Up(context.Background(), cfg, secrets()); err != nil {
+			if err := tg.Up(context.Background(), cfg, nil); err != nil {
 				t.Fatal(err)
 			}
 			if tc.running != nil && (callsAtCheck < 0 || f.calls[callsAtCheck].args[0] != "up") {
@@ -431,7 +402,7 @@ func TestUpTimeoutReportsFailingCheck(t *testing.T) {
 			return nil, errors.New("unscripted: " + s)
 		}
 	}
-	err := tg.Up(context.Background(), cfg, secrets())
+	err := tg.Up(context.Background(), cfg, nil)
 	if err == nil {
 		t.Fatal("Up succeeded with a worker that is never healthy")
 	}
@@ -506,7 +477,7 @@ func TestPlaceholdersForRequiredVariables(t *testing.T) {
 		t.Fatal(err)
 	}
 	env := f.calls[0].env
-	for _, name := range []string{"POSTGRES_PASSWORD", "HATCHET_CLIENT_TOKEN", "FOO", "SATAT_GITHUB_TOKEN", "SATAT_PUSH_TOKEN"} {
+	for _, name := range []string{"POSTGRES_PASSWORD", "HATCHET_CLIENT_TOKEN"} {
 		if _, set := os.LookupEnv(name); set {
 			continue
 		}

@@ -240,14 +240,18 @@ func runUp(args []string) error {
 		return err
 	}
 	if cfg.Deploy.Secrets == nil {
-		return errors.New("satat.yaml has no deploy.secrets: list every secret the lanes and the worker use, as op:// references or env")
+		return errors.New("satat.yaml has no deploy.secrets: name the store entry of every secret the lanes and the worker use")
+	}
+	// On compose the worker reads its secrets from the store. The kubernetes target has no store
+	// yet, so they come from this process's environment.
+	var secrets deploy.Secrets
+	if cfg.Deploy.Target == config.TargetKubernetes {
+		if secrets, err = deploy.FromEnv(cfg.SecretNames(), os.LookupEnv); err != nil {
+			return fmt.Errorf("deploy.secrets: %w", err)
+		}
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
-	secrets, err := deploy.Resolve(ctx, cfg.Deploy.Secrets, deploy.OpRead, os.LookupEnv)
-	if err != nil {
-		return fmt.Errorf("resolving deploy.secrets: %w", err)
-	}
 	return target.Up(ctx, cfg, secrets)
 }
 

@@ -31,20 +31,20 @@ poller:
   cron: "*/5 * * * *"
   repos: []
 
-# Where Satat is deployed and where each secret comes from. Every name a lane passes (pass_env) and
-# every secret the worker uses must be listed, so a missing one fails at load, not at the first
-# run. Values are references, never secrets: "op://..." is a 1Password item resolved when
-# `satat deploy up` runs, and "env" takes the variable from the caller's environment. Resolved
-# values go into the child process environment only, never to the repo or the host's working
-# tree (dockerd keeps the worker's container environment inside the Docker VM).
+# Where Satat is deployed, and which secret store entry (ADR 0032) holds each secret. Every name a
+# lane passes (pass_env) and every secret the worker uses must be listed, so a missing one fails at
+# load, not at the first run. These are names only, never values or where a value comes from: load
+# the values once with `just secrets-load` (names in secrets.example.env). On compose the worker
+# reads the entries at start and keeps them in memory. The kubernetes target has no store yet:
+# `satat deploy up` there takes each value from its own environment, under the name on the left.
 deploy:
   target: compose
   secrets:
-    CLAUDE_CODE_OAUTH_TOKEN: op://Satat Harness/claude-code-oauth-token
+    CLAUDE_CODE_OAUTH_TOKEN: claude-oauth-token
     # The worker's read token: it checks issues and clones repos before each step. No lane gets it.
-    SATAT_GITHUB_TOKEN: op://Satat Harness/satat-sandbox-read
-    # The worker's push token (SATAT_PUSH_TOKEN), write access to the sandbox repo. No lane gets it.
-    SATAT_PUSH_TOKEN: op://Satat Harness/satat-sandbox-write
+    SATAT_GITHUB_TOKEN: github-read-token
+    # The worker's push token, write access to the sandbox repo. No lane gets it.
+    SATAT_PUSH_TOKEN: github-push-token
 
 lanes:
   # Claude Code on the subscription token (slice 4). Build and push the image to a registry:

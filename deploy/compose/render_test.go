@@ -44,10 +44,11 @@ func TestRenderMatchesCheckedInCompose(t *testing.T) {
 	}
 }
 
-func TestRenderAddsEveryPassEnvToTheWorker(t *testing.T) {
+// The worker reads its secrets from the store (ADR 0032), so none is in compose.yaml's env.
+func TestRenderPutsNoSecretInTheWorkerEnv(t *testing.T) {
 	cfg, err := config.Parse(strings.NewReader(`
 limits: {global: 1, per_repo: 1, per_account: 1}
-deploy: {target: compose, secrets: {FOO: env, SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}
+deploy: {target: compose, secrets: {FOO: foo, SATAT_GITHUB_TOKEN: github-read-token, SATAT_PUSH_TOKEN: github-push-token}}
 lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12", memory: 1GiB, cpus: 1, pids: 64, workspace: 64MiB, timeout: 1m, pass_env: [FOO], account: a, max_runs: 1}}
 `))
 	if err != nil {
@@ -57,16 +58,17 @@ lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea41618
 	if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
 		t.Fatal(err)
 	}
-	got := f.Services["worker"].Environment["FOO"]
-	if want := "${FOO:?run satat deploy up}"; got != want {
-		t.Fatalf("worker.environment.FOO = %q, want %q", got, want)
+	for _, name := range cfg.SecretNames() {
+		if v, ok := f.Services["worker"].Environment[name]; ok {
+			t.Errorf("worker.environment.%s = %q, want no entry", name, v)
+		}
 	}
 }
 
 func TestRenderPassesOptionalEnvOnlyWhenSet(t *testing.T) {
 	cfg, err := config.Parse(strings.NewReader(`
 limits: {global: 1, per_repo: 1, per_account: 1}
-deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}
+deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: github-read-token, SATAT_PUSH_TOKEN: github-push-token}}
 lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12", memory: 1GiB, cpus: 1, pids: 64, workspace: 64MiB, timeout: 1m, optional_env: [SATAT_GIT_NAME], account: a, max_runs: 1}}
 `))
 	if err != nil {

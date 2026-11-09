@@ -79,15 +79,14 @@ type Target struct {
 
 var _ deploy.Target = (*Target)(nil)
 
-// Render returns compose.yaml. Only the worker's secret and optional environment vary with cfg; the
-// image digests are deploy's.
+// Render returns compose.yaml. Only the worker's optional environment varies with cfg; the image
+// digests are deploy's.
 func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	var buf bytes.Buffer
 	data := struct {
-		WorkerEnv, OptionalEnv                                            []string
+		OptionalEnv                                                       []string
 		PostgresImage, HatchetLiteImage, GoImage, BaseImage, OpenBaoImage string
 	}{
-		WorkerEnv:        cfg.SecretNames(),
 		OptionalEnv:      cfg.OptionalEnvNames(),
 		PostgresImage:    deploy.PostgresImage,
 		HatchetLiteImage: deploy.HatchetLiteImage,
@@ -118,11 +117,11 @@ const (
 var platform = []string{"postgres", "hatchet-lite", "docker-proxy"}
 
 // Up does what the operator used to do by hand: check the render, create the Postgres password and
-// the Hatchet token once, start the platform, then the worker with the secrets in its environment,
-// waiting for each to be healthy. A platform service already running and healthy is left alone.
+// the Hatchet token once, start the platform, then the worker, waiting for each to be healthy. The
+// worker reads its secrets from the secret store itself, so secrets is unused here. A platform service already running and healthy is left alone.
 // The worker's up always runs, so a change rolls out; on an unchanged healthy stack compose
 // recreates nothing, and no token or password is created.
-func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secrets) error {
+func (t *Target) Up(ctx context.Context, cfg config.Config, _ deploy.Secrets) error {
 	files, err := t.Render(cfg)
 	if err != nil {
 		return err
@@ -183,19 +182,9 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	}
 
 	// The worker is always brought up, so new worker code or a changed environment rolls out;
-	// compose leaves an unchanged container alone. This is the only command that gets the real
-	// secrets, and only in its environment. The config hash is part of that environment, so an
-	// edited satat.yaml rolls out too.
-	env := os.Environ()
-	names := make([]string, 0, len(secrets))
-	for name := range secrets {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	for _, name := range names {
-		env = append(env, name+"="+secrets[name])
-	}
-	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
+	// compose leaves an unchanged container alone. The config hash is part of that environment, so
+	// an edited satat.yaml rolls out too.
+	env := append(os.Environ(), keyConfigHash+"="+hex.EncodeToString(configHash[:]))
 	t.warnRunningAgents(ctx)
 	t.say("building and starting worker")
 	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {

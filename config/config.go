@@ -38,7 +38,7 @@ type Config struct {
 	CacheReaper CacheReaper
 	// Poller says which repos the worker polls for ready-for-agent issues (#135).
 	Poller Poller
-	// Deploy says where Satat is deployed and where each secret comes from.
+	// Deploy says where Satat is deployed and which store entry holds each secret.
 	Deploy Deploy
 }
 
@@ -46,8 +46,8 @@ type Config struct {
 // that needs the map can tell "not configured" from "configured empty".
 type Deploy struct {
 	Target string
-	// Secrets maps a secret name to where its value comes from: SecretFromEnv, or an op://
-	// reference. Values are references, never secrets.
+	// Secrets maps a secret's name (the variable a lane passes, or one of WorkerSecrets) to the
+	// secret store entry that holds its value (ADR 0032). Names only, never values or sources.
 	Secrets map[string]string
 }
 
@@ -56,9 +56,6 @@ const (
 	TargetCompose    = "compose"
 	TargetKubernetes = "kubernetes"
 )
-
-// SecretFromEnv says a secret's value is already in the caller's environment.
-const SecretFromEnv = "env"
 
 // WorkerSecrets are the secrets the worker itself uses, beyond what lanes pass to steps: the
 // GitHub write token for the pusher, and the read-only token it checks an issue is labelled
@@ -297,6 +294,9 @@ func Parse(r io.Reader) (Config, error) {
 	return c, nil
 }
 
+// entryRE is a secret store entry name, as scripts/secret-store.sh accepts it.
+var entryRE = regexp.MustCompile(`^[a-z][a-z0-9-]*$`)
+
 var (
 	pollRepoRE   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9_.][A-Za-z0-9_.-]*$`)
 	pollBranchRE = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._/-]*$`)
@@ -381,8 +381,8 @@ func (c Config) checkDeploy() []error {
 		}
 	}
 	for _, name := range sortedKeys(c.Deploy.Secrets) {
-		if ref := c.Deploy.Secrets[name]; ref != SecretFromEnv && !strings.HasPrefix(ref, "op://") {
-			errs = append(errs, fmt.Errorf("deploy: secrets.%s must be %q or an op:// reference", name, SecretFromEnv))
+		if !entryRE.MatchString(c.Deploy.Secrets[name]) {
+			errs = append(errs, fmt.Errorf("deploy: secrets.%s must name a secret store entry: lower case letters, digits and -", name))
 		}
 	}
 	used := map[string]bool{}

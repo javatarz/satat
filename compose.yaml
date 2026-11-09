@@ -128,9 +128,9 @@ services:
       - no-new-privileges
 
   # The Satat worker: runs the issue workflow, holds the Docker API (through the proxy) and the
-  # GitHub write token (ADR 0027). `satat deploy up` creates HATCHET_CLIENT_TOKEN and resolves the
-  # other secrets (1Password or env) in order. scripts/hatchet-token.sh and scripts/compose-up.sh
-  # still work, but they duplicate it.
+  # GitHub write token (ADR 0027). `satat deploy up` creates HATCHET_CLIENT_TOKEN. The worker reads
+  # its other secrets at start from openbao, the entries satat.yaml's deploy.secrets names, with the
+  # credential in cred-worker. Its environment holds no secret but the Hatchet token.
   worker:
     build:
       context: .
@@ -160,16 +160,6 @@ services:
       HOME: /tmp
       # Repos (owner/name, comma-separated) the webhook intake may queue. Empty turns intake off.
       SATAT_INTAKE_REPOS: ${SATAT_INTAKE_REPOS:-}
-      # Secrets, by name: the ones a lane passes to its step (pass_env, ADR 0026) and the worker's own
-      # (SATAT_GITHUB_TOKEN, the read token it clones repos, polls and checks the ready-for-agent
-      # label with, so it needs Issues: read as well as Contents: read, since a private repo answers
-      # 404 without it; and SATAT_PUSH_TOKEN, used by the pusher; no step gets either). `satat
-      # deploy up` resolves them from satat.yaml's deploy.secrets into the environment of `docker
-      # compose`, so they are never written to the repo or the host's working tree (dockerd keeps
-      # the container's environment inside the Docker VM).
-      CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:?run satat deploy up}
-      SATAT_GITHUB_TOKEN: ${SATAT_GITHUB_TOKEN:?run satat deploy up}
-      SATAT_PUSH_TOKEN: ${SATAT_PUSH_TOKEN:?run satat deploy up}
       # Optional, by name: each lane's optional_env (the agent's git author and committer, say).
       # Set them in the environment of `satat deploy up` to override the runner's defaults; unset
       # or empty, the step does not get them.
