@@ -38,10 +38,9 @@ any field.
 - `action`: someone takes on a task, or says a task needs doing. `owner` is the person who
   took it, or null when nobody did ("someone should ..."). `due` is the stated due date as
   `YYYY-MM-DD`, or null.
-- `question`: an open question a participant puts to the group to answer, worded as a direct
-  question ("How do we ...?", "What if we ...?"), or a proposal nobody agreed to. Musing aloud,
-  weighing pros and cons or "I keep wondering whether ..." that the call drops without anyone
-  asking the group to settle it is not an item of any type.
+- `question`: a question a participant explicitly puts to the group for an answer, or a
+  proposal nobody agreed to. Thinking aloud, weighing options or speculating that the call moves
+  on from, without anyone asking the group to settle it, is not an item of any type.
 - `deferral`: something parked for later. `trigger` is what the call said would reopen it, in
   your own words, or null when it named nothing.
 - `contradiction`: something said that goes against an ADR or an earlier settled choice the

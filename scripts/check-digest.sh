@@ -68,7 +68,8 @@ add_roadmap_targets() {
     fail docs/roadmap "no merge-base with origin/HEAD"
     return
   fi
-  if ! roadmap_added="$(git diff --text --no-color -U0 "$base" -- docs/roadmap |
+  if ! roadmap_added="$(git diff --text --no-ext-diff --no-textconv --no-color -U0 "$base" -- docs/roadmap |
+    LC_ALL=C tr '\000' ' ' |
     LC_ALL=C awk '/^diff --git / { in_hunk = 0; next } /^@@/ { in_hunk = 1; next } in_hunk && /^\+/ { print substr($0, 2) }')"; then
     fail docs/roadmap "git diff failed"
     return
@@ -209,7 +210,7 @@ def json_strings(node):
 
 def read_text(path):
     if path == "-":
-        return sys.stdin.read()
+        return sys.stdin.buffer.read().decode("utf-8")
     with open(path, encoding="utf-8") as handle:
         return handle.read()
 
