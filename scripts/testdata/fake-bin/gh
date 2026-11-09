@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# A recording fake of the GitHub CLI for the meeting-digest proofs. Nothing reaches GitHub.
+#
+# Refuses to run (exit 64) unless FAKE_GH_DIR is set. Appends every call to
+# $FAKE_GH_DIR/calls.log as one JSON array, ["gh", <args>...]. Its state is
+# $FAKE_GH_DIR/issues.json and $FAKE_GH_DIR/prs.json, read fresh on every call and seeded on
+# first use from scripts/testdata/fake-gh/. `--jq <expr>` pipes any output through `jq -r`.
+# Serves: issue list, issue create, pr list, pr create, api user, api repos/R/issues?...,
+# api repos/R/assignees/H. Anything else prints `fake gh: unsupported call` and exits 64.
+set -euo pipefail
+
+readonly unsupported_exit=64
+readonly first_new_number=200
+readonly allowed_assignees=(javatarz mallory-example)
+
+if [[ -z ${FAKE_GH_DIR:-} ]]; then
+  echo "fake gh: FAKE_GH_DIR is not set" >&2
+  exit "$unsupported_exit"
+fi
+canned_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/../fake-gh" && pwd)"
+readonly canned_dir
+readonly issues_file="$FAKE_GH_DIR/issues.json"
+readonly prs_file="$FAKE_GH_DIR/prs.json"
+
+json_array() {
+  if [[ $# -eq 0 ]]; then
+    echo '[]'
+  else
+    printf '%s\0' "$@" | jq -Rsc 'split("\u0000") | .[:-1]'
+  fi
+}
+
+mkdir -p "$FAKE_GH_DIR"
+json_array gh "$@" >>"$FAKE_GH_DIR/calls.log"
+[[ -f $issues_file ]] || cp "$canned_dir/open-issues.json" "$issues_file"
+[[ -f $prs_file ]] || cp "$canned_dir/open-prs.json" "$prs_file"
+
+unsupported() {
+  echo "fake gh: unsupported call" >&2
+  exit "$unsupported_exit"
+}
+
+jq_filter=""
+positional=()
+labels=()
+assignees=()
+is_draft=false
+repo="" title="" body_file="" head="" base="" json_fields="" limit=30
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --jq | -q) jq_filter="${2:?}"; shift 2 ;;
+    --draft | -d) is_draft=true; shift ;;
+    --paginate) shift ;;
+    --label | -l) labels+=("${2:?}"); shift 2 ;;
+    --assignee | -a) assignees+=("${2:?}"); shift 2 ;;
+    --repo | -R) repo="${2:?}"; shift 2 ;;
+    --title | -t) title="${2:?}"; shift 2 ;;
+    --body-file | -F) body_file="${2:?}"; shift 2 ;;
+    --head | -H) head="${2:?}"; shift 2 ;;
+    --base | -B) base="${2:?}"; shift 2 ;;
+    --json) json_fields="${2:?}"; shift 2 ;;
+    --limit | -L) limit="${2:?}"; shift 2 ;;
+    --state | -s) shift 2 ;;
+    -*) unsupported ;;
+    *) positional+=("$1"); shift ;;
+  esac
+done
+
+project() {
+  jq --arg fields "$json_fields" '[.[] | with_entries(select(.key as $key | $fields | split(",") | index($key)))]'
+}
+
+next_number() {
+  jq -s --argjson floor "$first_new_number" '([$floor] + [.[][].number] | max) + 1' "$issues_file" "$prs_file"
+}
+
+append_to() {
+  local file="$1" entry="$2" updated
+  updated="$(jq --argjson entry "$entry" '. + [$entry]' "$file")"
+  printf '%s\n' "$updated" >"$file"
+}
+
+issue_list() {
+  jq --argjson limit "$limit" '[.[] | select(.state == "OPEN")] | .[:$limit]' "$issues_file" | project
+}
+
+issue_create() {
+  local number url entry
+  number="$(next_number)"
+  url="https://github.com/${repo:?}/issues/$number"
+  entry="$(jq -n --argjson number "$number" --arg title "${title:?}" \
+    --rawfile body "${body_file:?}" --arg url "$url" \
+    --argjson labels "$(json_array ${labels[@]+"${labels[@]}"})" \
+    --argjson assignees "$(json_array ${assignees[@]+"${assignees[@]}"})" \
+    '{number: $number, title: $title, body: $body, state: "OPEN",
+      labels: [$labels[] | {id: "", name: ., description: "", color: ""}],
+      assignees: [$assignees[] | {id: "", login: ., name: ""}],
+      user: {login: "reevonr"}, url: $url}')"
+  append_to "$issues_file" "$entry"
+  echo "$url"
+}
+
+pr_list() {
+  jq --arg head "${head:?}" '[.[] | select(.headRefName == $head and .state == "OPEN")]' "$prs_file" | project
+}
+
+pr_create() {
+  local number url entry
+  number="$(next_number)"
+  url="https://github.com/${repo:?}/pull/$number"
+  entry="$(jq -n --argjson number "$number" --arg head "${head:?}" --arg base "${base:?}" \
+    --argjson draft "$is_draft" --arg title "${title:?}" --rawfile body "${body_file:?}" \
+    --arg url "$url" \
+    '{number: $number, headRefName: $head, baseRefName: $base, isDraft: $draft,
+      isCrossRepository: false, title: $title, body: $body, url: $url, state: "OPEN"}')"
+  append_to "$prs_file" "$entry"
+  echo "$url"
+}
+
+api() {
+  local path="${positional[1]:-}"
+  if [[ $path == user ]]; then
+    echo '{"login":"reevonr"}'
+  elif [[ $path =~ ^repos/[^/]+/[^/]+/issues(\?.*)?$ ]]; then
+    jq '.' "$issues_file"
+  elif [[ $path =~ ^repos/[^/]+/[^/]+/assignees/([^/]+)$ ]]; then
+    local handle="${BASH_REMATCH[1]}" allowed
+    for allowed in "${allowed_assignees[@]}"; do
+      [[ $handle != "$allowed" ]] || return 0
+    done
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
+  else
+    unsupported
+  fi
+}
+
+respond() {
+  case "${positional[0]:-} ${positional[1]:-}" in
+    "issue list") [[ -n $json_fields ]] || unsupported; issue_list ;;
+    "issue create") issue_create ;;
+    "pr list") [[ -n $json_fields ]] || unsupported; pr_list ;;
+    "pr create") pr_create ;;
+    api\ *) api ;;
+    *) unsupported ;;
+  esac
+}
+
+if [[ -n $jq_filter ]]; then
+  output="$(respond)"
+  jq -r "$jq_filter" <<<"$output"
+else
+  respond
+fi

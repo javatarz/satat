@@ -1,0 +1,63 @@
+[
+  {
+    "number": 101,
+    "title": "Back off exponentially when the poller retries",
+    "body": "When the GitHub API is down the poller retries at a fixed interval. Retry with exponential backoff and a cap instead.",
+    "state": "OPEN",
+    "labels": [
+      {
+        "id": "LA_fake101",
+        "name": "fixture",
+        "description": "Canned issue for the meeting-digest proofs",
+        "color": "ededed"
+      }
+    ],
+    "assignees": [],
+    "user": {
+      "login": "javatarz"
+    },
+    "url": "https://github.com/javatarz/satat/issues/101"
+  },
+  {
+    "number": 102,
+    "title": "Pin the LiteLLM image by digest",
+    "body": "The compose file pulls LiteLLM by tag. Pin it by digest so a retagged image cannot change the gateway.",
+    "state": "OPEN",
+    "labels": [],
+    "assignees": [],
+    "user": {
+      "login": "javatarz"
+    },
+    "url": "https://github.com/javatarz/satat/issues/102"
+  },
+  {
+    "number": 103,
+    "title": "Add a health check to the gateway",
+    "body": "The gateway container has no health check, so compose starts dependants before it can serve.",
+    "state": "OPEN",
+    "labels": [],
+    "assignees": [],
+    "user": {
+      "login": "javatarz"
+    },
+    "url": "https://github.com/javatarz/satat/issues/103"
+  },
+  {
+    "number": 104,
+    "title": "Agenda owner probe",
+    "body": "An open issue with an assignee, for the agenda proofs.",
+    "state": "OPEN",
+    "labels": [],
+    "assignees": [
+      {
+        "id": "MDQ6fake",
+        "login": "javatarz",
+        "name": ""
+      }
+    ],
+    "user": {
+      "login": "javatarz"
+    },
+    "url": "https://github.com/javatarz/satat/issues/104"
+  }
+]

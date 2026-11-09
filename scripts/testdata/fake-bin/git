@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# A recording wrapper of git for the meeting-digest proofs.
+#
+# For `git push ...` with FAKE_GH_DIR set, appends ["git", "push", <args>...] to
+# $FAKE_GH_DIR/calls.log. Every call, push included, then runs the real git: the next git on
+# PATH after this script's own directory. With FAKE_GH_DIR unset it only passes through.
+set -euo pipefail
+
+self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly self_dir
+
+real_git=""
+IFS=: read -r -a path_dirs <<<"$PATH"
+for dir in "${path_dirs[@]}"; do
+  if [[ -x $dir/git && "$(cd "$dir" 2>/dev/null && pwd -P)" != "$self_dir" ]]; then
+    real_git="$dir/git"
+    break
+  fi
+done
+if [[ -z $real_git ]]; then
+  echo "fake git: no real git on PATH" >&2
+  exit 127
+fi
+
+if [[ ${1:-} == push && -n ${FAKE_GH_DIR:-} ]]; then
+  mkdir -p "$FAKE_GH_DIR"
+  printf '%s\0' git "$@" | jq -Rsc 'split("\u0000") | .[:-1]' >>"$FAKE_GH_DIR/calls.log"
+fi
+exec "$real_git" "$@"

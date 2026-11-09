@@ -1,0 +1,13 @@
+[
+  {
+    "number": 90,
+    "headRefName": "digest/2026-10-28",
+    "baseRefName": "main",
+    "isDraft": false,
+    "isCrossRepository": true,
+    "title": "Digest call 2026-10-28",
+    "body": "A pull request from a fork that shares the digest branch name. Publish must never reuse it.",
+    "url": "https://github.com/javatarz/satat/pull/90",
+    "state": "OPEN"
+  }
+]
