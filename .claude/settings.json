@@ -28,8 +28,15 @@
       "Edit(**/.envrc)",
       "Edit(**/.tool-versions)",
       "Edit(**/.claude/**)",
+      "Edit(**/.githooks/**)",
+      "Edit(**/compose.override.y*ml)",
+      "Edit(**/docker-compose.override.y*ml)",
+      "Edit(**/.env)",
+      "Edit(**/.env.*)",
       "Read(/.env)",
-      "Read(/.env.*)"
+      "Read(/.env.*)",
+      "Read(**/.env)",
+      "Read(**/.env.*)"
     ]
   }
 }
