@@ -65,7 +65,10 @@ any field.
   `title` in your own words, the `ts` of the marker above where it starts, and the `items` ids
   it produced. Each distinct subject is its own topic: a new subject starts a new topic, even
   under the same marker as the one before. A subject that was discussed but produced nothing
-  gets `items: []`. That is an expected outcome, not a gap to fill with an item.
+  gets `items: []`. That is an expected outcome, not a gap to fill with an item. A `title`
+  names the concrete things the call discussed (the tools, products, components, ADRs or
+  people's proposals named in it), not a generic category, so the owner recognises the
+  subject. It stays short and in your own words; naming a tool or product is not a quote.
 
 ## Wording outside the quotes
 
