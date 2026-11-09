@@ -49,8 +49,10 @@ The deploy step exists for a local k3d cluster (ADR 0031); Terraform provisionin
 
 Never in git-tracked files, Terraform state or cloud-init. Loaded secrets live in one OpenBao
 store per environment, read per component identity, with the policy held in the store (ADR
-0032). Until that is built, `scripts/compose-up.sh` reads them from 1Password. CI uses GitHub
-repository secrets and cloud OIDC (no long-lived keys).
+0032). Load them with `just secrets-load`; satat.yaml's `deploy.secrets` names entries, never
+values or sources. On Compose the worker reads them at start. The kubernetes target has no store
+yet: `satat deploy up` takes the values from its environment there. CI uses GitHub repository
+secrets and cloud OIDC (no long-lived keys).
 
 ### External repos
 

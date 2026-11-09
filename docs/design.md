@@ -299,10 +299,11 @@ So the design keeps write access out of reach of the agent
 ([ADR 0025](adr/0025-github-token-broker.md)):
 
 - The agent only commits locally. The runner writes a git bundle of those commits.
-- The pusher (`pusher/`) runs in the worker, never in a step. `SATAT_PUSH_TOKEN` is set on the
-  worker only. Lane `pass_env` does not list it, so no step receives it. It is handed to git
-  through a credential helper that reads it from the environment, so it is not in argv, the
-  remote URL or `.git/config`, and error text has it scrubbed.
+- The pusher (`pusher/`) runs in the worker, never in a step. The push token (store entry
+  `github-push-token`) is read by the worker only. Lane `pass_env` does not list it, so no step
+  receives it. It is handed to git through a credential helper that reads it from the git
+  process's environment, so it is not in argv, the remote URL or `.git/config`, and error text
+  has it scrubbed.
 - Before it pushes, the pusher checks, on exactly what would be pushed:
   - repo, base branch, run ID and commit SHAs are plain, well-formed values
   - the bundle applies to a fresh clone of the base and holds exactly one branch, ending at the
@@ -322,16 +323,14 @@ So the design keeps write access out of reach of the agent
 - The PR is always a draft, with `maintainer_can_modify` off.
 
 What the step does hold: the Claude subscription token (`CLAUDE_CODE_OAUTH_TOKEN`). It holds **no
-GitHub credential**: the worker clones with the read token (`SATAT_GITHUB_TOKEN`, in the worker's
-environment only and never in a lane's `pass_env`) before the container starts, git gets the
-token through a credential helper in that one clone process, and the clone's remote is the plain
+GitHub credential**: the worker clones with the read token (`github-read-token`, which the
+worker reads from the secret store and holds in memory, never in a lane's `pass_env`) before the
+container starts, git gets the token through a credential helper in that one clone process, and the clone's remote is the plain
 `https://github.com/<repo>.git`. `launcher/docker/exposure_test.go` starts a process in the step
 and fails if a GitHub credential is visible by name, value or file. The Claude token is the one
 known gap: the planned fix is an LLM gateway proxy that issues each step a short-lived key
 ([ADR 0025](adr/0025-github-token-broker.md), [ADR 0032](adr/0032-secret-store.md),
-[ADR 0034](adr/0034-llm-gateway-holds-model-credentials.md)). Until
-OpenBao exists the worker reads `github-read-token` from its environment as
-`SATAT_GITHUB_TOKEN`.
+[ADR 0034](adr/0034-llm-gateway-holds-model-credentials.md)).
 
 ## Guarding the repo's hooks
 
@@ -493,17 +492,17 @@ go test -short -p 1 ./...   # skips the tests that start containers
 
 **The platform.** `satat deploy up` brings it up on Compose
 ([ADR 0028](adr/0028-infrastructure-adapter-compose-first.md)). It needs Docker with the `compose`
-plugin (colima and Docker Desktop are what the docs cover) and one source for the secrets: the
-1Password CLI `op`, signed in, for the `op://` references in `satat.yaml`'s `deploy.secrets`, or
-`env` references that read the variable from your shell. The [prototype notes](research/v2/docker-prototype.md)
+plugin (colima and Docker Desktop are what the docs cover) and a loaded secret store
+(`just secrets-init`, then `just secrets-load`; see the README). `satat.yaml`'s `deploy.secrets`
+names the store entry for each secret, and the worker reads them at start
+([ADR 0032](adr/0032-secret-store.md)). The [prototype notes](research/v2/docker-prototype.md)
 record runs of it.
 
 1. Build the Claude lane image and push it with `SATAT_REGISTRY=<registry> scripts/build-claude-image.sh`.
    It prints a reference pinned by manifest digest; put it in the `claude` lane's `image` in
    `satat.yaml`.
 2. Run `go run ./cmd/satat deploy up`. It creates `POSTGRES_PASSWORD` and the Hatchet token in
-   `.env` if they're absent, resolves the other secrets into the child process only, starts the
-   stack and waits until the worker reports ready. Running it again changes nothing that is already
+   `.env` if they're absent, starts the stack and waits until the worker reports ready. Running it again changes nothing that is already
    healthy. `satat deploy status` shows each service and the worker's readiness; `satat deploy down`
    stops it and removes any agent containers left behind. `deploy down --volumes` also deletes
    the platform's data and the Hatchet token in `.env`, which is dead without that data.
@@ -525,9 +524,8 @@ record runs of it.
    `go run ./cmd/satat-enqueue --repo owner/name --issue N` and watch the run at
    `http://localhost:8888`.
 
-`scripts/hatchet-token.sh` and `scripts/compose-up.sh` still work but duplicate `deploy up`.
-`just setup` (writes `.env` with a random `POSTGRES_PASSWORD`) and `just run` (the two scripts,
-after `just doctor` has checked the prerequisites) still drive that older path.
+`just run` is the older path: after `just doctor`, it creates the Hatchet token with
+`scripts/hatchet-token.sh` if `.env` has none, then runs `docker compose up -d --build`.
 
 ### Run it on k3d
 
@@ -541,7 +539,8 @@ The same platform runs on a local k3d cluster, with every agent as a one-shot `S
    say: `deploy up` builds the platform image from the repo above it). Every lane needs a `command`.
 3. Run `go run ./cmd/satat deploy render --config <copy>`. It writes `satat.k8s/values.yaml` and
    `satat.k8s/lanes.yaml` next to the copy.
-4. Run `SATAT_REGISTRY=localhost:5111 go run ./cmd/satat deploy up --config <copy>`. It builds and
+4. Set each name in `deploy.secrets` in the shell (k3d has no secret store yet), then run
+   `SATAT_REGISTRY=localhost:5111 go run ./cmd/satat deploy up --config <copy>`. It builds and
    pushes the platform image, applies the lane objects and Secrets, installs the chart in
    `deploy/helm/satat/` and waits for the worker. It acts on the context `k3d-satat` unless
    `--context` or `SATAT_KUBE_CONTEXT` names another, never on the shell's current one.

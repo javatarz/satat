@@ -43,8 +43,9 @@ Next, in order:
 1. The pusher moves out of the worker into its own service, with its own identity (#156, #157).
 2. The worker's builder refuses the store's network and credential volumes for a lane, and a CI
    check confirms it.
-3. Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
-   `scripts/compose-up.sh` stops calling `op`.
+3. ~~Init and load commands (`just secrets-init`, `just secrets-load`), `doctor` checks, and
+   `scripts/compose-up.sh` stops calling `op`.~~ Done (#157): the worker reads the store, and
+   `compose-up.sh` is gone.
 4. ~~The worker clones the repo before the step starts, so the step holds no GitHub token.~~ Done (#167).
 5. An LLM gateway proxy takes the Claude token and issues each step a short-lived virtual key.
    Decided in ADR 0034 (#155), to build in #238. Until then the Compose Claude step still holds

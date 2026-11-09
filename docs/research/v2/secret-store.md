@@ -278,6 +278,13 @@ Entry names (also in `secrets.example.env`):
   stdin holds the values.
 - The worker waits for `openbao` to be healthy (`bao status` exits 0 only when unsealed), so
   `docker compose up` and `satat deploy up` start the store first.
+- The worker reads its entries once at start with the Go client (`secrets/`, on
+  `github.com/openbao/openbao/api/v2`), logged in with its AppRole credential, and keeps the
+  values in memory. Nothing calls the store after that, so nothing renews the 1 h token. To
+  rotate a value: load it, then restart the worker. Test: `TestRead` in `secrets/secrets_test.go`.
+- `deploy.secrets` in `satat.yaml` now maps each variable to its entry name
+  (`SATAT_GITHUB_TOKEN: github-read-token`). The kubernetes target has no store yet, so its
+  `deploy up` takes the values from its own environment. `op://` resolution is gone.
 
 ## Kubernetes findings that still apply
 

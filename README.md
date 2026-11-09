@@ -21,9 +21,8 @@ for versions and the domain glossary.
 ## Getting started
 
 You need Docker ([colima](https://github.com/abiosoft/colima) or Docker Desktop), [mise](https://mise.jdx.dev/),
-[just](https://just.systems/), [pre-commit](https://pre-commit.com/), [gh](https://cli.github.com/),
-[actionlint](https://github.com/rhysd/actionlint) and the
-[1Password CLI](https://developer.1password.com/docs/cli/) (`op`).
+[just](https://just.systems/), [pre-commit](https://pre-commit.com/), [gh](https://cli.github.com/)
+and [actionlint](https://github.com/rhysd/actionlint).
 
 ```sh
 just setup    # install the pinned tools and git hooks, create .env, then run doctor
@@ -55,56 +54,31 @@ watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#r
 ### Secret store
 
 Secrets live in an OpenBao store, one per environment ([ADR 0032](docs/adr/0032-secret-store.md)).
-The worker does not read from it yet: it still gets its tokens as below. The worker waits for the
-store to be up and unsealed, so set it up before the first `just run`:
+The worker reads its tokens from the store when it starts and keeps them in memory. No token is
+in your shell, `.env` or `compose.yaml`. The worker waits for the store to be up and unsealed, so
+set it up before the first `just run` or `just up`:
 
 ```sh
 just secrets-init                   # once per environment
 cp secrets.example.env secrets.env  # fill in the values; secrets.* is gitignored
 just secrets-load < secrets.env     # then delete secrets.env
+just up                             # or just run
 ```
 
 `secrets-init` prints a recovery key and the operator password once. Save both in your password
 manager: nothing else holds them, and `secrets-load` and `secrets-grant` ask for the password
 (or read `SATAT_OPERATOR_PASSWORD`). Any `NAME=value` source can feed the load, for example
-`op inject -i secrets.env.tpl | just secrets-load`. To change one value later, load only that
-name. `just secrets-grant <component> <name>` lets a component read one more entry.
+`op inject -i secrets.env.tpl | just secrets-load`. Satat never calls `op`. To change one value
+later, load only that name, then restart the worker (`docker compose restart worker`): it reads
+the store only at start. `just secrets-grant <component> <name>` lets a component read one more
+entry.
+
+`deploy.secrets` in `satat.yaml` names the store entry for each variable a lane or the worker
+uses, for example `SATAT_GITHUB_TOKEN: github-read-token`. It holds names only. If the store is
+not reachable, or it refuses an entry, the worker does not start and its log names the entry.
 
 The store unseals itself on every start. `just down --volumes` deletes it; then run
 `just secrets-init` and `just secrets-load` again.
-
-### Without 1Password
-
-`just run` reads the worker's three tokens from 1Password. To supply them yourself instead, set
-each `deploy.secrets` entry in `satat.yaml` to `env` (a local change, don't commit it):
-
-```yaml
-deploy:
-  secrets:
-    CLAUDE_CODE_OAUTH_TOKEN: env   # from claude setup-token
-    SATAT_GITHUB_TOKEN: env        # fine-grained PAT: Contents read, Issues read
-    SATAT_PUSH_TOKEN: env          # fine-grained PAT: Contents and Pull requests read/write
-```
-
-`env` means the shell's environment: `satat deploy up` does not read `.env` for these. To have
-mise load `.env` whenever you are in the repo, activate mise in your shell (add
-`eval "$(mise activate zsh)"` to `~/.zshrc`, then open a new shell) and create a
-`mise.local.toml` (gitignored):
-
-```toml
-[env]
-_.file = ".env"
-```
-
-Put the three tokens in `.env` (they are then on disk in plain text, mode 0600), then:
-
-```sh
-mise trust                     # once, so mise loads mise.local.toml
-go run ./cmd/satat deploy up   # creates the Hatchet token on first run, then starts the stack
-```
-
-`go run ./cmd/satat deploy status` and `deploy down` check and stop it. `just doctor` still
-fails its `op` check on this path; the other checks apply.
 
 ## Docs
 
