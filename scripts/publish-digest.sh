@@ -14,6 +14,10 @@
 # --dry-run stops after gitleaks and prints the files to commit, the PR draft and the issue
 # drafts. It makes no gh call.
 #
+# Agenda mode publishes docs/calls/agenda-<date>.md the same way, on agenda/<date>: its
+# allowlist is docs/calls/agenda-*.md only, it commits only that date's agenda, runs no
+# check-digest, files no issue and labels nothing, and gitleaks scans the agenda and the PR body.
+#
 # The speaker map is DIGEST_SPEAKERS, else .claude/skills/meeting-digest/speakers.json. An
 # override is accepted only for a file git tracks with no change. PUBLISH_DIGEST_STOP_AFTER=<n>
 # (tests only) exits 1 after filing n issues.
@@ -23,6 +27,7 @@
 #
 # usage:
 #   scripts/publish-digest.sh [--dry-run] digest <owner/repo> <YYYY-MM-DD>
+#   scripts/publish-digest.sh [--dry-run] agenda <owner/repo> <YYYY-MM-DD>
 set -euo pipefail
 
 readonly skill_dir=".claude/skills/meeting-digest"
@@ -33,7 +38,7 @@ die() {
 }
 
 usage() {
-  echo "usage: $0 [--dry-run] digest <owner/repo> <YYYY-MM-DD>" >&2
+  echo "usage: $0 [--dry-run] digest|agenda <owner/repo> <YYYY-MM-DD>" >&2
   exit 2
 }
 
@@ -57,7 +62,6 @@ readonly mode="$1" repo="$2" date="$3"
 [[ $mode == digest || $mode == agenda ]] || usage
 [[ $repo =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || usage
 [[ $date =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || usage
-[[ $mode == digest ]] || die "agenda mode is not built yet"
 
 for tool in git jq; do
   command -v "$tool" >/dev/null || die "$tool is required"
@@ -65,10 +69,17 @@ done
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 readonly record="docs/calls/$date.md"
+readonly agenda="docs/calls/agenda-$date.md"
 readonly outbox="docs/scratch/calls/$date.outbox.json"
-readonly outgoing="docs/scratch/calls/$date.outgoing"
-readonly branch="digest/$date"
-readonly title="Digest call $date"
+if [[ $mode == agenda ]]; then
+  readonly outgoing="docs/scratch/calls/agenda-$date.outgoing"
+  readonly branch="agenda/$date"
+  readonly title="Agenda for call $date"
+else
+  readonly outgoing="docs/scratch/calls/$date.outgoing"
+  readonly branch="digest/$date"
+  readonly title="Digest call $date"
+fi
 readonly items_file="docs/scratch/calls/$date.items.json"
 readonly issues_snapshot="docs/scratch/calls/$date.issues.json"
 readonly transcript="docs/scratch/calls/$date.txt"
@@ -83,13 +94,19 @@ readonly origin
 
 is_allowed() {
   local status="$1" path="$2"
-  if [[ $path == "$record" ]]; then
+  if [[ $mode == agenda ]]; then
+    [[ $path =~ ^docs/calls/agenda-[^/]*\.md$ ]] && [[ $status == '??' || $status =~ ^[\ AM][\ AM]$ ]]
+  elif [[ $path == "$record" ]]; then
     [[ $status == '??' || $status =~ ^[\ AM][\ AM]$ ]]
   elif [[ $path =~ ^docs/roadmap/[^/]+\.md$ && $path != docs/roadmap/README.md ]]; then
     [[ $status =~ ^[\ M][\ M]$ ]] && git cat-file -e "HEAD:$path" 2>/dev/null
   else
     return 1
   fi
+}
+
+is_commit_path() {
+  [[ $mode == digest || $1 == "$agenda" ]]
 }
 
 mkdir -p docs/scratch/calls
@@ -109,14 +126,20 @@ while IFS= read -r -d '' entry; do
     echo "refused: path not allowed: $status $path" >&2
     is_refused=1
   elif is_allowed "$status" "$path"; then
-    commit_paths+=("$path")
+    if is_commit_path "$path"; then
+      commit_paths+=("$path")
+    fi
   else
     echo "refused: path not allowed: $status $path" >&2
     is_refused=1
   fi
 done <"$status_file"
 [[ $is_refused -eq 0 ]] || exit 1
-[[ -f $outbox ]] || die "$outbox missing"
+if [[ $mode == agenda ]]; then
+  [[ -f $agenda ]] || die "$agenda missing"
+else
+  [[ -f $outbox ]] || die "$outbox missing"
+fi
 
 if [[ ${#commit_paths[@]} -gt 0 ]]; then
   commit_path_attributes="$(git check-attr -a -- "${commit_paths[@]}")" || die "git check-attr failed"
@@ -133,7 +156,7 @@ if [[ ${#commit_paths[@]} -gt 0 ]]; then
   done <<<"$commit_path_numstat"
 fi
 
-if ! check_output="$(scripts/check-digest.sh "$date")"; then
+if [[ $mode == digest ]] && ! check_output="$(scripts/check-digest.sh "$date")"; then
   grep '^fail: ' <<<"$check_output" >&2 || true
   die "check-digest failed"
 fi
@@ -265,10 +288,15 @@ for path in ${commit_paths[@]+"${commit_paths[@]}"}; do
   mkdir -p "$outgoing/$(dirname "$path")"
   { echo 'gitleaks scan copy'; cat -- "$path"; } >"$outgoing/$path"
 done
-jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$outgoing/pr-body.md"
-check_speaker_map
-check_drafts
-render_drafts
+if [[ $mode == agenda ]]; then
+  jq -n -r -L "$skill_dir" --arg agenda "$agenda" \
+    'include "bodies"; "\(banner)\n\nThe agenda for the next call: `\($agenda)`."' >"$outgoing/pr-body.md"
+else
+  jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_body($date)' "$outbox" >"$outgoing/pr-body.md"
+  check_speaker_map
+  check_drafts
+  render_drafts
+fi
 if ! env -u GITLEAKS_CONFIG -u GITLEAKS_CONFIG_TOML "$gitleaks" dir --no-banner --redact \
   --ignore-gitleaks-allow --gitleaks-ignore-path "$outgoing" "$outgoing" >&2; then
   die "gitleaks found a secret"
@@ -280,9 +308,13 @@ if [[ $is_dry_run -eq 1 ]]; then
     printf '%s\n' "${commit_paths[@]}"
   fi
   printf '\n'
-  jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_preview($date), ""' "$outbox"
-  jq -r -L "$skill_dir" --arg date "$date" --slurpfile map "$speakers" --slurpfile items "$items_file" \
-    'include "bodies"; issue_preview($date; $map; $items), ""' "$outbox"
+  if [[ $mode == agenda ]]; then
+    printf '## PR draft\n\nTitle: %s\n\n~~~~markdown\n%s\n~~~~\n\n' "$title" "$(cat -- "$outgoing/pr-body.md")"
+  else
+    jq -r -L "$skill_dir" --arg date "$date" 'include "bodies"; pr_preview($date), ""' "$outbox"
+    jq -r -L "$skill_dir" --arg date "$date" --slurpfile map "$speakers" --slurpfile items "$items_file" \
+      'include "bodies"; issue_preview($date; $map; $items), ""' "$outbox"
+  fi
   exit 0
 fi
 
@@ -385,13 +417,13 @@ file_issues() {
   done < <(jq -r '(.issues // [])[].item' "$outbox")
 }
 
-file_issues
+[[ $mode == agenda ]] || file_issues
 
 if [[ ${#commit_paths[@]} -gt 0 ]]; then
   git add -- "${commit_paths[@]}"
-fi
-if ! git diff --cached --quiet; then
-  git commit -q -m "$title" || die "git commit failed"
+  if ! git diff --cached --quiet -- "${commit_paths[@]}"; then
+    git commit -q -m "$title" -- "${commit_paths[@]}" || die "git commit failed"
+  fi
 fi
 
 git push origin "$branch" || die "git push failed"

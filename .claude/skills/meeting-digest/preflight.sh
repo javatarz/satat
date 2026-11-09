@@ -6,13 +6,21 @@
 # repo-relative paths. Otherwise exits 1 with `error: ...` on stderr. Calls
 # "${DIGEST_GH:-gh}", so a proof can point it at a fake gh.
 #
+# Agenda mode takes the upcoming call's date, today's local date by default, and has no
+# one-per-date stop: the agenda is regenerated on every run.
+#
 # usage:
 #   .claude/skills/meeting-digest/preflight.sh <YYYY-MM-DD>
+#   .claude/skills/meeting-digest/preflight.sh agenda [<YYYY-MM-DD>]
 set -euo pipefail
 
 die() {
   echo "error: $*" >&2
   exit 1
+}
+
+usage() {
+  die "usage: $0 <YYYY-MM-DD> | agenda [<YYYY-MM-DD>]"
 }
 
 origin_repo() {
@@ -25,11 +33,52 @@ origin_repo() {
   echo "${owner_path##*[/:]}/$name"
 }
 
-[[ $# -eq 1 ]] || die "usage: $0 <YYYY-MM-DD>"
-readonly date="$1"
+target_repo() {
+  local origin
+  origin="$(origin_repo)"
+  [[ $origin =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "cannot read owner/name from the origin URL"
+  echo "$origin"
+}
+
+snapshot_open_issues() {
+  local target="$1" snapshot="$2"
+  if ! "${DIGEST_GH:-gh}" issue list --repo "$target" --state open --limit 500 \
+    --json number,title,body,labels,assignees,url >"$snapshot"; then
+    rm -f "$snapshot"
+    die "could not snapshot the open issues of $target"
+  fi
+}
+
+if [[ ${1:-} == agenda ]]; then
+  [[ $# -le 2 ]] || usage
+  readonly mode=agenda
+  date="${2:-$(date +%F)}"
+else
+  [[ $# -eq 1 ]] || usage
+  readonly mode=digest
+  date="$1"
+fi
+readonly date
 [[ $date =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]] || die "date must be YYYY-MM-DD, got: $date"
 
 cd "$(dirname "${BASH_SOURCE[0]}")/../../.."
+
+if [[ $mode == agenda ]]; then
+  repo="$(target_repo)"
+  readonly repo
+
+  readonly agenda_issues="docs/scratch/calls/agenda-$date.issues.json"
+  mkdir -p docs/scratch/calls
+  snapshot_open_issues "$repo" "$agenda_issues"
+
+  echo "root=$(pwd -P)"
+  echo "mode=agenda"
+  echo "date=$date"
+  echo "repo=$repo"
+  echo "issues=$agenda_issues"
+  echo "agenda=docs/calls/agenda-$date.md"
+  exit 0
+fi
 
 readonly record="docs/calls/$date.md"
 [[ ! -e $record ]] || die "$record exists; a date holds one digest"
@@ -37,16 +86,11 @@ readonly record="docs/calls/$date.md"
 readonly transcript="docs/scratch/calls/$date.txt"
 [[ -f $transcript ]] || die "transcript missing: $transcript"
 
-repo="$(origin_repo)"
+repo="$(target_repo)"
 readonly repo
-[[ $repo =~ ^[A-Za-z0-9-]+/[A-Za-z0-9._-]+$ ]] || die "cannot read owner/name from the origin URL"
 
 readonly issues="docs/scratch/calls/$date.issues.json"
-if ! "${DIGEST_GH:-gh}" issue list --repo "$repo" --state open --limit 500 \
-  --json number,title,body,labels,assignees,url >"$issues"; then
-  rm -f "$issues"
-  die "could not snapshot the open issues of $repo"
-fi
+snapshot_open_issues "$repo" "$issues"
 
 echo "root=$(pwd -P)"
 echo "date=$date"
