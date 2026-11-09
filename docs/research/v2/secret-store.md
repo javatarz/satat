@@ -243,6 +243,42 @@ Found on the way:
   which the owner accepts.
 - `docker compose exec -T` reads the caller's stdin, so a load script must read its input first.
 
+## Built on Compose (#157)
+
+What the first build changed from the spike, 2026-11-09. Test: `TestSecretStore` in
+`deploy/compose/secretstore_test.go`.
+
+Entry names (also in `secrets.example.env`):
+
+| Entry | Reader now | Reader later |
+|---|---|---|
+| `github-read-token` | worker | worker |
+| `github-push-token` | worker (transitional) | pusher (#240) |
+| `claude-oauth-token` | worker (transitional) | LLM gateway (#238) |
+
+- The commands are `scripts/secret-store.sh`, behind `just secrets-init`, `secrets-load` and
+  `secrets-grant`. The `secrets.*` gitignore pattern rules out `scripts/secrets.sh`.
+- A volume gets its files from `secrets-setup`, a Compose service in the `setup` profile: the
+  OpenBao image, no network, root with only `CHOWN`. `docker compose run -v <volume>` on the
+  `openbao` service does not work for `cred-worker`: Compose resolves a project volume only when
+  the service already uses it, and otherwise creates an unprefixed volume.
+- The `secrets` network is `10.157.0.0/24`, outside Docker's default pools, so an
+  automatic network cannot take it first. The worker is `10.157.0.10`. `secrets-init` reads
+  the address from `docker compose config`.
+- `doctor` needs no password. `secrets-init` writes a second AppRole, `doctor`, beside the seal
+  key in `bao-seal`. Its policy lists entry names and reads policies, and its tokens work only
+  from loopback. Anyone who can read that file can also read the seal key, so it adds no access.
+- The required names come from the policies in the store, not from a list in git. A grant
+  makes the new name required.
+- `secrets-load` refuses a name that no policy grants, an empty value, a name given twice, and
+  a granted name that is neither in the input nor in the store. So the first load needs every
+  name, and a later load can hold only the names to change. It checks everything before it
+  writes anything.
+- The operator password comes from `SATAT_OPERATOR_PASSWORD` or a terminal prompt, because
+  stdin holds the values.
+- The worker waits for `openbao` to be healthy (`bao status` exits 0 only when unsealed), so
+  `docker compose up` and `satat deploy up` start the store first.
+
 ## Kubernetes findings that still apply
 
 These came from the first draft. They now describe where the seal key and the store's data
