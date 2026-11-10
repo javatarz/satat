@@ -31,6 +31,14 @@ run: doctor
     fi
     scripts/compose-up.sh
 
+# Local mode: Hatchet in Docker, the worker and each step on this machine with your claude login (not a sandbox)
+run-local:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    {{compose_placeholders}} docker compose up -d --wait hatchet-lite
+    grep -q '^HATCHET_CLIENT_TOKEN=.' .env || scripts/hatchet-token.sh
+    scripts/worker-local.sh
+
 # Start or update the stack with satat deploy up (creates the Hatchet token on first run)
 up *args:
     go run ./cmd/satat deploy up {{args}}
@@ -57,6 +65,10 @@ agents *args:
 
 # Queue an issue for the worker (it must be labelled ready-for-agent), e.g. `just enqueue owner/name 42`
 enqueue repo issue:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export HATCHET_CLIENT_TOKEN="${HATCHET_CLIENT_TOKEN:-$(sed -n 's/^HATCHET_CLIENT_TOKEN=//p' .env)}"
+    export HATCHET_CLIENT_HOST_PORT="${HATCHET_CLIENT_HOST_PORT:-localhost:7077}" HATCHET_CLIENT_TLS_STRATEGY="${HATCHET_CLIENT_TLS_STRATEGY:-none}"
     go run ./cmd/satat-enqueue --repo {{repo}} --issue {{issue}}
 
 # Run what CI runs: pre-commit, gofmt, go vet, the Docker socket check and the compose render check
