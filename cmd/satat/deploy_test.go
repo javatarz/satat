@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/deploy/compose"
 	"github.com/javatarz/satat/deploy/kubernetes"
 )
 
@@ -65,5 +66,40 @@ func TestTargetForKubernetes(t *testing.T) {
 	}
 	if k := got.(*kubernetes.Target); k.Root != "" || k.Dir != filepath.Dir(outside) {
 		t.Errorf("target = %+v, want no Root and Dir %s", k, filepath.Dir(outside))
+	}
+}
+
+// The compose target builds the worker from the repo root above the config too, so a satat.yaml
+// in another directory of the repo (the e2e stack's) needs no copy of the repo beside it.
+func TestTargetForCompose(t *testing.T) {
+	root := t.TempDir()
+	for _, f := range []string{"go.mod", "images/worker/Dockerfile", "docs/scratch/e2e/satat.yaml"} {
+		if err := os.MkdirAll(filepath.Join(root, filepath.Dir(f)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(root, f), nil, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	configPath := filepath.Join(root, "docs", "scratch", "e2e", "satat.yaml")
+	cfg := config.Config{Deploy: config.Deploy{Target: config.TargetCompose}}
+	got, err := targetFor(cfg, configPath, kubeFlags{}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, ok := got.(*compose.Target)
+	if !ok {
+		t.Fatalf("target is %T", got)
+	}
+	if c.Dir != filepath.Dir(configPath) || c.Root != root {
+		t.Errorf("target Dir %s Root %s, want Dir %s Root %s", c.Dir, c.Root, filepath.Dir(configPath), root)
+	}
+	// down and status build nothing: no Root.
+	got, err = targetFor(cfg, configPath, kubeFlags{}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c := got.(*compose.Target); c.Root != "" {
+		t.Errorf("Root = %s without needRoot, want empty", c.Root)
 	}
 }

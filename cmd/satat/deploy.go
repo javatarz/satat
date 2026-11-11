@@ -76,24 +76,27 @@ func repoRoot(dir string) (string, error) {
 		}
 		if filepath.Dir(d) == d {
 			return "", fmt.Errorf("no Satat repo (go.mod and images/worker/Dockerfile) at or above %s: "+
-				"the kubernetes target builds the platform image from it", abs)
+				"deploy up builds the platform image from it", abs)
 		}
 	}
 }
 
 // targetFor returns the deploy target the config at configPath names, working in its directory.
-// With needRoot (deploy up) the kubernetes target also gets the repo root, which it builds the
-// platform image from; render, down and status build nothing, so they work outside the repo.
+// With needRoot (deploy up) the target also gets the repo root, which it builds the platform image
+// from; render, down and status build nothing, so they work outside the repo.
 func targetFor(cfg config.Config, configPath string, kube kubeFlags, needRoot bool) (deploy.Target, error) {
 	dir := filepath.Dir(configPath)
+	findRoot := func() (string, error) {
+		if !needRoot {
+			return "", nil
+		}
+		return repoRoot(dir)
+	}
 	switch cfg.Deploy.Target {
 	case config.TargetKubernetes:
-		var root string
-		if needRoot {
-			var err error
-			if root, err = repoRoot(dir); err != nil {
-				return nil, err
-			}
+		root, err := findRoot()
+		if err != nil {
+			return nil, err
 		}
 		kube = kubeDefaults(kube, os.LookupEnv)
 		return &kubernetes.Target{
@@ -106,10 +109,15 @@ func targetFor(cfg config.Config, configPath string, kube kubeFlags, needRoot bo
 			Out:      os.Stdout,
 		}, nil
 	case config.TargetCompose:
+		root, err := findRoot()
+		if err != nil {
+			return nil, err
+		}
 		return &compose.Target{
-			Dir: dir,
-			Run: compose.ExecRunner{},
-			Out: os.Stdout,
+			Dir:  dir,
+			Root: root,
+			Run:  compose.ExecRunner{},
+			Out:  os.Stdout,
 			// Down removes agent containers by label from the host, as the worker's reaper does.
 			Reap: func(ctx context.Context) (int, error) {
 				api, err := client.New(client.FromEnv)
