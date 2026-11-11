@@ -83,3 +83,7 @@ build:
 build-images:
     scripts/build-claude-image.sh
     {{compose_placeholders}} docker compose build worker
+
+# Update docs/wiki with DeepWiki (needs OPENROUTER_API_KEY): diff rewrites the pages citing changed files, full rewrites all
+wiki mode="diff":
+    scripts/deepwiki/wiki.sh {{quote(mode)}}
