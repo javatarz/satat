@@ -21,18 +21,21 @@ setup:
 doctor:
     @scripts/doctor.sh
 
-# Bring the platform up: Hatchet, the worker's token, then the worker
-run: doctor
+# Bring the platform up: the secret store, Hatchet, the worker's token, then the worker
+run:
     #!/usr/bin/env bash
     set -euo pipefail
+    scripts/secret-store.sh ensure
+    scripts/doctor.sh
     if ! grep -q '^HATCHET_CLIENT_TOKEN=.' .env; then
       {{compose_placeholders}} docker compose up -d --wait hatchet-lite
       scripts/hatchet-token.sh
     fi
     scripts/compose-up.sh
 
-# Start or update the stack with satat deploy up (creates the Hatchet token on first run)
+# Start or update the stack with satat deploy up (sets up the secret store and the Hatchet token on first run)
 up *args:
+    scripts/secret-store.sh ensure
     go run ./cmd/satat deploy up {{args}}
 
 # Show each service and the worker's readiness
@@ -43,7 +46,11 @@ status *args:
 down *args:
     go run ./cmd/satat deploy down {{args}}
 
-# Follow a service's logs (postgres, hatchet-lite, docker-proxy or worker)
+# Load or change secrets as NAME=value lines on stdin, e.g. `just secrets < file` (names: secrets.example.env)
+secrets:
+    scripts/secret-store.sh load
+
+# Follow a service's logs (postgres, hatchet-lite, docker-proxy, openbao or worker)
 logs service="worker":
     {{compose_placeholders}} docker compose logs -f {{service}}
 

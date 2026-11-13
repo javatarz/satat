@@ -8,4 +8,4 @@ commands:
 # Paths the agent may not change, on top of the default (CI, lint and hook config, .satat/).
 # Read from the base branch by the pusher.
 protected:
-  add: [justfile, mise.toml]
+  add: [justfile, mise.toml, deploy/secrets, images/secrets-apply, scripts/secret-store.sh]

@@ -45,14 +45,19 @@ operator-only policy, and unsealing itself after a restart.
   confirms that only named services join `secrets` or mount a credential volume.
 - **The operator owns the policy.** An operator login whose tokens work only from loopback
   inside the OpenBao container (`docker exec`, `kubectl exec`) writes values, policies and
-  roles, and cannot read values back. The root token is revoked after init. The recovery key
-  and operator password are shown once, for the operator's own password manager.
+  roles, and cannot read values back. The root token is revoked after init. The operator
+  password is shown once, for the operator's own password manager.
 - **Self-sufficient:** the static-key seal, with the key in its own volume on Compose and in a
   Kubernetes Secret on k3d (k3s `secretbox` encryption on) and EKS (envelope encryption on by
   default; the AWS KMS seal is open there).
-- **Initialise once:** `just secrets-init` (seal key, init, mounts, policies, roles,
-  credentials) and `just secrets-load` (`NAME=value` on stdin, validated, values never
-  printed). Any source can feed the load; 1Password is optional and never called by Satat.
+- **Initialise on first start:** OpenBao's self-init (`initialize` blocks in its config) sets
+  up the mount, auth methods, operator and doctor on the first start, and revokes the root
+  token. `just run` and `just up` write the seal key and the files self-init reads, apply the
+  component policies and roles, write the credentials, and ask for missing values. `just secrets` loads values
+  (`NAME=value` on stdin, validated, values never printed). Any source can feed the load;
+  1Password is optional and never called by Satat. The operator applies the grants from
+  reviewed files in the repo (OpenBao policy files, read on named entries only); a PR changes
+  the files, not the store.
 - **The Claude token is held by an LLM gateway proxy, not the lane.** The proxy reads
   `claude-oauth-token` under its own identity. Each step gets a short-lived, budget-capped,
   per-lane virtual key (about the step timeout, deleted at step end) and points
@@ -83,10 +88,11 @@ operator-only policy, and unsealing itself after a restart.
   a copy useless elsewhere. Rotate by issuing a new one.
 - Losing the operator password, `docker compose down -v` or `k3d cluster delete` means
   initialising and loading again. `doctor` catches an empty or sealed store.
-- OpenBao 2.6+ needs a token to generate a new root token, so the recovery key alone does not
-  recover access. That is why the operator login exists.
+- Self-init makes no recovery key, and OpenBao 2.6+ needs a token to generate a new root token.
+  Recovery is the seal key volume (to unseal) plus the operator password (to log in). That is
+  why the operator login exists.
 - Kubernetes Secrets, Sealed Secrets, SOPS and External Secrets Operator are not used as the
-  store or to deliver values to lanes. Another system may feed `secrets-load` as a source.
+  store or to deliver values to lanes. Another system may feed `just secrets` as a source.
 
 ## Not verified
 

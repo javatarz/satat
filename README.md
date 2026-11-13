@@ -28,7 +28,7 @@ You need Docker ([colima](https://github.com/abiosoft/colima) or Docker Desktop)
 ```sh
 just setup    # install the pinned tools and git hooks, create .env, then run doctor
 just doctor   # check this machine can run Satat; names what is missing
-just run      # bring the platform up on Docker Compose
+just run      # bring the platform up on Docker Compose; sets up the secret store on first run
 just lint     # what CI runs: pre-commit, gofmt, go vet and the Docker socket check
 just test     # Go tests (needs Docker); just test-short skips the container tests
 just build    # build the Go binaries; just build-images builds the images
@@ -38,6 +38,7 @@ Once the platform runs, these wrap `satat deploy`, `satat agent` and `docker com
 
 ```sh
 just up                  # satat deploy up: start or update the stack (args pass through, e.g. --config)
+just secrets < file      # load or change secret store values, NAME=value lines
 just status              # each service and the worker's readiness
 just logs [service]      # follow a service's logs (default: worker)
 just smoke               # run a one-shot agent on the smoke lane and wait for it
@@ -49,6 +50,16 @@ just down [--volumes]    # stop the stack; --volumes also deletes its data
 The Claude lane image is built locally: `just build-images`, then put the reference it prints
 in `satat.yaml`. Queue an issue with `just enqueue owner/name N` and
 watch it at `http://localhost:8888`. More in [docs/design.md](./docs/design.md#run-it-locally).
+
+### Secret store
+
+Secrets live in an OpenBao store, one per environment ([ADR 0032](docs/adr/0032-secret-store.md)).
+The worker does not read from it yet: it still gets its tokens as below.
+
+The first `just run` sets up the store and prints the operator password once. Save it in your
+password manager: nothing else holds it. Then it asks for each secret (names in
+`secrets.example.env`). To change a secret later, run `just secrets < file` with `NAME=value`
+lines. How the store works: [design](docs/design.md#the-secret-store).
 
 ### Without 1Password
 

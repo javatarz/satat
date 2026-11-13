@@ -243,6 +243,87 @@ Found on the way:
   which the owner accepts.
 - `docker compose exec -T` reads the caller's stdin, so a load script must read its input first.
 
+## Built on Compose (#157)
+
+What the first build changed from the spike, 2026-11-09. Test: `TestSecretStore` in
+`deploy/compose/secretstore_test.go`.
+
+Entry names (also in `secrets.example.env`):
+
+| Entry | Reader now | Reader later |
+|---|---|---|
+| `github-read-token` | worker | worker |
+| `github-push-token` | worker (transitional) | pusher (#240) |
+| `claude-oauth-token` | worker (transitional) | LLM gateway (#238) |
+
+- No setup commands. `just run` and `just up` call `scripts/secret-store.sh ensure` before the
+  stack starts. On every run it makes the store's component policies and AppRole roles match
+  `deploy/secrets/policies/`. One OpenBao policy file per component, with only
+  `path "satat/data/<name>" { capabilities = ["read"] }` lines; any other line is refused. The
+  entry names come from those paths. A name removed from a file loses its grant; a component
+  with no file loses its policy and role, so its credential no longer logs in. Only a
+  difference or a credential to write needs the operator password. The only other command is `just secrets`, which loads values. The `secrets.*` gitignore pattern
+  rules out `scripts/secrets.sh`.
+- The grants are in git so that a change to them is reviewed. The operator applies them; a PR
+  changes the files, not the store. `.satat/commands.yaml` protects the policy files and
+  `scripts/secret-store.sh`, so an agent PR cannot change them.
+- The reconciler is OpenTofu: the module in `deploy/secrets/tofu/`, run in `secrets-apply`, a
+  Compose service in the `setup` profile. Its image is the OpenBao image plus the `tofu` binary
+  from the `-minimal` OpenTofu image (the full image fails as a base: its `ONBUILD` step exits
+  1), with the providers installed at build time, so a run needs no network. It shares
+  OpenBao's network namespace (`network_mode: service:openbao`), so its operator and `doctor`
+  logins come from loopback. The policy files and the addresses go in as variables. One AppRole
+  role per component, bound to the component's address (`/32`). Removal, an address change
+  (role updated in place) and drift (a changed policy, a deleted role) all reconcile.
+- The module makes no secret_id: then the state holds no secret. After the plan or apply,
+  `ensure` reads each role's role_id as `doctor` and compares it with the role_id file in
+  `cred-<component>`. When a file is missing or the role_id differs (a new role: its old
+  secret_ids are gone), it logs in as the operator, makes a secret_id and writes both files
+  `0400`, owned by the component's uid (`component_uid` in `scripts/secret-store.sh`). A
+  secret_id deleted in the store while its role stays is not detected.
+- `ensure` runs `tofu plan -detailed-exitcode` as `doctor` first. Only on exit 2 does it ask for
+  the operator password and apply. For that plan, `doctor`'s policy also reads each role and its
+  role_id: it sees metadata, never a secret_id or a value.
+- The vault provider ignores `password_file`, so the password goes in `TF_VAR_password`. With
+  `skip_child_token` the provider never revokes its login token, so the operator's tokens live
+  10 minutes and `doctor`'s 1 minute.
+- The state is in `bao-seal` (`tofu/`, root only, `0700`). It holds the policies and each role
+  with its role_id; a role_id is useless without a secret_id. `TestSecretStore` checks that the
+  worker's secret_id is not in it.
+- `bao-seal` and each `cred-<component>` get their files from `secrets-setup`, a Compose service
+  in the `setup` profile: the OpenBao image, no network, root with only `CHOWN` and
+  `DAC_OVERRIDE` (to replace a credential file the component's uid owns). `docker compose run -v <volume>` on the
+  `openbao` service does not work for `cred-worker`: Compose resolves a project volume only when
+  the service already uses it, and otherwise creates an unprefixed volume.
+- The `secrets` network is `10.157.0.0/24`, outside Docker's default pools, so an
+  automatic network cannot take it first. The worker is `10.157.0.10`. `ensure` reads
+  the address from `docker compose config`.
+- The store initialises itself with OpenBao's self-init
+  ([docs](https://openbao.org/docs/configuration/self-init/)), 2.4+: `initialize` blocks in
+  `deploy/compose/openbao.hcl` enable `satat/`, AppRole and userpass and write the `operator`
+  and `doctor` policies and the `operator` and `doctor` userpass users. They run once, on the first
+  start with empty storage, and OpenBao then revokes the root token. They need an auto-unseal
+  seal; the static seal is one. Self-init makes no recovery key. Recovery is the `bao-seal`
+  volume plus the operator password. The policies there are not component policies, so the
+  earlier objection (policy in a config file in git) does not apply.
+- Self-init reads files through `eval_source = "file"`. Before the first start, `ensure` writes
+  the seal key and the `doctor` and operator passwords into `bao-seal`. The password file is root's with OpenBao's group,
+  so `secrets-setup` can print it. `ensure` waits until `doctor` can log in (self-init runs
+  after unseal, so `bao status` is not enough), prints the password once and deletes the
+  file. If it stops before that, the next run prints it again.
+- `doctor` and `ensure` compare without the operator password. They log in as the `doctor`
+  user, with its password beside the seal key in `bao-seal`. Its policy lists entry names,
+  policies and roles, reads policies and roles, and its tokens work only from loopback. Anyone who can
+  read that file can also read the seal key, so it adds no access. `doctor` only reports.
+- `ensure` asks for each granted entry with no value, with hidden input. Without a terminal it
+  fails and names them. `just secrets` refuses a name no policy file grants, an empty value and
+  a name given twice. It checks every line before it writes any, and loads only the names
+  given.
+- The operator password comes from `SATAT_OPERATOR_PASSWORD` or a terminal prompt, because
+  stdin holds the values.
+- The worker waits for `openbao` to be healthy (`bao status` exits 0 only when unsealed), so
+  `docker compose up` and `satat deploy up` start the store first.
+
 ## Kubernetes findings that still apply
 
 These came from the first draft. They now describe where the seal key and the store's data
