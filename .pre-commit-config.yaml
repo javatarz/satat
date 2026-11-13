@@ -25,6 +25,9 @@ repos:
     hooks:
       - id: terraform_fmt
       - id: terraform_validate
+        # An OpenTofu module: terraform init would rewrite its lock file for registry.terraform.io.
+        # TestSecretStore builds and runs it with tofu.
+        exclude: ^deploy/secrets/tofu/
         args:
           - --hook-config=--retry-once-with-cleanup=true
 

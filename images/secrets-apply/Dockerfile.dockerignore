@@ -1,0 +1,4 @@
+# Build context for the secrets-apply image: the OpenTofu module only.
+*
+!deploy/secrets/tofu/main.tf
+!deploy/secrets/tofu/.terraform.lock.hcl

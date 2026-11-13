@@ -103,6 +103,17 @@ The PR closes by itself once its commits are on `main`.
 Never commit secrets, tokens or keys. gitleaks and the private-key and AWS-credential checks run
 in pre-commit and again in CI. Where secrets do live is in [AGENTS.md](AGENTS.md#secrets).
 
+Who reads which secret is in `deploy/secrets/policies/`: one OpenBao policy file per component,
+with only `path "satat/data/<name>" { capabilities = ["read"] }` lines. A file that grants
+anything else is refused. To grant or revoke a secret, change the file in a PR. After the merge,
+the next `just run` applies it to the store and asks for the operator password (or reads
+`SATAT_OPERATOR_PASSWORD`). A removed name loses its grant. A removed file deletes the
+component's policy, role and credential. The OpenTofu module in `deploy/secrets/tofu/` does
+this. A new component also needs a fixed address on the `secrets` network and its
+`cred-<component>` volume (on `secrets-apply` too) in `deploy/compose/compose.yaml.tmpl`, and its
+uid in `deploy/secrets/tofu/main.tf`. Agent PRs cannot change `deploy/secrets/` (see
+[`.satat/commands.yaml`](#satatcommandsyaml)).
+
 ## Developer experience
 
 We follow these
@@ -121,7 +132,9 @@ We follow these
 Install [just](https://just.systems/), [mise](https://mise.jdx.dev/) and
 [pre-commit](https://pre-commit.com/), then run `just setup`. It installs the tools pinned in
 `mise.toml`, the git hooks (including the commit message check) and a `.env`, and then runs
-`just doctor`, which names anything else that is missing, such as `actionlint`.
+`just doctor`, which names anything else that is missing, such as `actionlint`. The first
+`just run` sets up the secret store and asks for its values (see
+[Secret store](README.md#secret-store) in the README).
 
 `scripts/doctor.sh` is a list of check functions. When a change adds a prerequisite, add a check
 for it there.

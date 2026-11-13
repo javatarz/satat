@@ -75,6 +75,90 @@ services:
     networks:
       - docker-api
 
+  # The secret store (ADR 0032): one OpenBao node, Raft storage, unsealed at start by a static key.
+  # openbao.hcl sets it up on the first start. Component policies and roles are store state, written
+  # by secrets-apply from deploy/secrets/policies; values by scripts/secret-store.sh (just secrets).
+  # Only services with a fixed address on the secrets network can log in, each with the credential
+  # in its own cred-<component> volume.
+  openbao:
+    image: {{.OpenBaoImage}}  # yamllint disable-line rule:line-length
+    restart: unless-stopped
+    command: ["server"]
+    user: "100:1000"
+    environment:
+      # For the operator's `docker compose exec`: the operator's tokens work from loopback only.
+      BAO_ADDR: http://127.0.0.1:8200
+    volumes:
+      - ./deploy/compose/openbao.hcl:/openbao/config/config.hcl:ro
+      - ./deploy/secrets/system:/openbao/policies:ro
+      - bao-data:/openbao/file
+      - bao-seal:/openbao/seal:ro
+    # Healthy means initialised and unsealed (bao status exits 2 when sealed).
+    healthcheck:
+      test: ["CMD", "bao", "status"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    mem_limit: 256m
+    networks:
+      - secrets
+
+  # One-off file writer for scripts/secret-store.sh: the files self-init reads into bao-seal and each
+  # component's credential into its cred-<component> volume; a new component adds its volume here.
+  # The setup profile keeps it out of `up`; it has no network, and runs as root only to hand each
+  # file to its reader's uid and to replace a credential file that uid owns.
+  secrets-setup:
+    image: {{.OpenBaoImage}}  # yamllint disable-line rule:line-length
+    profiles: [setup]
+    entrypoint: ["sh", "-c"]
+    user: "0:0"
+    network_mode: none
+    volumes:
+      - bao-seal:/v/bao-seal
+      - cred-worker:/v/cred-worker
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges
+
+  # Makes the store's component policies and roles match deploy/secrets/policies. OpenTofu
+  # (deploy/secrets/tofu), run by scripts/secret-store.sh: a plan as doctor, an apply as the
+  # operator. It shares OpenBao's network namespace, so its logins come from OpenBao's loopback. Its
+  # state is in bao-seal and holds no secret. Root only to read doctor's password and the state.
+  secrets-apply:
+    build:
+      context: .
+      dockerfile: images/secrets-apply/Dockerfile
+      args:
+        TOFU_IMAGE: {{.OpenTofuImage}}  # yamllint disable-line rule:line-length
+        BASE_IMAGE: {{.OpenBaoImage}}  # yamllint disable-line rule:line-length
+    profiles: [setup]
+    user: "0:0"
+    network_mode: service:openbao
+    environment:
+      TF_IN_AUTOMATION: "1"
+    volumes:
+      - bao-seal:/v/bao-seal
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges
+
   # The Satat worker: runs the issue workflow, holds the Docker API (through the proxy) and the
   # GitHub write token (ADR 0027). `satat deploy up` creates HATCHET_CLIENT_TOKEN and resolves the
   # other secrets (1Password or env) in order. scripts/hatchet-token.sh and scripts/compose-up.sh
@@ -92,6 +176,8 @@ services:
         condition: service_healthy
       docker-proxy:
         condition: service_started
+      openbao:
+        condition: service_healthy
     environment:
       HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:?run satat deploy up}
       HATCHET_CLIENT_HOST_PORT: hatchet-lite:7077
@@ -126,6 +212,8 @@ services:
 {{- end}}
     volumes:
       - ./satat.yaml:/etc/satat/satat.yaml:ro
+      # The worker's AppRole role_id and secret_id, written by scripts/secret-store.sh. Its own volume.
+      - cred-worker:/run/satat/cred:ro
     # Ready means Hatchet lists this worker as ACTIVE with a fresh heartbeat and Docker answers.
     healthcheck:
       test: ["CMD", "/usr/local/bin/satat-worker", "healthcheck"]
@@ -142,13 +230,25 @@ services:
       - no-new-privileges
     mem_limit: 512m
     networks:
-      - default
-      - docker-api
+      default:
+      docker-api:
+      # Fixed: the worker's credential and tokens are bound to this address (secrets-apply reads it).
+      secrets:
+        ipv4_address: 10.157.0.10
 
 networks:
   docker-api:
     internal: true
+  # OpenBao and its readers only. Outside Docker's default pools, so it cannot overlap one.
+  secrets:
+    internal: true
+    ipam:
+      config:
+        - subnet: 10.157.0.0/24
 
 volumes:
   postgres-data:
   hatchet-config:
+  bao-data:
+  bao-seal:
+  cred-worker:

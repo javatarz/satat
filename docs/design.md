@@ -529,6 +529,27 @@ record runs of it.
 `just setup` (writes `.env` with a random `POSTGRES_PASSWORD`) and `just run` (the two scripts,
 after `just doctor` has checked the prerequisites) still drive that older path.
 
+### The secret store
+
+`just run` and `just up` set up the store before they start the stack
+([ADR 0032](adr/0032-secret-store.md)):
+
+- **First run:** OpenBao sets itself up from `deploy/compose/openbao.hcl` (self-init) and revokes
+  its root token. The operator password is printed once. There is no recovery key.
+- **Every run:** OpenTofu (`deploy/secrets/tofu/`, in the `secrets-apply` service) makes the
+  store's policies and roles match `deploy/secrets/policies/`. Its state holds no secret. Then
+  `scripts/secret-store.sh` writes each component's credential when it is missing or its role is
+  new. It asks for the operator password only when there is something to change. Then it asks
+  for each secret with no value. Without a terminal, it stops and names them.
+- **Values:** `just secrets` takes `NAME=value` lines on stdin, for example
+  `op inject -i secrets.env.tpl | just secrets`. It checks every line before it writes any, and
+  loads only the names you give.
+- **Restart:** the store unseals itself with the key in the `bao-seal` volume.
+- **Recovery:** you need the `bao-seal` volume and the operator password. If you lose one,
+  `just down --volumes` deletes the store. The next `just run` sets it up again; then load the
+  values again.
+- `just doctor` reports the store's state and changes nothing.
+
 ### Run it on k3d
 
 The same platform runs on a local k3d cluster, with every agent as a one-shot `SandboxClaim`
