@@ -8,11 +8,11 @@ require (
 	github.com/hatchet-dev/hatchet v0.110.5
 	github.com/moby/moby/api v1.56.1
 	github.com/moby/moby/client v0.6.2
-	golang.org/x/sync v0.24.0
+	golang.org/x/sync v0.25.0
 	gopkg.in/yaml.v3 v3.0.1
-	k8s.io/api v0.37.1
-	k8s.io/apimachinery v0.37.1
-	k8s.io/client-go v0.37.1
+	k8s.io/api v0.37.2
+	k8s.io/apimachinery v0.37.2
+	k8s.io/client-go v0.37.2
 )
 
 require (
