@@ -46,7 +46,7 @@ type Config struct {
 
 // Notify is the notify section.
 type Notify struct {
-	// GitHub keeps a status comment on each issue and swaps ready-for-agent for satat:failed when a
+	// GitHub posts a comment on the issue at every state and swaps ready-for-agent for satat:failed when a
 	// run fails. It needs SATAT_NOTIFY_TOKEN, with Issues: write on every repo Satat runs in.
 	GitHub bool
 	// NtfyServer is the ntfy server's URL (https://ntfy.sh or your own); empty turns ntfy off. The

@@ -34,8 +34,8 @@ poller:
 # Where run states go (#235, ADR 0035). Every channel is off unless set here. The worker sends an
 # event at every state of an issue run (queued, started, skipped, cloned, step started and finished,
 # rate limited, published, completed, failed); agent runs send none.
-#   github: one Satat status comment per issue, edited with a row per state, and ready-for-agent
-#     swapped for satat:failed when a run fails. Needs SATAT_NOTIFY_TOKEN under deploy.secrets, a
+#   github: a comment on the issue at every state, so watchers are notified each time, and
+#     ready-for-agent swapped for satat:failed when a run fails. Needs SATAT_NOTIFY_TOKEN under deploy.secrets, a
 #     token with Issues: write on every polled repo.
 #   ntfy.server: an ntfy server (https://ntfy.sh or your own) that gets one message per state, for a
 #     phone. The topic is the secret SATAT_NTFY_TOPIC under deploy.secrets: anyone who knows it can
