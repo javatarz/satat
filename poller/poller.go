@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/runner"
 	"github.com/javatarz/satat/workflows"
 )
@@ -45,6 +46,8 @@ type Poller struct {
 	Runs   Runs
 	Queue  Queue
 	Log    *slog.Logger
+	// Notify, when set, gets a Queued event for each issue the poller queues (#235).
+	Notify *notify.Safe
 	// Now defaults to time.Now.
 	Now func() time.Time
 
@@ -133,6 +136,7 @@ func (p *Poller) pollRepo(ctx context.Context, r config.PollRepo, ran map[string
 		if p.Log != nil {
 			p.Log.Info("queued issue", "issue", key, "lane", r.Lane)
 		}
+		p.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: is.Number, Lane: in.Lane, Source: "poller"})
 	}
 	return errors.Join(errs...)
 }

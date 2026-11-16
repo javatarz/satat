@@ -18,6 +18,7 @@ import (
 
 	"github.com/javatarz/satat/config"
 	"github.com/javatarz/satat/launcher"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/runner"
 )
@@ -39,7 +40,7 @@ const (
 
 	// ReadyLabel is the label a human puts on an issue to let Satat run it (the roadmap's triage
 	// rule). The worker re-reads it at run start, so every way in is gated by it.
-	ReadyLabel = "ready-for-agent"
+	ReadyLabel = notify.ReadyLabel
 	// StatusSkipped is the output status of a run that did not launch because the issue was not
 	// ready. It is a normal result, not a failure, so it is not retried.
 	StatusSkipped = "skipped"
@@ -212,6 +213,10 @@ type Handler struct {
 	NoAgent map[string]bool
 	// Log, when set, gets a line when a run starts and ends and at each stage of the pipeline.
 	Log *slog.Logger
+	// Notify, when set, gets an event at every state of an issue run (#235). Agent runs, and runs
+	// for a repo that is not allowed, send none: the second would let a forged event make Satat
+	// write on any issue the notify token can reach.
+	Notify *notify.Safe
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;
@@ -246,6 +251,7 @@ func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt
 	rep, err := pipeline.Run(ctx, pipeline.Options{
 		Launcher: h.Launcher, Pusher: h.Pusher, Cloner: h.Cloner,
 		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue, Log: h.Log,
+		Notify: h.notifier(in),
 	})
 	out := Output{Run: runID, ExitCode: rep.Launch.ExitCode}
 	if rep.Runner != nil {
@@ -292,7 +298,7 @@ func (h Handler) notReady(ctx context.Context, in Input) (pipeline.IssueState, s
 		return pipeline.IssueState{}, "", errors.New("no issue reader configured")
 	}
 	ref := fmt.Sprintf("%s#%d", in.Repo, in.Issue.Number)
-	if !slices.ContainsFunc(h.Allowed, func(a string) bool { return strings.EqualFold(a, in.Repo) }) {
+	if !h.allowed(in.Repo) {
 		return pipeline.IssueState{}, in.Repo + " is not an allowed repo", nil
 	}
 	st, err := h.Issues.Issue(ctx, in.Repo, in.Issue.Number)
@@ -308,6 +314,53 @@ func (h Handler) notReady(ctx context.Context, in Input) (pipeline.IssueState, s
 		return st, fmt.Sprintf("%s is not labelled %s", ref, ReadyLabel), nil
 	}
 	return st, "", nil
+}
+
+func (h Handler) allowed(repo string) bool {
+	return slices.ContainsFunc(h.Allowed, func(a string) bool { return strings.EqualFold(a, repo) })
+}
+
+// notifier is h.Notify for a run that may notify, else nil.
+func (h Handler) notifier(in Input) *notify.Safe {
+	if in.Kind == KindAgent || !h.allowed(in.Repo) {
+		return nil
+	}
+	return h.Notify
+}
+
+// Attempt is RunAttempt with the run's start and end logged and notified. Register runs it.
+func (h Handler) Attempt(ctx context.Context, runID string, in Input, attempt int) (Output, error) {
+	n := h.notifier(in)
+	ev := func(s notify.State) notify.Event {
+		return notify.Event{State: s, Run: runID, Repo: in.Repo, Issue: in.Issue.Number, Lane: in.Lane, Attempt: attempt}
+	}
+	h.logRun("run started", runID, in, "attempt", attempt)
+	n.Send(ctx, ev(notify.Started))
+	out, err := h.RunAttempt(ctx, runID, in, attempt)
+	args := []any{"attempt", attempt, "status", out.Status, "reason", out.Reason, "pr_url", out.PRURL, "commits", out.Commits}
+	if err != nil {
+		args = append(args, "err", err)
+	}
+	h.logRun("run finished", runID, in, args...)
+
+	end := ev(notify.Completed)
+	var rl *RateLimitError
+	switch {
+	case errors.As(err, &rl):
+		end.State, end.Reason = notify.RateLimited, "Claude usage limit hit; the lane is paused and a retry is queued"
+		if !rl.ResetsAt.IsZero() {
+			end.Reason += " (resets " + rl.ResetsAt.UTC().Format("15:04 MST") + ")"
+		}
+	case err != nil:
+		end.State, end.Reason, end.Detail = notify.Failed, err.Error(), err.Error()
+	case out.Status == StatusSkipped:
+		end.State, end.Reason = notify.Skipped, out.Reason
+	default:
+		end.PRURL = out.PRURL
+		end.Reason = strings.ReplaceAll(out.Status, "_", " ")
+	}
+	n.Send(ctx, end)
+	return out, err
 }
 
 // stopEarlierAttempt cancels this run's step when the gate stops the run. A re-delivered task
@@ -377,14 +430,7 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 	)
 	wf.NewTask("run", func(ctx hatchet.Context, in Input) (*Output, error) {
 		attempt := ctx.RetryCount()
-		runID := ctx.WorkflowRunId()
-		h.logRun("run started", runID, in, "attempt", attempt)
-		out, err := h.RunAttempt(ctx, runID, in, attempt)
-		args := []any{"attempt", attempt, "status", out.Status, "reason", out.Reason, "pr_url", out.PRURL, "commits", out.Commits}
-		if err != nil {
-			args = append(args, "err", err)
-		}
-		h.logRun("run finished", runID, in, args...)
+		out, err := h.Attempt(ctx, ctx.WorkflowRunId(), in, attempt)
 		var rl *RateLimitError
 		switch {
 		case errors.As(err, &rl):

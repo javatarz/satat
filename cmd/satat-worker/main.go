@@ -50,6 +50,7 @@ import (
 	"github.com/javatarz/satat/launcher/docker"
 	k8slauncher "github.com/javatarz/satat/launcher/kubernetes"
 	"github.com/javatarz/satat/launcher/local"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/pipeline"
 	"github.com/javatarz/satat/poller"
 	"github.com/javatarz/satat/pusher"
@@ -225,6 +226,10 @@ func run() error {
 	if err := limiter.Open(slices.Sorted(maps.Keys(accounts))...); err != nil {
 		return fmt.Errorf("open lanes: %w", err)
 	}
+	notifier, err := newNotifier(cfg, log)
+	if err != nil {
+		return err
+	}
 	spec := workflows.Define(cfg.Limits, longest+15*time.Minute)
 	wf, err := workflows.Register(hc, spec, workflows.Handler{
 		Launcher: l,
@@ -236,6 +241,7 @@ func run() error {
 		Secrets:  secretValues(cfg),
 		NoAgent:  cfg.NoAgent,
 		Log:      log,
+		Notify:   notifier,
 	})
 	if err != nil {
 		return err
@@ -244,7 +250,7 @@ func run() error {
 	// Webhook intake is on only when repos are named: it queues nothing for an unlisted repo.
 	if repos := splitList(os.Getenv("SATAT_INTAKE_REPOS")); len(repos) > 0 {
 		workflowsToRun = append(workflowsToRun, workflows.RegisterIntake(hc, workflows.Intake{
-			Config: cfg, Allowed: repos, Events: eventPusher{hc}, Runs: poller.HatchetRuns{Client: hc}, Log: log,
+			Config: cfg, Allowed: repos, Events: eventPusher{hc}, Runs: poller.HatchetRuns{Client: hc}, Log: log, Notify: notifier,
 		}))
 		log.Info("webhook intake on", "repos", repos)
 	} else {
@@ -258,6 +264,7 @@ func run() error {
 			Runs:   poller.HatchetRuns{Client: hc},
 			Queue:  poller.HatchetQueue{Client: hc},
 			Log:    log,
+			Notify: notifier,
 		}
 		workflowsToRun = append(workflowsToRun, poller.Register(hc, cfg.Poller.Cron, p))
 		log.Info("poller on", "repos", len(repos), "cron", cfg.Poller.Cron)
@@ -278,6 +285,24 @@ func run() error {
 	}
 	log.Info("worker ready")
 	return <-done
+}
+
+// newNotifier builds the notify channels satat.yaml turns on (#235), or nil when none is.
+func newNotifier(cfg config.Config, log *slog.Logger) (*notify.Safe, error) {
+	var channels notify.Multi
+	if cfg.Notify.GitHub {
+		token := os.Getenv(config.NotifyTokenSecret)
+		if token == "" {
+			return nil, fmt.Errorf("notify.github is on but %s is not set: it needs Issues: write", config.NotifyTokenSecret)
+		}
+		channels = append(channels, &notify.GitHub{Token: token})
+	}
+	if len(channels) == 0 {
+		log.Info("notify off: no channel in satat.yaml")
+		return nil, nil
+	}
+	log.Info("notify on", "github", cfg.Notify.GitHub)
+	return &notify.Safe{Next: channels, Log: log, Secrets: secretValues(cfg)}, nil
 }
 
 // workerName is the name the worker registers with. Hatchet allows only letters, digits, ".", "-"

@@ -13,8 +13,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/javatarz/satat/launcher"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/pusher"
 	"github.com/javatarz/satat/runner"
 )
@@ -42,6 +44,14 @@ type Options struct {
 
 	// Log, when set, gets one line per stage, so the worker's log shows where a run is.
 	Log *slog.Logger
+	// Notify, when set, gets an event per stage (#235).
+	Notify *notify.Safe
+}
+
+// note sends ev with the run's identity filled in.
+func (o Options) note(ctx context.Context, ev notify.Event) {
+	ev.Run, ev.Repo, ev.Issue, ev.Lane = o.Run, o.Repo, o.Issue.Number, o.Lane
+	o.Notify.Send(ctx, ev)
 }
 
 func (o Options) log(msg string, args ...any) {
@@ -75,12 +85,14 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	defer ck.Close()
 	o.log("cloned", "base_sha", ck.BaseSHA)
+	o.note(ctx, notify.Event{State: notify.Cloned, Reason: "at " + short(ck.BaseSHA)})
 	// The commands are the base commit's, read by the worker. The step gets them as input.
 	input, err := json.Marshal(runner.Input{Repo: o.Repo, Base: o.Base, Issue: o.Issue, Commands: ck.Commands})
 	if err != nil {
 		return rep, err
 	}
 	o.log("step starting", "lane", o.Lane)
+	o.note(ctx, notify.Event{State: notify.StepStarted})
 	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
 		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, Checkout: ck.Tar, CacheScope: launcher.CacheScope(o.Repo),
 	})
@@ -99,6 +111,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 		status = rep.Runner.Status
 	}
 	o.log("step finished", "exit_code", rep.Launch.ExitCode, "status", status, "timed_out", rep.Launch.TimedOut, "oom_killed", rep.Launch.OOMKilled, "cancelled", rep.Launch.Cancelled)
+	o.note(ctx, notify.Event{State: notify.StepFinished, Reason: stepSummary(rep, status)})
 	if o.Pusher == nil || rep.Runner == nil || rep.Launch.ExitCode != 0 || rep.Runner.Status != "changes" {
 		return rep, nil
 	}
@@ -107,6 +120,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if rep.Runner.BaseSHA != ck.BaseSHA {
 		rep.PushErr = &pusher.Refusal{Reason: fmt.Sprintf("the step reports base %q but the worker cloned %q", rep.Runner.BaseSHA, ck.BaseSHA)}
 		o.log("not published", "err", rep.PushErr)
+		o.note(ctx, notify.Event{State: notify.NotPublished, Reason: rep.PushErr.Error(), Detail: rep.PushErr.Error()})
 		return rep, nil
 	}
 	out, err := o.Pusher.Push(ctx, pusher.Request{
@@ -118,11 +132,42 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		rep.PushErr = err
 		o.log("not published", "err", err)
+		o.note(ctx, notify.Event{State: notify.NotPublished, Reason: err.Error(), Detail: err.Error()})
 		return rep, nil
 	}
 	rep.Push = &out
 	o.log("published", "branch", out.Branch, "pr_url", out.PRURL, "reused", out.Reused)
+	pub := notify.Event{State: notify.Published, Branch: out.Branch, PRURL: out.PRURL}
+	if out.Reused {
+		pub.Reason = "the PR already existed (a re-delivered step)"
+	}
+	o.note(ctx, pub)
 	return rep, nil
+}
+
+// stepSummary is the step's outcome in a few words, for a notification.
+func stepSummary(rep Report, status string) string {
+	l := rep.Launch
+	switch {
+	case l.TimedOut:
+		return "timed out"
+	case l.OOMKilled:
+		return "ran out of memory"
+	case l.Cancelled:
+		return "cancelled"
+	}
+	s := fmt.Sprintf("%s, exit %d", strings.ReplaceAll(status, "_", " "), l.ExitCode)
+	if rep.Runner != nil && rep.Runner.Commits > 0 {
+		s += fmt.Sprintf(", %d commit(s)", rep.Runner.Commits)
+	}
+	return s
+}
+
+func short(sha string) string {
+	if len(sha) > 7 {
+		return sha[:7]
+	}
+	return sha
 }
 
 // Summary is the agent's final message from the runner's result event.

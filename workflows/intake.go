@@ -12,6 +12,7 @@ import (
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/runner"
 )
 
@@ -121,6 +122,8 @@ type Intake struct {
 	// Log, when set, records each skipped duplicate. The skip is otherwise visible only as the
 	// reason in the intake run's result.
 	Log *slog.Logger
+	// Notify, when set, gets a Queued event for each issue intake queues (#235).
+	Notify *notify.Safe
 }
 
 // Handle takes one delivery to a result. An issue that already has a run, of any status, is not
@@ -159,6 +162,7 @@ func (i Intake) Handle(ctx context.Context, p WebhookPayload) (IntakeResult, err
 	if err := i.Events.Push(ctx, EventIssue, in); err != nil {
 		return IntakeResult{}, fmt.Errorf("queue %s#%d: %w", in.Repo, in.Issue.Number, err)
 	}
+	i.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: in.Issue.Number, Lane: in.Lane, Source: "webhook"})
 	return IntakeResult{Queued: true, Repo: in.Repo, Issue: in.Issue.Number}, nil
 }
 

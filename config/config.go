@@ -40,7 +40,25 @@ type Config struct {
 	Poller Poller
 	// Deploy says where Satat is deployed and where each secret comes from.
 	Deploy Deploy
+	// Notify says where run states go (#235). Every channel is off unless set.
+	Notify Notify
 }
+
+// Notify is the notify section.
+type Notify struct {
+	// GitHub keeps a status comment on each issue and swaps ready-for-agent for satat:failed when a
+	// run fails. It needs SATAT_NOTIFY_TOKEN, with Issues: write on every repo Satat runs in.
+	GitHub bool
+	// NtfyServer is the ntfy server's URL (https://ntfy.sh or your own); empty turns ntfy off. The
+	// topic is the secret SATAT_NTFY_TOPIC: anyone who knows it can read and post (ADR 0019).
+	NtfyServer string
+}
+
+// Notify secrets, needed only when their channel is on.
+const (
+	NotifyTokenSecret = "SATAT_NOTIFY_TOKEN"
+	NtfyTopicSecret   = "SATAT_NTFY_TOPIC"
+)
 
 // Deploy is the optional deploy section. Secrets is nil when the section is absent, so a caller
 // that needs the map can tell "not configured" from "configured empty".
@@ -82,10 +100,23 @@ func (c Config) SecretNames() []string {
 			seen[n] = true
 		}
 	}
-	for _, n := range WorkerSecrets {
+	for _, n := range c.WorkerSecretNames() {
 		seen[n] = true
 	}
 	return sortedKeys(seen)
+}
+
+// WorkerSecretNames is every secret the worker itself uses: WorkerSecrets, plus each enabled
+// notify channel's.
+func (c Config) WorkerSecretNames() []string {
+	names := slices.Clone(WorkerSecrets)
+	if c.Notify.GitHub {
+		names = append(names, NotifyTokenSecret)
+	}
+	if c.Notify.NtfyServer != "" {
+		names = append(names, NtfyTopicSecret)
+	}
+	return names
 }
 
 // Poller is the worker's issue poll. With no repos it is off.
@@ -150,6 +181,7 @@ type file struct {
 	Poller      pollerFile          `yaml:"poller"`
 	Lanes       map[string]laneFile `yaml:"lanes"`
 	Deploy      *deployFile         `yaml:"deploy"`
+	Notify      notifyFile          `yaml:"notify"`
 }
 
 type pollerFile struct {
@@ -166,6 +198,13 @@ type pollRepoFile struct {
 type cacheReaperFile struct {
 	MaxUnused string `yaml:"max_unused"`
 	MaxSize   string `yaml:"max_size"`
+}
+
+type notifyFile struct {
+	GitHub bool `yaml:"github"`
+	Ntfy   struct {
+		Server string `yaml:"server"`
+	} `yaml:"ntfy"`
 }
 
 type deployFile struct {
@@ -263,6 +302,9 @@ func Parse(r io.Reader) (Config, error) {
 			if slices.Contains(WorkerEnv, n) {
 				errs = append(errs, fmt.Errorf("lane %q: pass_env must not list %s, which is the worker's own environment", name, n))
 			}
+			if n == NotifyTokenSecret || n == NtfyTopicSecret {
+				errs = append(errs, fmt.Errorf("lane %q: pass_env must not list %s, which only the worker's notifier holds", name, n))
+			}
 		}
 		for _, n := range l.OptionalEnv {
 			if slices.Contains(WorkerEnv, n) {
@@ -285,6 +327,10 @@ func Parse(r io.Reader) (Config, error) {
 	var perr error
 	if c.Poller, perr = f.Poller.parse(c.Accounts); perr != nil {
 		errs = append(errs, fmt.Errorf("poller: %w", perr))
+	}
+	c.Notify = Notify{GitHub: f.Notify.GitHub, NtfyServer: strings.TrimRight(f.Notify.Ntfy.Server, "/")}
+	if s := c.Notify.NtfyServer; s != "" && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+		errs = append(errs, fmt.Errorf("notify: ntfy.server %q is not an http(s) URL", s))
 	}
 	if f.Deploy != nil {
 		c.Deploy.Target = f.Deploy.Target
@@ -394,7 +440,7 @@ func (c Config) checkDeploy() []error {
 			}
 		}
 	}
-	for _, n := range WorkerSecrets {
+	for _, n := range c.WorkerSecretNames() {
 		used[n] = true
 		if _, ok := c.Deploy.Secrets[n]; !ok {
 			errs = append(errs, fmt.Errorf("deploy: secrets has no entry for %s, which the worker uses", n))
