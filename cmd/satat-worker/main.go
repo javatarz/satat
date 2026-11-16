@@ -297,11 +297,18 @@ func newNotifier(cfg config.Config, log *slog.Logger) (*notify.Safe, error) {
 		}
 		channels = append(channels, &notify.GitHub{Token: token})
 	}
+	if cfg.Notify.NtfyServer != "" {
+		topic := os.Getenv(config.NtfyTopicSecret)
+		if topic == "" {
+			return nil, fmt.Errorf("notify.ntfy.server is set but %s is not", config.NtfyTopicSecret)
+		}
+		channels = append(channels, &notify.Ntfy{Server: cfg.Notify.NtfyServer, Topic: topic})
+	}
 	if len(channels) == 0 {
 		log.Info("notify off: no channel in satat.yaml")
 		return nil, nil
 	}
-	log.Info("notify on", "github", cfg.Notify.GitHub)
+	log.Info("notify on", "github", cfg.Notify.GitHub, "ntfy", cfg.Notify.NtfyServer)
 	return &notify.Safe{Next: channels, Log: log, Secrets: secretValues(cfg)}, nil
 }
 
