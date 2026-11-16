@@ -355,8 +355,9 @@ func (h Handler) Attempt(ctx context.Context, runID string, in Input, attempt in
 		end.State, end.Reason, end.Detail = notify.Failed, err.Error(), err.Error()
 	case out.Status == StatusSkipped:
 		end.State, end.Reason = notify.Skipped, out.Reason
+	case out.PRURL != "":
+		end.PRURL, end.Reason = out.PRURL, "draft PR open for review"
 	default:
-		end.PRURL = out.PRURL
 		end.Reason = strings.ReplaceAll(out.Status, "_", " ")
 	}
 	n.Send(ctx, end)
