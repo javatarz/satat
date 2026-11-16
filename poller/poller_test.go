@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,15 @@ type fakeIssues struct {
 	ready   map[string][]ReadyIssue
 	closing map[string]map[int]bool
 	err     map[string]error
+	// labelled is when ReadyLabel was last added, by Key.
+	labelled map[string]time.Time
+}
+
+func (f fakeIssues) LabelledAt(_ context.Context, repo string, number int, label string) (time.Time, error) {
+	if label != workflows.ReadyLabel {
+		return time.Time{}, errors.New("wrong label " + label)
+	}
+	return f.labelled[Key(repo, number)], nil
 }
 
 func (f fakeIssues) ReadyIssues(_ context.Context, repo, label string) ([]ReadyIssue, error) {
@@ -32,11 +42,16 @@ func (f fakeIssues) OpenPRIssues(_ context.Context, repo string) (map[int]bool, 
 }
 
 type fakeRuns struct {
-	set map[string]bool
+	set map[string]workflows.LastRun
 	err error
 }
 
-func (f fakeRuns) Issues(context.Context) (map[string]bool, error) { return f.set, f.err }
+func (f fakeRuns) Issues(context.Context) (map[string]workflows.LastRun, error) { return f.set, f.err }
+
+func has(set map[string]workflows.LastRun, key string) bool {
+	_, ok := set[key]
+	return ok
+}
 
 type fakeQueue struct{ pushed []workflows.Input }
 
@@ -90,7 +105,7 @@ func TestQueuesReadyIssuesOldestFirstWithConfig(t *testing.T) {
 func TestSkipsIssuesWithARunOrAnOpenPR(t *testing.T) {
 	q := &fakeQueue{}
 	p := &Poller{Config: cfg(), Queue: q,
-		Runs: fakeRuns{set: map[string]bool{"me/a#1": true}},
+		Runs: fakeRuns{set: map[string]workflows.LastRun{"me/a#1": {}}},
 		Issues: fakeIssues{
 			ready:   map[string][]ReadyIssue{"me/a": {{Number: 1}, {Number: 2}, {Number: 3}}},
 			closing: map[string]map[int]bool{"me/a": {2: true}},
@@ -176,17 +191,17 @@ func TestInputIssue(t *testing.T) {
 func TestCollectFailsClosed(t *testing.T) {
 	yes := true
 	good := rest.V1TaskSummary{DisplayName: "satat-issue-abc", Input: map[string]interface{}{"repo": "me/a", "issue": map[string]interface{}{"number": float64(4)}}}
-	set := map[string]bool{}
+	set := map[string]workflows.LastRun{}
 	// The live listing wraps the input and names runs "run-<ms>"; the workflow name is separate.
 	wfName := workflows.Name
 	wrapped := rest.V1TaskSummary{DisplayName: "run-1", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"repo": "me/w", "issue": map[string]interface{}{"number": float64(9)}}, "triggered_by": "event"}}
-	if err := collect(set, []rest.V1TaskSummary{wrapped}); err != nil || !set["me/w#9"] {
+	if err := collect(set, []rest.V1TaskSummary{wrapped}); err != nil || !has(set, "me/w#9") {
 		t.Errorf("wrapped live row: set %v, err %v", set, err)
 	}
-	if err := collect(map[string]bool{}, []rest.V1TaskSummary{{DisplayName: "run-2", WorkflowName: &wfName}}); err == nil {
+	if err := collect(map[string]workflows.LastRun{}, []rest.V1TaskSummary{{DisplayName: "run-2", WorkflowName: &wfName}}); err == nil {
 		t.Error("a satat-issue row with no readable input must fail closed")
 	}
-	if err := collect(set, []rest.V1TaskSummary{good, {DisplayName: "satat-poll-x"}}); err != nil || !set["me/a#4"] {
+	if err := collect(set, []rest.V1TaskSummary{good, {DisplayName: "satat-poll-x"}}); err != nil || !has(set, "me/a#4") {
 		t.Fatalf("got %v, %v", err, set)
 	}
 	for name, row := range map[string]rest.V1TaskSummary{
@@ -194,7 +209,7 @@ func TestCollectFailsClosed(t *testing.T) {
 		"missing input": {DisplayName: "satat-issue-def"},
 		"no issue":      {DisplayName: "satat-issue-def", Input: map[string]interface{}{"repo": "me/a"}},
 	} {
-		if err := collect(map[string]bool{}, []rest.V1TaskSummary{row}); err == nil {
+		if err := collect(map[string]workflows.LastRun{}, []rest.V1TaskSummary{row}); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
@@ -206,18 +221,63 @@ func TestCollectSkipsAgentRuns(t *testing.T) {
 	wfName := workflows.Name
 	agent := rest.V1TaskSummary{DisplayName: "run-1793150749252", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"kind": workflows.KindAgent, "repo": workflows.AdhocRepo, "lane": "smoke"}, "triggered_by": "event"}}
 	issue := rest.V1TaskSummary{DisplayName: "run-2", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"repo": "me/a", "issue": map[string]interface{}{"number": float64(4)}}}}
-	set := map[string]bool{}
+	set := map[string]workflows.LastRun{}
 	if err := collect(set, []rest.V1TaskSummary{agent, issue}); err != nil {
 		t.Fatalf("an agent run must not fail the poll: %v", err)
 	}
-	if len(set) != 1 || !set["me/a#4"] {
+	if len(set) != 1 || !has(set, "me/a#4") {
 		t.Fatalf("set = %v, want only me/a#4", set)
 	}
 	// Only kind agent is skipped: an issue run (explicit or empty kind) without an issue still fails.
 	for _, kind := range []string{workflows.KindIssue, ""} {
 		row := rest.V1TaskSummary{DisplayName: "run-3", WorkflowName: &wfName, Input: map[string]interface{}{"input": map[string]interface{}{"kind": kind, "repo": "me/a"}}}
-		if err := collect(map[string]bool{}, []rest.V1TaskSummary{row}); err == nil {
+		if err := collect(map[string]workflows.LastRun{}, []rest.V1TaskSummary{row}); err == nil {
 			t.Errorf("kind %q with no issue: want an error", kind)
 		}
+	}
+}
+
+// After a failure the notifier swaps the label for satat:failed; adding ready-for-agent back is
+// how a person asks for a re-run.
+func TestReRunsAnIssueLabelledAgainAfterItsLastRun(t *testing.T) {
+	run := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	q := &fakeQueue{}
+	p := &Poller{Config: cfg(), Queue: q,
+		Runs: fakeRuns{set: map[string]workflows.LastRun{
+			"me/a#1": {At: run},                 // labelled again after it: re-run
+			"me/a#2": {At: run},                 // labelled before it: stays
+			"me/a#3": {At: run, InFlight: true}, // still running: stays
+		}},
+		Issues: fakeIssues{
+			ready: map[string][]ReadyIssue{"me/a": {{Number: 1}, {Number: 2}, {Number: 3}}},
+			labelled: map[string]time.Time{
+				"me/a#1": run.Add(time.Hour), "me/a#2": run.Add(-time.Hour), "me/a#3": run.Add(time.Hour),
+			},
+		}}
+	res, err := p.Poll(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"me/a#1"}; !reflect.DeepEqual(nums(q), want) {
+		t.Fatalf("queued %v, want %v", nums(q), want)
+	}
+	if !strings.Contains(res.Skipped["me/a#2"], "again to re-run") || !strings.Contains(res.Skipped["me/a#3"], "queued or running") {
+		t.Errorf("skips = %v", res.Skipped)
+	}
+}
+
+func TestCollectKeepsTheNewestRunAndWhetherOneIsInFlight(t *testing.T) {
+	wfName := workflows.Name
+	row := func(at time.Time, status rest.V1TaskStatus) rest.V1TaskSummary {
+		return rest.V1TaskSummary{DisplayName: "run-1", WorkflowName: &wfName, CreatedAt: at, Status: status,
+			Input: map[string]interface{}{"repo": "me/a", "issue": map[string]interface{}{"number": float64(4)}}}
+	}
+	t0 := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	set := map[string]workflows.LastRun{}
+	if err := collect(set, []rest.V1TaskSummary{row(t0.Add(time.Hour), rest.V1TaskStatusFAILED), row(t0, rest.V1TaskStatusRUNNING)}); err != nil {
+		t.Fatal(err)
+	}
+	if got := set["me/a#4"]; !got.At.Equal(t0.Add(time.Hour)) || !got.InFlight {
+		t.Errorf("last run = %+v", got)
 	}
 }

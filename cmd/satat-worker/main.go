@@ -250,7 +250,7 @@ func run() error {
 	// Webhook intake is on only when repos are named: it queues nothing for an unlisted repo.
 	if repos := splitList(os.Getenv("SATAT_INTAKE_REPOS")); len(repos) > 0 {
 		workflowsToRun = append(workflowsToRun, workflows.RegisterIntake(hc, workflows.Intake{
-			Config: cfg, Allowed: repos, Events: eventPusher{hc}, Runs: poller.HatchetRuns{Client: hc}, Log: log, Notify: notifier,
+			Config: cfg, Allowed: repos, Events: eventPusher{hc}, Runs: poller.HatchetRuns{Client: hc}, Labels: poller.GitHub{Token: readToken}, Log: log, Notify: notifier,
 		}))
 		log.Info("webhook intake on", "repos", repos)
 	} else {

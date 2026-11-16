@@ -39,13 +39,13 @@ const runPage = 200
 
 // Issues implements Runs. A run is recognised by its input (repo and issue number), which only
 // the satat-issue workflow takes; the poll workflow's own runs carry none.
-func (h HatchetRuns) Issues(ctx context.Context) (map[string]bool, error) {
+func (h HatchetRuns) Issues(ctx context.Context) (map[string]workflows.LastRun, error) {
 	now := time.Now
 	if h.Now != nil {
 		now = h.Now
 	}
 	since := now().Add(-RunHistory)
-	set := map[string]bool{}
+	set := map[string]workflows.LastRun{}
 	// Payloads are not returned unless asked for, although the API documents true as the default.
 	withPayloads := true
 	for offset := int64(0); ; offset += runPage {
@@ -68,7 +68,7 @@ func (h HatchetRuns) Issues(ctx context.Context) (map[string]bool, error) {
 // error when payloads are hidden from the token, or when a satat-issue row has no readable input
 // (for example an offloaded payload). Agent runs share the workflow but have no issue, so they are
 // skipped.
-func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
+func collect(set map[string]workflows.LastRun, rows []rest.V1TaskSummary) error {
 	for _, row := range rows {
 		if row.PayloadsRestricted != nil && *row.PayloadsRestricted {
 			return errors.New("hatchet hides run payloads from this token: cannot tell which issues have a run")
@@ -77,7 +77,15 @@ func collect(set map[string]bool, rows []rest.V1TaskSummary) error {
 		switch {
 		case inputKind(row.Input) == workflows.KindAgent:
 		case ok:
-			set[Key(repo, n)] = true
+			k := Key(repo, n)
+			last := set[k]
+			if row.CreatedAt.After(last.At) {
+				last.At = row.CreatedAt
+			}
+			if row.Status == rest.V1TaskStatusQUEUED || row.Status == rest.V1TaskStatusRUNNING {
+				last.InFlight = true
+			}
+			set[k] = last
 		case strings.HasPrefix(row.DisplayName, workflows.Name) || (row.WorkflowName != nil && strings.HasPrefix(*row.WorkflowName, workflows.Name)):
 			return fmt.Errorf("run %q (%s) has no readable repo and issue in its input: cannot tell which issues have a run", row.DisplayName, row.TaskExternalId)
 		}

@@ -25,13 +25,15 @@ import (
 type Issues interface {
 	ReadyIssues(ctx context.Context, repo, label string) ([]ReadyIssue, error)
 	OpenPRIssues(ctx context.Context, repo string) (map[int]bool, error)
+	workflows.LabelReader
 }
 
-// Runs reports which issues have ever had a run, as "owner/name#N" keys (see Key). Any run counts,
-// whatever its status: a failed run is not retried by the next poll, because that would spend the
-// subscription again every interval. A person retries it with satat-enqueue.
+// Runs reports which issues have had a run, as "owner/name#N" keys (see Key). An issue with a run
+// is not queued again by the next poll, whatever the run's status, because retrying a failure
+// would spend the subscription every interval. It is queued again only when a person adds the
+// label back after the run (workflows.Rerun), or by hand with satat-enqueue.
 type Runs interface {
-	Issues(ctx context.Context) (map[string]bool, error)
+	Issues(ctx context.Context) (map[string]workflows.LastRun, error)
 }
 
 // Queue pushes a run input as the satat:issue event.
@@ -96,7 +98,7 @@ func (p *Poller) Poll(ctx context.Context) (Result, error) {
 	return res, errors.Join(errs...)
 }
 
-func (p *Poller) pollRepo(ctx context.Context, r config.PollRepo, ran map[string]bool, now func() time.Time, res *Result) error {
+func (p *Poller) pollRepo(ctx context.Context, r config.PollRepo, ran map[string]workflows.LastRun, now func() time.Time, res *Result) error {
 	issues, err := p.Issues.ReadyIssues(ctx, r.Name, workflows.ReadyLabel)
 	if err != nil {
 		return err
@@ -112,10 +114,22 @@ func (p *Poller) pollRepo(ctx context.Context, r config.PollRepo, ran map[string
 	var errs []error
 	for _, is := range issues {
 		key := Key(r.Name, is.Number)
+		if last, ok := ran[key]; ok {
+			if last.InFlight {
+				res.Skipped[key] = "a run is queued or running"
+				continue
+			}
+			at, err := p.Issues.LabelledAt(ctx, r.Name, is.Number, workflows.ReadyLabel)
+			if err != nil {
+				errs = append(errs, fmt.Errorf("when was %s labelled: %w", key, err))
+				continue
+			}
+			if !workflows.Rerun(last, at) {
+				res.Skipped[key] = "already has a run; add " + workflows.ReadyLabel + " again to re-run it"
+				continue
+			}
+		}
 		switch {
-		case ran[key]:
-			res.Skipped[key] = "already has a run"
-			continue
 		case closing[is.Number]:
 			res.Skipped[key] = "an open pull request closes it"
 			continue

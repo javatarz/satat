@@ -6,6 +6,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/javatarz/satat/config"
 )
@@ -139,17 +140,17 @@ func TestIntakeReportsAFailedPush(t *testing.T) {
 }
 
 type fakeRuns struct {
-	ran map[string]bool
+	ran map[string]LastRun
 	err error
 }
 
-func (f fakeRuns) Issues(context.Context) (map[string]bool, error) { return f.ran, f.err }
+func (f fakeRuns) Issues(context.Context) (map[string]LastRun, error) { return f.ran, f.err }
 
 // A redelivery, a re-added label and a retry after a successful push all reach Handle with an
 // issue that already has a run.
 func TestIntakeSkipsAnIssueThatHasARun(t *testing.T) {
 	ev := &fakeEvents{}
-	runs := fakeRuns{ran: map[string]bool{"javatarz/satat-sandbox#7": true}}
+	runs := fakeRuns{ran: map[string]LastRun{"javatarz/satat-sandbox#7": {}}}
 	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev, Runs: runs}
 	r, err := i.Handle(context.Background(), payload(t, labeled))
 	if err != nil || r.Queued || r.Reason != "already has a run" || len(ev.keys) != 0 {
@@ -161,7 +162,7 @@ func TestIntakeSkipsAnIssueThatHasARun(t *testing.T) {
 		t.Errorf("case changed the key: %+v %v", r, err)
 	}
 	// Another issue still queues.
-	runs.ran = map[string]bool{"javatarz/satat-sandbox#8": true}
+	runs.ran = map[string]LastRun{"javatarz/satat-sandbox#8": {}}
 	i.Runs = runs
 	if r, err := i.Handle(context.Background(), payload(t, labeled)); err != nil || !r.Queued {
 		t.Errorf("another issue's run blocked this one: %+v %v", r, err)
@@ -180,5 +181,27 @@ func TestIntakeFailsClosedWhenRunsAreUnknown(t *testing.T) {
 	}
 	if len(ev.keys) != 0 {
 		t.Errorf("pushed %v without knowing the runs", ev.keys)
+	}
+}
+
+type fakeLabels struct{ at time.Time }
+
+func (f fakeLabels) LabelledAt(context.Context, string, int, string) (time.Time, error) {
+	return f.at, nil
+}
+
+func TestIntakeReRunsAnIssueLabelledAgainAfterItsRun(t *testing.T) {
+	run := time.Date(2026, 11, 16, 8, 0, 0, 0, time.UTC)
+	ev := &fakeEvents{}
+	i := Intake{Config: intakeCfg, Allowed: []string{"javatarz/satat-sandbox"}, Events: ev,
+		Runs:   fakeRuns{ran: map[string]LastRun{"javatarz/satat-sandbox#7": {At: run}}},
+		Labels: fakeLabels{at: run.Add(time.Minute)}}
+	if r, err := i.Handle(context.Background(), payload(t, labeled)); err != nil || !r.Queued {
+		t.Fatalf("a label added after the run must re-run it: %+v %v", r, err)
+	}
+	// A redelivery of the label event from before the run queues nothing.
+	i.Labels = fakeLabels{at: run.Add(-time.Minute)}
+	if r, err := i.Handle(context.Background(), payload(t, labeled)); err != nil || r.Queued {
+		t.Errorf("a stale label re-ran it: %+v %v", r, err)
 	}
 }
