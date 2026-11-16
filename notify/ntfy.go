@@ -29,7 +29,7 @@ func (n *Ntfy) Notify(ctx context.Context, ev Event) error {
 	}
 	msg := map[string]any{
 		"topic":    n.Topic,
-		"title":    fmt.Sprintf("Satat %s#%d: %s", ev.Repo, ev.Issue, ev.State),
+		"title":    title(ev),
 		"message":  Text(ev),
 		"tags":     []string{tag(ev.State)},
 		"priority": priority(ev.State),
@@ -67,6 +67,13 @@ func (n *Ntfy) Notify(ctx context.Context, ev Event) error {
 	return nil
 }
 
+func title(ev Event) string {
+	if ev.Repo == "" {
+		return fmt.Sprintf("Satat: %s", ev.State)
+	}
+	return fmt.Sprintf("Satat %s#%d: %s", ev.Repo, ev.Issue, ev.State)
+}
+
 // tag is the emoji short code ntfy shows for a state.
 func tag(s State) string {
 	switch s {
@@ -74,6 +81,10 @@ func tag(s State) string {
 		return "white_check_mark"
 	case Failed, NotPublished:
 		return "x"
+	case WorkerDown:
+		return "rotating_light"
+	case WorkerUp:
+		return "white_check_mark"
 	case RateLimited:
 		return "hourglass"
 	case Skipped:
@@ -86,7 +97,9 @@ func tag(s State) string {
 // priority keeps the outcome loud and the steps on the way quiet (ntfy: 1 min to 5 max, 3 default).
 func priority(s State) int {
 	switch s {
-	case Failed, NotPublished, Published:
+	case WorkerDown:
+		return 5
+	case Failed, NotPublished, Published, WorkerUp:
 		return 4
 	case Queued, Started, Completed, Skipped, RateLimited:
 		return 3

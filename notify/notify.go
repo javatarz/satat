@@ -42,6 +42,11 @@ const (
 	Completed State = "completed"
 	// Failed: the run ended with an error. Reason is a one-line cause.
 	Failed State = "failed"
+
+	// WorkerDown and WorkerUp come from outside the worker (package watch): no worker has had a
+	// heartbeat for a while, and then one has again. They name no repo or issue.
+	WorkerDown State = "worker down"
+	WorkerUp   State = "worker back"
 )
 
 // Event is one state of one run of one issue.

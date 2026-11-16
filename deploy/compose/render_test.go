@@ -115,3 +115,38 @@ func TestRenderMountsTheSocketOnlyInTheProxy(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderAddsTheWatchOnlyWithNtfy(t *testing.T) {
+	base := `
+limits: {global: 1, per_repo: 1, per_account: 1}
+lanes: {x: {image: "x@sha256:f1a5df711a66a10f4aaad2eaf8c69746b6f873efb8a6ea416183714876413a12", memory: 1GiB, cpus: 1, pids: 64, workspace: 64MiB, timeout: 1m, account: a, max_runs: 1}}
+`
+	for _, tc := range []struct {
+		yaml  string
+		watch bool
+	}{
+		{base + "deploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env}}\n", false},
+		{base + "notify: {ntfy: {server: https://ntfy.sh}}\ndeploy: {target: compose, secrets: {SATAT_GITHUB_TOKEN: env, SATAT_PUSH_TOKEN: env, SATAT_NTFY_TOPIC: env}}\n", true},
+	} {
+		cfg, err := config.Parse(strings.NewReader(tc.yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var f composeFile
+		if err := yaml.Unmarshal(render(t, cfg), &f); err != nil {
+			t.Fatal(err)
+		}
+		w, ok := f.Services["watch"]
+		if ok != tc.watch {
+			t.Fatalf("watch service present = %v, want %v", ok, tc.watch)
+		}
+		if ok && (w.Environment["SATAT_NTFY_TOPIC"] == "" || f.Services["worker"].Environment["SATAT_NTFY_TOPIC"] == "") {
+			t.Errorf("the topic is not passed: watch %v, worker %v", w.Environment, f.Services["worker"].Environment)
+		}
+		for _, v := range w.Volumes {
+			if strings.Contains(v, "sock") {
+				t.Errorf("watch mounts %s", v)
+			}
+		}
+	}
+}

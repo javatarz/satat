@@ -71,6 +71,11 @@ func (f *fakeRunner) summary() []string {
 
 func setup(t *testing.T) (*Target, *fakeRunner, *bytes.Buffer, config.Config) {
 	t.Helper()
+	return setupWith(t, testConfig)
+}
+
+func setupWith(t *testing.T, testConfig string) (*Target, *fakeRunner, *bytes.Buffer, config.Config) {
+	t.Helper()
 	cfg, err := config.Parse(strings.NewReader(testConfig))
 	if err != nil {
 		t.Fatal(err)
@@ -553,5 +558,30 @@ func TestParsePSAcceptsAnArray(t *testing.T) {
 	}
 	if len(got) != 1 || got[0].Service != "postgres" || !got[0].healthy() {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+func TestUpStartsTheWatchWithNtfy(t *testing.T) {
+	yaml := strings.Replace(testConfig, "SATAT_PUSH_TOKEN: env}", "SATAT_PUSH_TOKEN: env, SATAT_NTFY_TOPIC: env}", 1) + "notify: {ntfy: {server: https://ntfy.sh}}\n"
+	tg, f, _, cfg := setupWith(t, yaml)
+	if err := os.WriteFile(filepath.Join(tg.Dir, ".env"), []byte("POSTGRES_PASSWORD=p\nHATCHET_CLIENT_TOKEN=eyJold\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	platformUp, workerUp := true, false
+	cold := coldStack(&platformUp, &workerUp)
+	f.respond = func(args []string) ([]byte, error) {
+		if strings.Join(args, " ") == "up -d --build worker watch" {
+			workerUp = true
+			return nil, nil
+		}
+		return cold(args)
+	}
+	sec := secrets()
+	sec["SATAT_NTFY_TOPIC"] = "topic"
+	if err := tg.Up(context.Background(), cfg, sec); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.summary(); !slices.Contains(got, "up -d --build worker watch") {
+		t.Fatalf("calls = %q, want the worker and the watch brought up", got)
 	}
 }
