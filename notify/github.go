@@ -101,7 +101,7 @@ const maxDetail = 20000
 func CommentBody(ev Event) string {
 	m := Compose(ev)
 	var b strings.Builder
-	fmt.Fprintf(&b, "%s **%s**", m.Emoji, m.Headline)
+	fmt.Fprintf(&b, "**[%s] %s**", m.Level, m.Headline)
 	if m.Body != "" {
 		fmt.Fprintf(&b, "\n\n%s", m.Body)
 	}

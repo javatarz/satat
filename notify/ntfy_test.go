@@ -23,7 +23,7 @@ func TestNtfyPublishesAMessageThatOpensThePR(t *testing.T) {
 	if err := n.Notify(context.Background(), Event{State: Published, Repo: "o/r", Issue: 1, IssueTitle: "Greet people", PRNumber: 2, PRTitle: "Add greet", PRURL: "https://github.com/o/r/pull/2"}); err != nil {
 		t.Fatal(err)
 	}
-	if got["topic"] != "secret-topic" || got["click"] != "https://github.com/o/r/pull/2" || got["title"] != "Satat opened draft PR #2: Add greet" ||
+	if got["topic"] != "secret-topic" || got["click"] != "https://github.com/o/r/pull/2" || got["title"] != "[SUCCESS] Satat opened draft PR #2: Add greet" ||
 		!strings.HasPrefix(got["message"].(string), "**o/r#1**: Greet people") || got["priority"].(float64) != 4 || got["markdown"] != true {
 		t.Errorf("published %v", got)
 	}

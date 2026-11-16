@@ -13,9 +13,8 @@ import (
 type Message struct {
 	// Headline is one sentence, outcome first, without the emoji.
 	Headline string
-	// Emoji marks the kind at a glance; Tag is the same as an ntfy short code. The headline says
-	// the state in words, so neither is needed to understand it.
-	Emoji, Tag string
+	// Level is the message's log level, shown in front of the headline: Info, Success, Warn or Error.
+	Level Level
 	// Body is Markdown: the detail, then the next step.
 	Body string
 	// Link and LinkText point at the one place to look next (the PR, else the run).
@@ -26,15 +25,27 @@ type Message struct {
 	Priority int
 }
 
+// Level is how a message is marked, like a log line, so a reader can scan for what went right and
+// what went wrong.
+type Level string
+
+// The levels.
+const (
+	Info    Level = "INFO"
+	Success Level = "SUCCESS"
+	Warn    Level = "WARN"
+	Error   Level = "ERROR"
+)
+
 // Compose writes the message for ev.
 func Compose(ev Event) Message {
 	agent := or(ev.Agent, "the agent")
-	m := Message{Priority: 2}
+	m := Message{Level: Info, Priority: 2}
 	var detail, next []string
 	quote := ""
 	switch ev.State {
 	case Queued:
-		m.Emoji, m.Tag, m.Priority = "⏳", "hourglass_flowing_sand", 2
+		m.Priority = 2
 		m.Headline = "Satat queued this issue"
 		detail = append(detail, sentence("Found by the "+or(ev.Source, "queue")))
 		if ev.GlobalCap > 0 {
@@ -43,7 +54,7 @@ func Compose(ev Event) Message {
 			next = append(next, "It starts when a slot is free.")
 		}
 	case Started:
-		m.Emoji, m.Tag, m.Priority = "▶️", "arrow_forward", 3
+		m.Priority = 3
 		m.Headline = "Satat started work on this issue"
 		d := "Run `" + shortRun(ev.Run) + "`"
 		if ev.Lane != "" {
@@ -58,12 +69,11 @@ func Compose(ev Event) Message {
 		}
 		next = append(next, "Next: Satat clones the repo and starts the agent.")
 	case Skipped:
-		m.Emoji, m.Tag, m.Priority, m.NeedsYou = "⚠️", "warning", 4, true
+		m.Level, m.Priority, m.NeedsYou = Warn, 4, true
 		m.Headline = "Satat skipped this issue"
 		detail = append(detail, sentence(plainSkip(ev.Reason)), "Nothing ran.")
 		next = append(next, "Add `"+ReadyLabel+"` to queue it again.")
 	case Cloned:
-		m.Emoji, m.Tag = "📥", "inbox_tray"
 		m.Headline = "Satat cloned " + or(ev.Repo, "the repo")
 		if ev.Base != "" {
 			d := "`" + ev.Base + "`"
@@ -74,13 +84,14 @@ func Compose(ev Event) Message {
 		}
 		next = append(next, "Next: "+agent+" starts on the issue.")
 	case StepStarted:
-		m.Emoji, m.Tag = "🤖", "robot"
 		m.Headline = capital(agent) + " is working on this issue"
 		detail = append(detail, "It has the issue's title and body and the repo's commands from `.satat/commands.yaml`.")
 		next = append(next, "Next: it commits its change, then Satat runs the repo's pre-push checks.")
 	case StepFinished:
-		m.Emoji, m.Tag = "🏁", "checkered_flag"
 		m.Headline = capital(agent) + " finished: " + outcomeWords(ev)
+		if ev.Outcome != "changes" && ev.Outcome != "no_changes" {
+			m.Level = Warn
+		}
 		var d []string
 		if ev.Took > 0 {
 			d = append(d, "Took "+duration(ev.Took)+".")
@@ -106,7 +117,7 @@ func Compose(ev Event) Message {
 			next = append(next, "Nothing to publish.")
 		}
 	case RateLimited:
-		m.Emoji, m.Tag, m.Priority = "⏸️", "pause_button", 3
+		m.Level, m.Priority = Warn, 3
 		m.Headline = "Satat paused: Claude usage limit reached"
 		r := "A retry is queued"
 		if ev.MaxAttempts > 0 {
@@ -118,7 +129,7 @@ func Compose(ev Event) Message {
 		detail = append(detail, r+".")
 		next = append(next, "Nothing to do.")
 	case Published:
-		m.Emoji, m.Tag, m.Priority, m.NeedsYou = "✅", "white_check_mark", 4, true
+		m.Level, m.Priority, m.NeedsYou = Success, 4, true
 		m.Headline = "Satat opened a draft PR"
 		if ev.PRNumber > 0 {
 			m.Headline = fmt.Sprintf("Satat opened draft PR #%d", ev.PRNumber)
@@ -141,20 +152,19 @@ func Compose(ev Event) Message {
 		}
 		next = append(next, "Review it and mark it ready for review when it's right. Satat never merges.")
 	case NotPublished:
-		m.Emoji, m.Tag, m.Priority, m.NeedsYou = "❌", "x", 4, true
+		m.Level, m.Priority, m.NeedsYou = Error, 4, true
 		cause, fix := Explain(ev)
 		m.Headline = "Satat couldn't open a PR: " + cause
 		detail = append(detail, "The commits stay with the run; nothing was pushed.")
 		next = append(next, sentence(fix)+" Then add `"+ReadyLabel+"` again.")
 	case Completed:
-		m.Emoji, m.Tag = "🏁", "checkered_flag"
 		switch {
 		case ev.PRNumber > 0:
-			m.Headline = fmt.Sprintf("Satat finished: draft PR #%d is ready for review", ev.PRNumber)
+			m.Headline, m.Level = fmt.Sprintf("Satat finished: draft PR #%d is ready for review", ev.PRNumber), Success
 		case ev.PRURL != "":
-			m.Headline = "Satat finished: the draft PR is ready for review"
+			m.Headline, m.Level = "Satat finished: the draft PR is ready for review", Success
 		case ev.Outcome == "no_changes":
-			m.Headline, m.NeedsYou, m.Priority = "Satat finished without changes", true, 3
+			m.Headline, m.NeedsYou, m.Priority, m.Level = "Satat finished without changes", true, 3, Warn
 			next = append(next, "Clarify the issue and add `"+ReadyLabel+"` again to retry.")
 		default:
 			m.Headline = "Satat finished"
@@ -163,7 +173,7 @@ func Compose(ev Event) Message {
 			detail = append(detail, "Took "+duration(ev.Took)+" in all.")
 		}
 	case Failed:
-		m.Emoji, m.Tag, m.Priority, m.NeedsYou = "❌", "x", 4, true
+		m.Level, m.Priority, m.NeedsYou = Error, 4, true
 		cause, fix := Explain(ev)
 		m.Headline = "Satat failed: " + cause
 		if ev.Took > 0 {
@@ -172,12 +182,12 @@ func Compose(ev Event) Message {
 		detail = append(detail, "`"+ReadyLabel+"` was swapped for `"+FailedLabel+"`.")
 		next = append(next, sentence(fix)+" Then add `"+ReadyLabel+"` again to re-run it.")
 	case WorkerDown:
-		m.Emoji, m.Tag, m.Priority, m.NeedsYou = "🚨", "rotating_light", 5, true
+		m.Level, m.Priority, m.NeedsYou = Error, 5, true
 		m.Headline = "Satat's worker is down"
 		detail = append(detail, sentence(ev.Reason))
 		next = append(next, "Queued issues wait until it's back. Check `just status` or the worker's logs.")
 	case WorkerUp:
-		m.Emoji, m.Tag, m.Priority = "✅", "white_check_mark", 3
+		m.Priority = 3
 		m.Headline = "Satat's worker is back"
 		next = append(next, "Queued issues start again.")
 	default:

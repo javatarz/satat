@@ -39,10 +39,9 @@ func (n *Ntfy) Notify(ctx context.Context, ev Event) error {
 	}
 	msg := map[string]any{
 		"topic":    n.Topic,
-		"title":    m.Headline,
+		"title":    "[" + string(m.Level) + "] " + m.Headline,
 		"message":  body,
 		"markdown": true,
-		"tags":     []string{m.Tag},
 		"priority": m.Priority,
 	}
 	switch {

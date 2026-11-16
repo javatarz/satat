@@ -85,7 +85,7 @@ func TestEveryStateIsANewCommentInOrder(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	want := []string{"⏳ **Satat queued this issue**", "▶️ **Satat started work on this issue**", "🏁 **Claude Code finished: 1 commit**", "✅ **Satat opened draft PR #2**"}
+	want := []string{"**[INFO] Satat queued this issue**", "**[INFO] Satat started work on this issue**", "**[INFO] Claude Code finished: 1 commit**", "**[SUCCESS] Satat opened draft PR #2**"}
 	if len(f.comments) != len(want) {
 		t.Fatalf("%d comments, want one per state", len(f.comments))
 	}
@@ -114,7 +114,7 @@ func TestAFailureSwapsTheLabelAndAStartClearsIt(t *testing.T) {
 		t.Errorf("labels after a failure = %v, want only %s", f.labels, FailedLabel)
 	}
 	body := f.comments[0].Body
-	for _, want := range []string{"❌ **Satat failed: the repo's pre-push checks kept failing**", "was swapped for `satat:failed`", "again to re-run it", "<details>"} {
+	for _, want := range []string{"**[ERROR] Satat failed: the repo's pre-push checks kept failing**", "was swapped for `satat:failed`", "again to re-run it", "<details>"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("failure comment lacks %q:\n%s", want, body)
 		}

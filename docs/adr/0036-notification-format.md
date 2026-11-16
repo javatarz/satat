@@ -36,33 +36,39 @@ the format has to carry the difference between "for your information" and "you n
    ntfy (on GitHub the reader is already there). Full error output goes in a collapsed Details
    block on GitHub and is never the message itself.
 
-### Two kinds of notification, set apart in words and in how loud they are
+### A log level in front of every headline
 
-| Kind | States | ntfy priority | Marker |
+Each notification starts with a level in brackets, like a log line, so a reader can scan a run's
+messages for what went right and what went wrong: `[INFO] Satat cloned javatarz/satat-sandbox`. No
+emoji: the owner preferred levels, and the level says the state in words.
+
+| Level | States | Needs you | ntfy priority |
 |---|---|---|---|
-| **Needs you** | draft PR opened, failed, not published, skipped, worker down | 4 (5 for worker down) | ✅ or ❌ or ⚠️, plus words that say so |
-| **For your information** | queued, started, cloned, agent started, agent finished, rate limited, completed, worker back | 2 (3 for started and completed) | ⏳ ▶️ ⏸️, plus words |
+| `[SUCCESS]` | draft PR opened; run finished with a PR | review the PR | 4 (opened), 2 (finished) |
+| `[ERROR]` | failed; couldn't open a PR; worker down | yes | 4 (5 for worker down) |
+| `[WARN]` | skipped; paused for the usage limit; finished without changes; agent step ended badly | skipped and no changes: yes | 3 or 4 |
+| `[INFO]` | queued, started, cloned, agent working, agent finished, worker back | no | 2 (3 for started and worker back) |
 
-The emoji is a scanning aid only: the headline always says the state in words.
+On GitHub the level is part of the bold first line; on ntfy it starts the title.
 
 ### Messages
 
-These are the templates. `{…}` is filled from the run.
+These are the templates, without the level. `{…}` is filled from the run.
 
 | State | Headline | Detail and next |
 |---|---|---|
-| queued | ⏳ Satat queued this issue | Found by the {poller / webhook}. It starts when a slot is free (at most {global} at once, {per_repo} per repo). |
-| started | ▶️ Satat started work on this issue | Run `{run}` with {agent} on the `{lane}` lane, from `{base}`. {Retry {n} after the usage limit reset.} [Run log]({link}) |
-| skipped | ⚠️ Satat skipped this issue | {Reason in plain words, for example "It no longer has `ready-for-agent`"}. Nothing ran. Add `ready-for-agent` to queue it again. |
+| queued | Satat queued this issue | Found by the {poller / webhook}. It starts when a slot is free (at most {global} at once, {per_repo} per repo). |
+| started | Satat started work on this issue | Run `{run}` with {agent} on the `{lane}` lane, from `{base}`. {Retry {n} after the usage limit reset.} [Run log]({link}) |
+| skipped | Satat skipped this issue | {Reason in plain words, for example "It no longer has `ready-for-agent`"}. Nothing ran. Add `ready-for-agent` to queue it again. |
 | cloned | Satat cloned `{repo}` | `{base}` at `{sha7}`. Next: {agent} starts on the issue. |
-| agent started | ▶️ {agent} is working on the issue | It has the issue's title and body and the repo's commands from `.satat/commands.yaml`. Next: it commits, then Satat checks the push. |
+| agent started | {agent} is working on the issue | It has the issue's title and body and the repo's commands from `.satat/commands.yaml`. Next: it commits, then Satat checks the push. |
 | agent finished | {agent} finished: {n} commit(s) / no changes / failed | Took {duration}. {The repo's pre-push checks passed / failed {n} times}. Next: {Satat opens a draft PR / nothing to publish}. |
-| rate limited | ⏸️ Satat paused: Claude usage limit reached | Retry {n} of {max} is queued for {reset time}, when the limit resets. Nothing to do. |
-| published | ✅ Satat opened draft PR #{pr}: {pr title} | {files} files changed on `{branch}`. Review it and mark it ready for review when it's right. Satat never merges. |
-| not published | ❌ Satat couldn't open a PR: {cause in plain words} | The commits stay with the run; nothing was pushed. {What to do for this cause}. Then add `ready-for-agent` again. Details ▸ |
+| rate limited | Satat paused: Claude usage limit reached | Retry {n} of {max} is queued for {reset time}, when the limit resets. Nothing to do. |
+| published | Satat opened draft PR #{pr}: {pr title} | {files} files changed on `{branch}`. Review it and mark it ready for review when it's right. Satat never merges. |
+| not published | Satat couldn't open a PR: {cause in plain words} | The commits stay with the run; nothing was pushed. {What to do for this cause}. Then add `ready-for-agent` again. Details ▸ |
 | completed | Satat finished: draft PR #{pr} is ready for review / no changes | Took {duration} in all. {For no changes: {agent}'s summary, then "Clarify the issue and add `ready-for-agent` again to retry."} |
-| failed | ❌ Satat failed: {cause in plain words} | {What it tried}. `ready-for-agent` was swapped for `satat:failed`. {What to do for this cause}, then add `ready-for-agent` again. Details ▸ |
-| worker down | 🚨 Satat's worker is down | No worker has had a heartbeat since {time}. Queued issues wait until one is back. Check `just status` or the worker's logs. |
+| failed | Satat failed: {cause in plain words} | {What it tried}. `ready-for-agent` was swapped for `satat:failed`. {What to do for this cause}, then add `ready-for-agent` again. Details ▸ |
+| worker down | Satat's worker is down | No worker has had a heartbeat since {time}. Queued issues wait until one is back. Check `just status` or the worker's logs. |
 | worker back | Satat's worker is back | Queued issues start again. |
 
 ### Causes in plain words
