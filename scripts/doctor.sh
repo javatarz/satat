@@ -55,16 +55,39 @@ check_docker() {
   fi
 }
 
+# Homebrew installs the docker CLI's plugins where the CLI does not look unless told to.
+plugin_hint() {
+  local d
+  for d in /opt/homebrew/lib/docker/cli-plugins /usr/local/lib/docker/cli-plugins; do
+    if [ -x "$d/docker-$1" ]; then
+      echo "installed in $d, which docker does not search: add \"cliPluginsExtraDirs\": [\"$d\"] to ~/.docker/config.json"
+      return
+    fi
+  done
+  echo "$2"
+}
+
 check_compose() {
   local v
   if ! has docker; then
     skip "docker compose: needs docker"
   elif ! v="$(docker compose version --short 2>/dev/null)"; then
-    fail "docker compose: plugin missing (install Docker Compose v2: brew install docker-compose)"
+    fail "docker compose: plugin missing ($(plugin_hint compose "install Docker Compose v2: brew install docker-compose"))"
   elif [ "${v%%.*}" -lt 2 ] 2>/dev/null; then
     fail "docker compose: $v, need v2 or later"
   else
     ok "docker compose: $v"
+  fi
+}
+
+# The lane image's Dockerfile needs BuildKit. Only `just build-images` needs it.
+check_buildx() {
+  if ! has docker; then
+    skip "docker buildx: needs docker"
+  elif docker buildx version >/dev/null 2>&1; then
+    ok "docker buildx: installed"
+  else
+    warn "docker buildx: missing ($(plugin_hint buildx "brew install docker-buildx"); just build-images needs it)"
   fi
 }
 
@@ -265,6 +288,7 @@ check_ports() {
 CHECKS=(
   check_docker
   check_compose
+  check_buildx
   check_go
   check_just
   check_mise

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -84,6 +85,31 @@ func TestChangesArePublished(t *testing.T) {
 	}
 	if l.got.CacheScope != launcher.CacheScope("a/b") {
 		t.Errorf("cache scope = %q, want the repo's", l.got.CacheScope)
+	}
+}
+
+func TestEachStageIsLogged(t *testing.T) {
+	var buf strings.Builder
+	o := opts(&fakeLauncher{res: result("changes")}, &fakePublisher{out: pusher.Outcome{Branch: "satat/r1", PRURL: "u"}})
+	o.Log = slog.New(slog.NewTextHandler(&buf, nil))
+	if _, err := Run(context.Background(), o); err != nil {
+		t.Fatal(err)
+	}
+	var stages []string
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if !strings.Contains(line, "run=r1 issue=a/b#3") {
+			t.Errorf("line does not name the run and issue: %s", line)
+		}
+		_, rest, _ := strings.Cut(line, "msg=")
+		msg, _, _ := strings.Cut(strings.TrimPrefix(rest, `"`), `"`)
+		msg, _, _ = strings.Cut(msg, " run=")
+		stages = append(stages, msg)
+	}
+	if got, want := strings.Join(stages, ", "), "cloned, step starting, step finished, published"; got != want {
+		t.Errorf("stages = %s, want %s", got, want)
+	}
+	if !strings.Contains(buf.String(), "pr_url=u") {
+		t.Errorf("published line has no PR URL:\n%s", buf.String())
 	}
 }
 

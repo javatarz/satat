@@ -121,10 +121,15 @@ func inputIssue(input map[string]any) (string, int, bool) {
 // Register builds the cron workflow that runs p.Poll on cron. A failed poll fails the run, so it
 // shows in the dashboard.
 func Register(client *hatchet.Client, cron string, p *Poller) *hatchet.Workflow {
-	wf := client.NewWorkflow(Name, hatchet.WithWorkflowCron(cron))
+	// One poll at a time. While no worker is up, the first poll waits and each later tick is
+	// cancelled (CANCEL_NEWEST), so the dashboard shows why, instead of a pile of polls that fail
+	// with an empty error when Hatchet's 5-minute default schedule timeout runs out.
+	one, cancelNewest := int32(1), hatchet.CancelNewest
+	wf := client.NewWorkflow(Name, hatchet.WithWorkflowCron(cron),
+		hatchet.WithWorkflowConcurrency(hatchet.Concurrency{Expression: "'poll'", MaxRuns: &one, LimitStrategy: &cancelNewest}))
 	wf.NewTask("poll", func(ctx hatchet.Context, _ struct{}) (*Output, error) {
 		res, err := p.Poll(ctx)
-		out := &Output{Queued: res.Queued, Skipped: len(res.Skipped)}
+		out := &Output{Queued: res.Queued, Skipped: len(res.Skipped), SkippedReasons: res.Skipped}
 		if out.Queued == nil {
 			out.Queued = []string{}
 		}
@@ -132,12 +137,19 @@ func Register(client *hatchet.Client, cron string, p *Poller) *hatchet.Workflow 
 			return out, fmt.Errorf("poll: %w", err)
 		}
 		return out, nil
-	}, hatchet.WithExecutionTimeout(5*time.Minute), hatchet.WithRetries(0))
+	}, hatchet.WithScheduleTimeout(PollScheduleTimeout), hatchet.WithExecutionTimeout(5*time.Minute), hatchet.WithRetries(0))
 	return wf
 }
+
+// PollScheduleTimeout is how long a poll may wait for a worker. A late poll is harmless: it reads
+// the current state of every repo.
+const PollScheduleTimeout = 24 * time.Hour
 
 // Output is what a poll run reports in the dashboard.
 type Output struct {
 	Queued  []string `json:"queued"`
 	Skipped int      `json:"skipped"`
+	// SkippedReasons says why each skipped issue was not queued, for example "already has a run":
+	// a failed run is never retried by the poller, and this is where that shows.
+	SkippedReasons map[string]string `json:"skipped_reasons,omitempty"`
 }

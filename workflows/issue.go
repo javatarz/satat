@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"strings"
 	"time"
@@ -209,6 +210,8 @@ type Handler struct {
 	// NoAgent holds the lanes that run no agent (config.NoAgent). Only they take lane-started
 	// runs; nil refuses every one, so a handler that is not told fails closed.
 	NoAgent map[string]bool
+	// Log, when set, gets a line when a run starts and ends and at each stage of the pipeline.
+	Log *slog.Logger
 }
 
 // Run takes one input to a result. The issue's title and body are read from GitHub at run start;
@@ -242,7 +245,7 @@ func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt
 	in.Issue.Title, in.Issue.Body = st.Title, st.Body
 	rep, err := pipeline.Run(ctx, pipeline.Options{
 		Launcher: h.Launcher, Pusher: h.Pusher, Cloner: h.Cloner,
-		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue,
+		Run: runID, Lane: in.Lane, Repo: in.Repo, Base: in.Base, Issue: in.Issue, Log: h.Log,
 	})
 	out := Output{Run: runID, ExitCode: rep.Launch.ExitCode}
 	if rep.Runner != nil {
@@ -318,6 +321,20 @@ func (h Handler) stopEarlierAttempt(ctx context.Context, runID string) error {
 	return nil
 }
 
+// logRun logs one line about a run, naming its issue or, for an agent run, its lane.
+func (h Handler) logRun(msg, runID string, in Input, args ...any) {
+	if h.Log == nil {
+		return
+	}
+	who := []any{"run", runID, "lane", in.Lane}
+	if in.Kind != KindAgent {
+		who = append(who, "issue", IssueKey(in.Repo, in.Issue.Number))
+	} else {
+		who = append(who, "kind", KindAgent)
+	}
+	h.Log.Info(msg, append(who, args...)...)
+}
+
 func failure(rep pipeline.Report) error {
 	switch {
 	case rep.PushErr != nil:
@@ -360,7 +377,14 @@ func Register(client *hatchet.Client, spec Spec, h Handler) (*hatchet.Workflow, 
 	)
 	wf.NewTask("run", func(ctx hatchet.Context, in Input) (*Output, error) {
 		attempt := ctx.RetryCount()
-		out, err := h.RunAttempt(ctx, ctx.WorkflowRunId(), in, attempt)
+		runID := ctx.WorkflowRunId()
+		h.logRun("run started", runID, in, "attempt", attempt)
+		out, err := h.RunAttempt(ctx, runID, in, attempt)
+		args := []any{"attempt", attempt, "status", out.Status, "reason", out.Reason, "pr_url", out.PRURL, "commits", out.Commits}
+		if err != nil {
+			args = append(args, "err", err)
+		}
+		h.logRun("run finished", runID, in, args...)
 		var rl *RateLimitError
 		switch {
 		case errors.As(err, &rl):

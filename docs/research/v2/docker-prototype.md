@@ -254,3 +254,27 @@ What this settles:
 
 Not verified here: the real `claude` image with its cache env vars (it is not built on this machine),
 how long `/system/df` takes with large caches, and a cache volume filling the VM's disk.
+
+## Live run: poller to draft PR in local mode (2026-11-03)
+
+The first run of the poller path on a second laptop, against javatarz/satat-sandbox#1, run to find the states a
+notification card (#235) needs. The steps ran in local mode (`just run-local`, #237), not in a lane container,
+so container start, the hardening floor and adoption after a restart were not exercised.
+
+- **Run 1 failed** in the step. The step dir sat inside the Satat checkout, so mise applied Satat's
+  `mise.toml` (go, terraform) and skipped the lane's Python defaults. The sandbox's pre-push hook found no
+  `python`, and the rehearsal failed 3 times. Local mode stops mise at the step dir (`MISE_CEILING_PATHS`, in #237).
+- **Run 2 opened draft PR javatarz/satat-sandbox#11** with no intervention once queued: re-queue to PR in
+  2 min 7 s, of which the toolchain install was 103 s (the lane defaults install Java and Node for a
+  Python-only repo). The pre-push hook passed first time. Step peak 289 MiB RSS.
+- **Label to pickup** waits for the cron: 2 min 3 s in run 1 with `*/5`.
+- **The poller never retries a failed run** ("already has a run"), by design. A re-run needs `just enqueue`.
+- **Found and fixed:**
+  - the worker panicked registering on a host whose name has punctuation (#237), and the poll cron kept queuing runs that failed after 5 min with an empty error;
+  - the worker logged nothing per run;
+  - poll output dropped skip reasons.
+- **Setup friction on the new machine:** the Homebrew docker CLI didn't find its compose and buildx
+  plugins (doctor now says how to fix it); 1Password CLI wasn't installed; webhook intake needs repo
+  admin, which a collaborator with push may not have.
+
+The states seen, and where each can be observed, are in #235.
