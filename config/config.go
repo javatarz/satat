@@ -52,6 +52,9 @@ type Notify struct {
 	// NtfyServer is the ntfy server's URL (https://ntfy.sh or your own); empty turns ntfy off. The
 	// topic is the secret SATAT_NTFY_TOPIC: anyone who knows it can read and post (ADR 0019).
 	NtfyServer string
+	// Dashboard is Hatchet's dashboard as a browser reaches it (http://localhost:8888 for Compose).
+	// When set, each notification links to its run's page there.
+	Dashboard string
 }
 
 // Notify secrets, needed only when their channel is on.
@@ -201,7 +204,8 @@ type cacheReaperFile struct {
 }
 
 type notifyFile struct {
-	GitHub bool `yaml:"github"`
+	GitHub    bool   `yaml:"github"`
+	Dashboard string `yaml:"dashboard"`
 	Ntfy   struct {
 		Server string `yaml:"server"`
 	} `yaml:"ntfy"`
@@ -328,7 +332,10 @@ func Parse(r io.Reader) (Config, error) {
 	if c.Poller, perr = f.Poller.parse(c.Accounts); perr != nil {
 		errs = append(errs, fmt.Errorf("poller: %w", perr))
 	}
-	c.Notify = Notify{GitHub: f.Notify.GitHub, NtfyServer: strings.TrimRight(f.Notify.Ntfy.Server, "/")}
+	c.Notify = Notify{GitHub: f.Notify.GitHub, NtfyServer: strings.TrimRight(f.Notify.Ntfy.Server, "/"), Dashboard: strings.TrimRight(f.Notify.Dashboard, "/")}
+	if s := c.Notify.Dashboard; s != "" && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+		errs = append(errs, fmt.Errorf("notify: dashboard %q is not an http(s) URL", s))
+	}
 	if s := c.Notify.NtfyServer; s != "" && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
 		errs = append(errs, fmt.Errorf("notify: ntfy.server %q is not an http(s) URL", s))
 	}

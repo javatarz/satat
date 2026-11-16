@@ -13,7 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
-	"strings"
+	"time"
 
 	"github.com/javatarz/satat/launcher"
 	"github.com/javatarz/satat/notify"
@@ -23,6 +23,9 @@ import (
 
 // StepName is the name of the one step Run launches.
 const StepName = "claude"
+
+// AgentName is the coding agent the runner drives, as notifications name it.
+const AgentName = "Claude Code"
 
 // Publisher turns a finished step's commits into a pushed branch and a draft PR.
 // *pusher.Pusher is the real one.
@@ -51,6 +54,7 @@ type Options struct {
 // note sends ev with the run's identity filled in.
 func (o Options) note(ctx context.Context, ev notify.Event) {
 	ev.Run, ev.Repo, ev.Issue, ev.Lane = o.Run, o.Repo, o.Issue.Number, o.Lane
+	ev.IssueTitle, ev.Agent, ev.Base = o.Issue.Title, AgentName, o.Base
 	o.Notify.Send(ctx, ev)
 }
 
@@ -85,7 +89,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	defer ck.Close()
 	o.log("cloned", "base_sha", ck.BaseSHA)
-	o.note(ctx, notify.Event{State: notify.Cloned, Reason: "at " + short(ck.BaseSHA)})
+	o.note(ctx, notify.Event{State: notify.Cloned, SHA: ck.BaseSHA})
 	// The commands are the base commit's, read by the worker. The step gets them as input.
 	input, err := json.Marshal(runner.Input{Repo: o.Repo, Base: o.Base, Issue: o.Issue, Commands: ck.Commands})
 	if err != nil {
@@ -93,6 +97,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	o.log("step starting", "lane", o.Lane)
 	o.note(ctx, notify.Event{State: notify.StepStarted})
+	stepStart := time.Now()
 	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
 		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, Checkout: ck.Tar, CacheScope: launcher.CacheScope(o.Repo),
 	})
@@ -111,7 +116,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 		status = rep.Runner.Status
 	}
 	o.log("step finished", "exit_code", rep.Launch.ExitCode, "status", status, "timed_out", rep.Launch.TimedOut, "oom_killed", rep.Launch.OOMKilled, "cancelled", rep.Launch.Cancelled)
-	o.note(ctx, notify.Event{State: notify.StepFinished, Reason: stepSummary(rep, status)})
+	o.note(ctx, stepFinished(rep, time.Since(stepStart)))
 	if o.Pusher == nil || rep.Runner == nil || rep.Launch.ExitCode != 0 || rep.Runner.Status != "changes" {
 		return rep, nil
 	}
@@ -137,7 +142,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	rep.Push = &out
 	o.log("published", "branch", out.Branch, "pr_url", out.PRURL, "reused", out.Reused)
-	pub := notify.Event{State: notify.Published, Branch: out.Branch, PRURL: out.PRURL}
+	pub := notify.Event{State: notify.Published, Branch: out.Branch, PRURL: out.PRURL, PRNumber: out.PRNumber, PRTitle: out.Title, Files: out.Files}
 	if out.Reused {
 		pub.Reason = "the PR already existed (a re-delivered step)"
 	}
@@ -145,29 +150,25 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	return rep, nil
 }
 
-// stepSummary is the step's outcome in a few words, for a notification.
-func stepSummary(rep Report, status string) string {
+// stepFinished is the StepFinished event for a step that took took.
+func stepFinished(rep Report, took time.Duration) notify.Event {
+	ev := notify.Event{State: notify.StepFinished, Took: took, Outcome: "failed"}
 	l := rep.Launch
 	switch {
 	case l.TimedOut:
-		return "timed out"
+		ev.Outcome = "timed_out"
 	case l.OOMKilled:
-		return "ran out of memory"
+		ev.Outcome = "out_of_memory"
 	case l.Cancelled:
-		return "cancelled"
+		ev.Outcome = "cancelled"
+	case rep.Runner != nil:
+		r := rep.Runner
+		ev.Outcome, ev.Commits, ev.Rehearsal, ev.Rehearsals, ev.Summary = r.Status, r.Commits, r.Rehearsal, r.RehearsalRuns, Summary(r)
+		if r.Status == "failed" {
+			ev.Reason, ev.Detail = r.Error, r.Error
+		}
 	}
-	s := fmt.Sprintf("%s, exit %d", strings.ReplaceAll(status, "_", " "), l.ExitCode)
-	if rep.Runner != nil && rep.Runner.Commits > 0 {
-		s += fmt.Sprintf(", %d commit(s)", rep.Runner.Commits)
-	}
-	return s
-}
-
-func short(sha string) string {
-	if len(sha) > 7 {
-		return sha[:7]
-	}
-	return sha
+	return ev
 }
 
 // Summary is the agent's final message from the runner's result event.

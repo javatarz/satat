@@ -72,7 +72,9 @@ type Output struct {
 	Status string `json:"status"`
 	Branch string `json:"branch,omitempty"`
 	PRURL  string `json:"pr_url,omitempty"`
-	Reused bool   `json:"reused,omitempty"`
+	// PRNumber is the draft PR's number, for notifications.
+	PRNumber int  `json:"pr_number,omitempty"`
+	Reused   bool `json:"reused,omitempty"`
 	// Backoffs is how many times the run has been backed off for the Claude rate limit, set on
 	// the attempt that hit it. Hatchet's attempt history shows the rest.
 	Backoffs int `json:"backoffs,omitempty"`
@@ -264,7 +266,7 @@ func (h Handler) RunAttempt(ctx context.Context, runID string, in Input, attempt
 		return h.backOff(ctx, out, in, resets, attempt)
 	}
 	if rep.Push != nil {
-		out.PRURL, out.Reused = rep.Push.PRURL, rep.Push.Reused
+		out.PRURL, out.PRNumber, out.Reused = rep.Push.PRURL, rep.Push.PRNumber, rep.Push.Reused
 	}
 	if !rep.OK() {
 		return out, failure(rep)
@@ -332,8 +334,10 @@ func (h Handler) notifier(in Input) *notify.Safe {
 func (h Handler) Attempt(ctx context.Context, runID string, in Input, attempt int) (Output, error) {
 	n := h.notifier(in)
 	ev := func(s notify.State) notify.Event {
-		return notify.Event{State: s, Run: runID, Repo: in.Repo, Issue: in.Issue.Number, Lane: in.Lane, Attempt: attempt}
+		return notify.Event{State: s, Run: runID, Repo: in.Repo, Issue: in.Issue.Number, IssueTitle: in.Issue.Title,
+			Lane: in.Lane, Base: in.Base, Agent: pipeline.AgentName, Attempt: attempt}
 	}
+	start := time.Now()
 	h.logRun("run started", runID, in, "attempt", attempt)
 	n.Send(ctx, ev(notify.Started))
 	out, err := h.RunAttempt(ctx, runID, in, attempt)
@@ -344,21 +348,17 @@ func (h Handler) Attempt(ctx context.Context, runID string, in Input, attempt in
 	h.logRun("run finished", runID, in, args...)
 
 	end := ev(notify.Completed)
+	end.Took, end.Outcome = time.Since(start), out.Status
 	var rl *RateLimitError
 	switch {
 	case errors.As(err, &rl):
-		end.State, end.Reason = notify.RateLimited, "Claude usage limit hit; the lane is paused and a retry is queued"
-		if !rl.ResetsAt.IsZero() {
-			end.Reason += " (resets " + rl.ResetsAt.UTC().Format("15:04 MST") + ")"
-		}
+		end.State, end.ResetsAt, end.MaxAttempts = notify.RateLimited, rl.ResetsAt, MaxBackoffRetries
 	case err != nil:
 		end.State, end.Reason, end.Detail = notify.Failed, err.Error(), err.Error()
 	case out.Status == StatusSkipped:
 		end.State, end.Reason = notify.Skipped, out.Reason
-	case out.PRURL != "":
-		end.PRURL, end.Reason = out.PRURL, "draft PR open for review"
 	default:
-		end.Reason = strings.ReplaceAll(out.Status, "_", " ")
+		end.PRURL, end.PRNumber = out.PRURL, out.PRNumber
 	}
 	n.Send(ctx, end)
 	return out, err

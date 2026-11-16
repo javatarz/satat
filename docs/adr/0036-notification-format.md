@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (2026-11-16). Refines [ADR 0035](0035-run-state-notifications.md), which chose the states
+Accepted (2026-11-16). Refines [ADR 0035](0035-run-state-notifications.md), which chose the states
 and channels. The research is in [notification-format.md](../research/notification-format.md).
 
 ## Context
@@ -94,7 +94,8 @@ Each known failure has a plain cause and a fix, in one table in the code:
 - The messages grow from one line to two or three. GitHub comments stay short; the long output is
   collapsed.
 - New event fields are needed from the pusher (PR title, files) and the handler (durations, retry
-  limit). The run-log link needs Hatchet's dashboard URL, a new `notify` setting.
+  limit). The run-log link needs Hatchet's dashboard URL as a browser reaches it, set as
+  `notify.dashboard`; the worker reads the tenant from its Hatchet token.
 - A new failure that isn't in the cause table reads "something went wrong in {stage}" until it's
   added. That keeps the reader from a raw error, but the table needs upkeep.
 - Wording lives in one place and is tested, so changing it is a single, reviewed change.

@@ -27,18 +27,32 @@ func (n *Ntfy) Notify(ctx context.Context, ev Event) error {
 	if n.Server == "" || n.Topic == "" {
 		return nil
 	}
+	m := Compose(ev)
+	body := m.Body
+	if ev.Repo != "" && ev.Issue > 0 {
+		// The reader is not on the issue, so name it first.
+		issue := fmt.Sprintf("**%s#%d**", ev.Repo, ev.Issue)
+		if ev.IssueTitle != "" {
+			issue += ": " + ev.IssueTitle
+		}
+		body = issue + "\n\n" + body
+	}
 	msg := map[string]any{
 		"topic":    n.Topic,
-		"title":    title(ev),
-		"message":  Text(ev),
-		"tags":     []string{tag(ev.State)},
-		"priority": priority(ev.State),
+		"title":    m.Headline,
+		"message":  body,
+		"markdown": true,
+		"tags":     []string{m.Tag},
+		"priority": m.Priority,
 	}
 	switch {
-	case ev.PRURL != "":
-		msg["click"] = ev.PRURL
+	case m.Link != "":
+		msg["click"] = m.Link
 	case ev.Repo != "" && ev.Issue > 0:
 		msg["click"] = fmt.Sprintf("https://github.com/%s/issues/%d", ev.Repo, ev.Issue)
+	}
+	if ev.Repo != "" && ev.Issue > 0 && m.Link != "" {
+		msg["actions"] = []map[string]any{{"action": "view", "label": "Open issue", "url": fmt.Sprintf("https://github.com/%s/issues/%d", ev.Repo, ev.Issue)}}
 	}
 	b, err := json.Marshal(msg)
 	if err != nil {
@@ -65,45 +79,4 @@ func (n *Ntfy) Notify(ctx context.Context, ev Event) error {
 		return fmt.Errorf("ntfy: HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	return nil
-}
-
-func title(ev Event) string {
-	if ev.Repo == "" {
-		return fmt.Sprintf("Satat: %s", ev.State)
-	}
-	return fmt.Sprintf("Satat %s#%d: %s", ev.Repo, ev.Issue, ev.State)
-}
-
-// tag is the emoji short code ntfy shows for a state.
-func tag(s State) string {
-	switch s {
-	case Published, Completed:
-		return "white_check_mark"
-	case Failed, NotPublished:
-		return "x"
-	case WorkerDown:
-		return "rotating_light"
-	case WorkerUp:
-		return "white_check_mark"
-	case RateLimited:
-		return "hourglass"
-	case Skipped:
-		return "fast_forward"
-	default:
-		return "gear"
-	}
-}
-
-// priority keeps the outcome loud and the steps on the way quiet (ntfy: 1 min to 5 max, 3 default).
-func priority(s State) int {
-	switch s {
-	case WorkerDown:
-		return 5
-	case Failed, NotPublished, Published, WorkerUp:
-		return 4
-	case Queued, Started, Completed, Skipped, RateLimited:
-		return 3
-	default:
-		return 2
-	}
 }

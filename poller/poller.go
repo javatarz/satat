@@ -150,7 +150,8 @@ func (p *Poller) pollRepo(ctx context.Context, r config.PollRepo, ran map[string
 		if p.Log != nil {
 			p.Log.Info("queued issue", "issue", key, "lane", r.Lane)
 		}
-		p.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: is.Number, Lane: in.Lane, Source: "poller"})
+		p.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: is.Number, IssueTitle: is.Title, Lane: in.Lane,
+			Source: "poller", GlobalCap: p.Config.Limits.Global, RepoCap: p.Config.Limits.PerRepo})
 	}
 	return errors.Join(errs...)
 }

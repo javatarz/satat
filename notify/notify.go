@@ -68,6 +68,38 @@ type Event struct {
 	// Source says who queued the issue ("poller", "webhook"), for Queued.
 	Source string
 	At     time.Time
+
+	// The rest fills in the message (ADR 0036); each is set where it is known, and a message
+	// leaves out what is missing.
+
+	// IssueTitle names the issue where the reader is not on it (ntfy).
+	IssueTitle string
+	// Agent is the coding agent's name, such as "Claude Code".
+	Agent string
+	// Base is the branch the run started from, SHA the commit cloned.
+	Base, SHA string
+	// GlobalCap and RepoCap are the run caps, for Queued.
+	GlobalCap, RepoCap int
+	// Outcome is the step's result: "changes", "no_changes", "failed", "timed_out",
+	// "out_of_memory" or "cancelled".
+	Outcome string
+	// Commits the agent made; Rehearsal is the pre-push check's result ("passed", "failed") and
+	// Rehearsals how many times it ran.
+	Commits, Rehearsals int
+	Rehearsal           string
+	// Summary is the agent's own final message.
+	Summary string
+	// Took is how long the step (StepFinished) or the run (Completed, Failed) took.
+	Took time.Duration
+	// PRNumber, PRTitle and Files describe the draft PR.
+	PRNumber int
+	PRTitle  string
+	Files    int
+	// MaxAttempts is how many rate-limit retries a run gets; ResetsAt when the limit resets.
+	MaxAttempts int
+	ResetsAt    time.Time
+	// RunURL links to the run in Hatchet's dashboard. Safe fills it from Run.
+	RunURL string
 }
 
 // Notifier delivers events on one channel.
@@ -102,6 +134,8 @@ type Safe struct {
 	Timeout time.Duration
 	// Now stamps events that have no time; nil means time.Now.
 	Now func() time.Time
+	// RunURL, when set, links an event with a Run to that run's page.
+	RunURL func(run string) string
 }
 
 // Send delivers ev. It never fails.
@@ -116,7 +150,10 @@ func (s *Safe) Send(ctx context.Context, ev Event) {
 		}
 		ev.At = now().UTC()
 	}
-	ev.Reason, ev.Detail = Short(s.scrub(ev.Reason)), s.scrub(ev.Detail)
+	if ev.RunURL == "" && ev.Run != "" && s.RunURL != nil {
+		ev.RunURL = s.RunURL(ev.Run)
+	}
+	ev.Reason, ev.Detail, ev.Summary = Short(s.scrub(ev.Reason)), s.scrub(ev.Detail), s.scrub(ev.Summary)
 	if ev.Detail == ev.Reason {
 		ev.Detail = ""
 	}
@@ -157,25 +194,4 @@ func Short(t string) string {
 	}
 	r := []rune(line)
 	return string(r[:maxReason-1]) + "…"
-}
-
-// Text is a one-line, human summary of ev, for channels that show plain text.
-func Text(ev Event) string {
-	var b strings.Builder
-	switch ev.State {
-	case Published:
-		if ev.PRURL != "" {
-			fmt.Fprintf(&b, "Satat opened a draft PR: %s", ev.PRURL)
-		} else {
-			b.WriteString("Satat published the change")
-		}
-	case Failed:
-		b.WriteString("Satat failed")
-	default:
-		fmt.Fprintf(&b, "Satat: %s", ev.State)
-	}
-	if ev.Reason != "" && ev.State != Published {
-		fmt.Fprintf(&b, ": %s", ev.Reason)
-	}
-	return b.String()
 }

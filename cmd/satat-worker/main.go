@@ -23,12 +23,15 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"maps"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -309,7 +312,37 @@ func newNotifier(cfg config.Config, log *slog.Logger) (*notify.Safe, error) {
 		return nil, nil
 	}
 	log.Info("notify on", "github", cfg.Notify.GitHub, "ntfy", cfg.Notify.NtfyServer)
-	return &notify.Safe{Next: channels, Log: log, Secrets: secretValues(cfg)}, nil
+	safe := &notify.Safe{Next: channels, Log: log, Secrets: secretValues(cfg)}
+	if cfg.Notify.Dashboard != "" {
+		if tenant := tokenTenant(os.Getenv("HATCHET_CLIENT_TOKEN")); tenant != "" {
+			safe.RunURL = func(run string) string {
+				return cfg.Notify.Dashboard + "/tenants/" + tenant + "/runs/" + run
+			}
+		} else {
+			log.Warn("notify.dashboard is set but the Hatchet token names no tenant: notifications carry no run link")
+		}
+	}
+	return safe, nil
+}
+
+// tokenTenant reads the tenant ID from a Hatchet API token (a JWT whose subject is the tenant), for
+// the dashboard's run links. It does not verify the token: Hatchet does that.
+func tokenTenant(token string) string {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(strings.TrimRight(parts[1], "="))
+	if err != nil {
+		return ""
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if json.Unmarshal(payload, &claims) != nil {
+		return ""
+	}
+	return url.PathEscape(claims.Sub)
 }
 
 // workerName is the name the worker registers with. Hatchet allows only letters, digits, ".", "-"

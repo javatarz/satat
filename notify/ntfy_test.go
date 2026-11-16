@@ -20,17 +20,18 @@ func TestNtfyPublishesAMessageThatOpensThePR(t *testing.T) {
 	}))
 	defer srv.Close()
 	n := &Ntfy{Server: srv.URL + "/", Topic: "secret-topic"}
-	if err := n.Notify(context.Background(), Event{State: Published, Repo: "o/r", Issue: 1, PRURL: "https://github.com/o/r/pull/2"}); err != nil {
+	if err := n.Notify(context.Background(), Event{State: Published, Repo: "o/r", Issue: 1, IssueTitle: "Greet people", PRNumber: 2, PRTitle: "Add greet", PRURL: "https://github.com/o/r/pull/2"}); err != nil {
 		t.Fatal(err)
 	}
-	if got["topic"] != "secret-topic" || got["click"] != "https://github.com/o/r/pull/2" || !strings.Contains(got["message"].(string), "draft PR") {
+	if got["topic"] != "secret-topic" || got["click"] != "https://github.com/o/r/pull/2" || got["title"] != "Satat opened draft PR #2: Add greet" ||
+		!strings.HasPrefix(got["message"].(string), "**o/r#1**: Greet people") || got["priority"].(float64) != 4 || got["markdown"] != true {
 		t.Errorf("published %v", got)
 	}
-	if err := n.Notify(context.Background(), Event{State: Failed, Repo: "o/r", Issue: 1, Reason: "clone failed"}); err != nil {
+	if err := n.Notify(context.Background(), Event{State: Cloned, Repo: "o/r", Issue: 1, Base: "main", SHA: "44f6ada2a79"}); err != nil {
 		t.Fatal(err)
 	}
-	if got["click"] != "https://github.com/o/r/issues/1" || got["message"] != "Satat failed: clone failed" || got["priority"].(float64) != 4 {
-		t.Errorf("published %v", got)
+	if got["click"] != "https://github.com/o/r/issues/1" || got["priority"].(float64) != 2 || !strings.Contains(got["message"].(string), "`main` at `44f6ada`") {
+		t.Errorf("a progress message should be quiet and open the issue: %v", got)
 	}
 }
 

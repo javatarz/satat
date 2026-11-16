@@ -53,6 +53,9 @@ type Outcome struct {
 	Branch   string
 	PRNumber int
 	PRURL    string
+	// Title is the PR's title; Files counts the files the change touches.
+	Title string
+	Files int
 	// Reused is true when the branch and PR were already there (a re-delivered step).
 	Reused bool
 }
@@ -159,6 +162,13 @@ func (p *Pusher) Push(ctx context.Context, req Request) (Outcome, error) {
 	if commits == 0 || commits > p.MaxCommits {
 		return out, refuse("%d commits; must be between 1 and %d", commits, p.MaxCommits)
 	}
+	if names, err := p.gitOut(ctx, repoDir, "diff", "--name-only", req.BaseSHA, req.HeadSHA); err == nil {
+		for _, n := range strings.Split(names, "\n") {
+			if strings.TrimSpace(n) != "" {
+				out.Files++
+			}
+		}
+	}
 
 	// Content checks, on exactly what would be pushed.
 	if err := p.checkProtected(ctx, repoDir, req); err != nil {
@@ -188,6 +198,7 @@ func (p *Pusher) Push(ctx context.Context, req Request) (Outcome, error) {
 	if err != nil {
 		return out, err
 	}
+	out.Title = title
 	pr, found, err := p.findPR(ctx, req.Repo, branch)
 	if err != nil {
 		return out, err

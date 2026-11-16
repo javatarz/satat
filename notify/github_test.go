@@ -78,14 +78,14 @@ func TestEveryStateIsANewCommentInOrder(t *testing.T) {
 	for _, e := range []Event{
 		{State: Queued, Repo: "o/r", Issue: 1, Source: "poller"},
 		ev(Started, "7cac965f-67b7"),
-		{State: StepFinished, Run: "7cac965f-67b7", Repo: "o/r", Issue: 1, Reason: "changes, exit 0, 1 commit(s)"},
-		{State: Published, Run: "7cac965f-67b7", Repo: "o/r", Issue: 1, PRURL: "https://github.com/o/r/pull/2"},
+		{State: StepFinished, Run: "7cac965f-67b7", Repo: "o/r", Issue: 1, Agent: "Claude Code", Outcome: "changes", Commits: 1},
+		{State: Published, Run: "7cac965f-67b7", Repo: "o/r", Issue: 1, PRNumber: 2, PRURL: "https://github.com/o/r/pull/2", RunURL: "http://hatchet/runs/7cac965f-67b7"},
 	} {
 		if err := g.Notify(ctx, e); err != nil {
 			t.Fatal(err)
 		}
 	}
-	want := []string{"**Satat: queued** · by the poller", "**Satat: started** · run `7cac965f`", "**Satat: step finished**", "**Satat: published**"}
+	want := []string{"⏳ **Satat queued this issue**", "▶️ **Satat started work on this issue**", "🏁 **Claude Code finished: 1 commit**", "✅ **Satat opened draft PR #2**"}
 	if len(f.comments) != len(want) {
 		t.Fatalf("%d comments, want one per state", len(f.comments))
 	}
@@ -94,8 +94,8 @@ func TestEveryStateIsANewCommentInOrder(t *testing.T) {
 			t.Errorf("comment %d = %q, want it to start %q", i, f.comments[i].Body, w)
 		}
 	}
-	if !strings.Contains(f.comments[3].Body, "https://github.com/o/r/pull/2") || !strings.Contains(f.comments[2].Body, "1 commit(s)") {
-		t.Errorf("comments lack the PR or the reason: %+v", f.comments)
+	if pr := f.comments[3].Body; !strings.Contains(pr, "[Draft PR](https://github.com/o/r/pull/2) · [Run log](http://hatchet/runs/7cac965f-67b7)") || !strings.Contains(pr, "<sub>Satat run `7cac965f` · published</sub>") {
+		t.Errorf("PR comment lacks its links or run:\n%s", pr)
 	}
 	if !slices.Equal(f.labels, []string{ReadyLabel}) {
 		t.Errorf("labels = %v, want them untouched on success", f.labels)
@@ -106,7 +106,7 @@ func TestAFailureSwapsTheLabelAndAStartClearsIt(t *testing.T) {
 	f, g := newFake(t)
 	ctx := context.Background()
 	fail := ev(Failed, "r1")
-	fail.Reason, fail.Detail = "pre-push hook still failing", "pre-push hook still failing\n```\npython: not found"
+	fail.Reason, fail.Detail = "step failed (exit 1): pre-push hook still failing after 3 retries", "pre-push hook still failing after 3 retries\n```\npython: not found"
 	if err := g.Notify(ctx, fail); err != nil {
 		t.Fatal(err)
 	}
@@ -114,8 +114,13 @@ func TestAFailureSwapsTheLabelAndAStartClearsIt(t *testing.T) {
 		t.Errorf("labels after a failure = %v, want only %s", f.labels, FailedLabel)
 	}
 	body := f.comments[0].Body
-	if !strings.Contains(body, "pre-push hook still failing") || !strings.Contains(body, "<details>") || strings.Count(body, "```") != 2 || !strings.Contains(body, "again to run it again") {
-		t.Errorf("failure comment:\n%s", body)
+	for _, want := range []string{"❌ **Satat failed: the repo's pre-push checks kept failing**", "was swapped for `satat:failed`", "again to re-run it", "<details>"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("failure comment lacks %q:\n%s", want, body)
+		}
+	}
+	if strings.Count(body, "```") != 2 {
+		t.Errorf("the detail's own fence was not neutralised:\n%s", body)
 	}
 	f.labels = append(f.labels, ReadyLabel) // a person adds it again
 	if err := g.Notify(ctx, ev(Started, "r2")); err != nil {

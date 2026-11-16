@@ -198,7 +198,8 @@ func (i Intake) Handle(ctx context.Context, p WebhookPayload) (IntakeResult, err
 	if err := i.Events.Push(ctx, EventIssue, in); err != nil {
 		return IntakeResult{}, fmt.Errorf("queue %s#%d: %w", in.Repo, in.Issue.Number, err)
 	}
-	i.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: in.Issue.Number, Lane: in.Lane, Source: "webhook"})
+	i.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: in.Issue.Number, IssueTitle: in.Issue.Title, Lane: in.Lane,
+		Source: "webhook", GlobalCap: i.Config.Limits.Global, RepoCap: i.Config.Limits.PerRepo})
 	return IntakeResult{Queued: true, Repo: in.Repo, Issue: in.Issue.Number}, nil
 }
 

@@ -96,28 +96,20 @@ func (g *GitHub) removeLabel(ctx context.Context, repo string, issue int, label 
 // maxDetail keeps a comment well under GitHub's 65536-character limit.
 const maxDetail = 20000
 
-// CommentBody is the comment for one event: the state in bold, then what it means.
+// CommentBody is the comment for one event (ADR 0036): the headline in bold, the body, the link,
+// the full output collapsed, and the run in small print.
 func CommentBody(ev Event) string {
+	m := Compose(ev)
 	var b strings.Builder
-	fmt.Fprintf(&b, "**Satat: %s**", ev.State)
-	if ev.Attempt > 0 && ev.State == Started {
-		fmt.Fprintf(&b, " (retry %d)", ev.Attempt)
+	fmt.Fprintf(&b, "%s **%s**", m.Emoji, m.Headline)
+	if m.Body != "" {
+		fmt.Fprintf(&b, "\n\n%s", m.Body)
 	}
-	if ev.Run != "" {
-		run := ev.Run
-		if len(run) > 8 {
-			run = run[:8]
+	if m.Link != "" {
+		fmt.Fprintf(&b, "\n\n[%s](%s)", m.LinkText, m.Link)
+		if m.LinkText != "Run log" && ev.RunURL != "" {
+			fmt.Fprintf(&b, " · [Run log](%s)", ev.RunURL)
 		}
-		fmt.Fprintf(&b, " · run `%s`", run)
-	}
-	switch {
-	case ev.PRURL != "":
-		fmt.Fprintf(&b, "\n\nDraft PR: %s", ev.PRURL)
-	case ev.Source != "":
-		fmt.Fprintf(&b, " · by the %s", ev.Source)
-	}
-	if ev.Reason != "" {
-		fmt.Fprintf(&b, "\n\n%s", ev.Reason)
 	}
 	if d := ev.Detail; d != "" {
 		if len(d) > maxDetail {
@@ -125,8 +117,8 @@ func CommentBody(ev Event) string {
 		}
 		fmt.Fprintf(&b, "\n\n<details><summary>Details</summary>\n\n```\n%s\n```\n</details>", strings.ReplaceAll(d, "```", "'''"))
 	}
-	if ev.State == Failed {
-		fmt.Fprintf(&b, "\n\n`%s` was swapped for `%s`. Add `%s` again to run it again.", ReadyLabel, FailedLabel, ReadyLabel)
+	if ev.Run != "" {
+		fmt.Fprintf(&b, "\n\n<sub>Satat run `%s` · %s</sub>", shortRun(ev.Run), ev.State)
 	}
 	return b.String()
 }
