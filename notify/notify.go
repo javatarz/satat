@@ -153,10 +153,9 @@ func (s *Safe) Send(ctx context.Context, ev Event) {
 	if ev.RunURL == "" && ev.Run != "" && s.RunURL != nil {
 		ev.RunURL = s.RunURL(ev.Run)
 	}
+	// Detail stays even when it equals Reason: a failure's message shows the plain cause, not the
+	// raw error, so Detail is the only place the reader sees it (ADR 0036).
 	ev.Reason, ev.Detail, ev.Summary = Short(s.scrub(ev.Reason)), s.scrub(ev.Detail), s.scrub(ev.Summary)
-	if ev.Detail == ev.Reason {
-		ev.Detail = ""
-	}
 	timeout := s.Timeout
 	if timeout <= 0 {
 		timeout = DefaultTimeout

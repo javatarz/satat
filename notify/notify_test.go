@@ -42,6 +42,17 @@ func TestSafeScrubsShortensAndOutlivesTheRun(t *testing.T) {
 	}
 }
 
+// A short raw error is its own Reason and Detail. The message shows only the plain cause, so the
+// raw error must survive as Detail or the reader never sees it.
+func TestAShortFailureKeepsItsRawError(t *testing.T) {
+	r := &recorder{}
+	raw := "clone o/r: git: exit status 128"
+	(&Safe{Next: r}).Send(context.Background(), Event{State: Failed, Reason: raw, Detail: raw})
+	if r.got[0].Detail != raw {
+		t.Errorf("Detail = %q, want %q", r.got[0].Detail, raw)
+	}
+}
+
 func TestANilSafeOrChannelDoesNothing(t *testing.T) {
 	var s *Safe
 	s.Send(context.Background(), Event{State: Started})
