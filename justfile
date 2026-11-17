@@ -71,6 +71,14 @@ enqueue repo issue:
     export HATCHET_CLIENT_HOST_PORT="${HATCHET_CLIENT_HOST_PORT:-localhost:7077}" HATCHET_CLIENT_TLS_STRATEGY="${HATCHET_CLIENT_TLS_STRATEGY:-none}"
     go run ./cmd/satat-enqueue --repo {{repo}} --issue {{issue}}
 
+# Watch for a missing worker and alert on ntfy (needs notify.ntfy.server in satat.yaml and SATAT_NTFY_TOPIC)
+watch:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    export HATCHET_CLIENT_TOKEN="${HATCHET_CLIENT_TOKEN:-$(sed -n 's/^HATCHET_CLIENT_TOKEN=//p' .env)}"
+    export HATCHET_CLIENT_HOST_PORT="${HATCHET_CLIENT_HOST_PORT:-localhost:7077}" HATCHET_CLIENT_TLS_STRATEGY="${HATCHET_CLIENT_TLS_STRATEGY:-none}" HATCHET_CLIENT_SERVER_URL="${HATCHET_CLIENT_SERVER_URL:-http://localhost:8888}"
+    go run ./cmd/satat-watch
+
 # Run what CI runs: pre-commit, gofmt, go vet, the Docker socket check and the compose render check
 lint:
     pre-commit run --all-files

@@ -42,7 +42,7 @@ const (
 // satat.k8s/lanes.yaml, every lane's objects but its Secret. Neither holds a secret value.
 func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	values, err := marshal(map[string]any{
-		"worker": map[string]any{"secretNames": config.WorkerSecrets},
+		"worker": map[string]any{"secretNames": cfg.WorkerSecretNames()},
 	})
 	if err != nil {
 		return nil, err

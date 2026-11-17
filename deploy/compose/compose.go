@@ -86,6 +86,8 @@ func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 	data := struct {
 		WorkerEnv, OptionalEnv                              []string
 		PostgresImage, HatchetLiteImage, GoImage, BaseImage string
+		// Watch adds the satat-watch service, which reports a missing worker on ntfy.
+		Watch bool
 	}{
 		WorkerEnv:        cfg.SecretNames(),
 		OptionalEnv:      cfg.OptionalEnvNames(),
@@ -93,6 +95,7 @@ func (t *Target) Render(cfg config.Config) (map[string][]byte, error) {
 		HatchetLiteImage: deploy.HatchetLiteImage,
 		GoImage:          deploy.GoImage,
 		BaseImage:        deploy.BaseImage,
+		Watch:            cfg.Notify.NtfyServer != "",
 	}
 	if err := tmpl.Execute(&buf, data); err != nil {
 		return nil, fmt.Errorf("render compose.yaml: %w", err)
@@ -196,8 +199,12 @@ func (t *Target) Up(ctx context.Context, cfg config.Config, secrets deploy.Secre
 	}
 	env = append(env, keyConfigHash+"="+hex.EncodeToString(configHash[:]))
 	t.warnRunningAgents(ctx)
-	t.say("building and starting worker")
-	if _, err := t.compose(ctx, env, "up", "-d", "--build", "worker"); err != nil {
+	services := []string{"worker"}
+	if cfg.Notify.NtfyServer != "" {
+		services = append(services, "watch") // reports a missing worker; it has no healthcheck to wait on
+	}
+	t.say("building and starting %s", strings.Join(services, " and "))
+	if _, err := t.compose(ctx, env, append([]string{"up", "-d", "--build"}, services...)...); err != nil {
 		return err
 	}
 	timeout := or(t.workerTimeout, defaultWorkerTimeout)

@@ -144,6 +144,40 @@ services:
     networks:
       - default
       - docker-api
+{{- if .Watch}}
+
+  # Reports what the worker can't (#235, ADR 0035): an ntfy message when no worker has had a
+  # heartbeat for 3 minutes, and another when one is back. Same image as the worker; no Docker access.
+  watch:
+    build:
+      context: .
+      dockerfile: images/worker/Dockerfile
+      args:
+        GO_IMAGE: {{.GoImage}}
+        BASE_IMAGE: {{.BaseImage}}
+    entrypoint: ["/usr/local/bin/satat-watch"]
+    restart: unless-stopped
+    depends_on:
+      hatchet-lite:
+        condition: service_healthy
+    environment:
+      HATCHET_CLIENT_TOKEN: ${HATCHET_CLIENT_TOKEN:?run satat deploy up}
+      HATCHET_CLIENT_HOST_PORT: hatchet-lite:7077
+      HATCHET_CLIENT_TLS_STRATEGY: none
+      HATCHET_CLIENT_SERVER_URL: http://hatchet-lite:8888
+      SATAT_CONFIG: /etc/satat/satat.yaml
+      SATAT_NTFY_TOPIC: ${SATAT_NTFY_TOPIC:?run satat deploy up}
+    volumes:
+      - ./satat.yaml:/etc/satat/satat.yaml:ro
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges
+    mem_limit: 64m
+    networks:
+      - default
+{{- end}}
 
 networks:
   docker-api:

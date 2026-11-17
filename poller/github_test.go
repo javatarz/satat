@@ -88,3 +88,22 @@ func TestAFullLastPageIsAnError(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestLabelledAtIsTheLastTimeTheLabelWasAdded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/repos/me/a/issues/7/events" {
+			http.Error(w, "bad", 400)
+			return
+		}
+		fmt.Fprint(w, `[
+			{"event":"labeled","created_at":"2026-11-16T08:00:00Z","label":{"name":"ready-for-agent"}},
+			{"event":"unlabeled","created_at":"2026-11-16T08:05:00Z","label":{"name":"ready-for-agent"}},
+			{"event":"labeled","created_at":"2026-11-16T09:00:00Z","label":{"name":"ready-for-agent"}},
+			{"event":"labeled","created_at":"2026-11-16T10:00:00Z","label":{"name":"bug"}}]`)
+	}))
+	defer srv.Close()
+	at, err := GitHub{APIBase: srv.URL}.LabelledAt(context.Background(), "me/a", 7, "ready-for-agent")
+	if err != nil || at.Format("15:04") != "09:00" {
+		t.Fatalf("at %v, err %v", at, err)
+	}
+}

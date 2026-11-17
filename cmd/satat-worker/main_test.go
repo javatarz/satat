@@ -21,3 +21,16 @@ func TestWorkerNameFitsHatchet(t *testing.T) {
 		}
 	}
 }
+
+func TestTokenTenantReadsTheSubject(t *testing.T) {
+	// header.payload.signature, with payload {"sub":"707d0855-80ab-4e1f-a156-f1c4546cbf52"}.
+	tok := "eyJhbGciOiJub25lIn0.eyJzdWIiOiI3MDdkMDg1NS04MGFiLTRlMWYtYTE1Ni1mMWM0NTQ2Y2JmNTIifQ.sig"
+	if got := tokenTenant(tok); got != "707d0855-80ab-4e1f-a156-f1c4546cbf52" {
+		t.Errorf("tenant = %q", got)
+	}
+	for _, bad := range []string{"", "not-a-jwt", "a.!!!.c"} {
+		if got := tokenTenant(bad); got != "" {
+			t.Errorf("tokenTenant(%q) = %q, want empty", bad, got)
+		}
+	}
+}

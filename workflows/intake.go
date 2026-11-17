@@ -8,10 +8,12 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
+	"time"
 
 	hatchet "github.com/hatchet-dev/hatchet/sdks/go"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/runner"
 )
 
@@ -96,10 +98,32 @@ type EventPusher interface {
 	Push(ctx context.Context, key string, payload any) error
 }
 
-// Runs reports which issues have ever had a satat-issue run, as IssueKey keys. poller.HatchetRuns
-// is the real one.
+// LastRun is what Runs knows of an issue's satat-issue runs.
+type LastRun struct {
+	// At is when the newest run was created.
+	At time.Time
+	// InFlight is true while any run of the issue is queued or running.
+	InFlight bool
+}
+
+// Runs reports which issues have had a satat-issue run, as IssueKey keys. poller.HatchetRuns is
+// the real one.
 type Runs interface {
-	Issues(ctx context.Context) (map[string]bool, error)
+	Issues(ctx context.Context) (map[string]LastRun, error)
+}
+
+// LabelReader says when a label was last added to an issue. poller.GitHub is the real one.
+type LabelReader interface {
+	LabelledAt(ctx context.Context, repo string, number int, label string) (time.Time, error)
+}
+
+// Rerun says whether an issue that has had a run may be queued again: only when none of its runs
+// is in flight and ReadyLabel was added after its newest run was created. That is how a person
+// asks for a re-run: after a failure the GitHub notifier swaps the label for satat:failed, and the
+// person adds ReadyLabel back. A redelivered or stale event, or a label added before the last run,
+// queues nothing. A zero labelledAt (the label was never added) re-runs nothing.
+func Rerun(last LastRun, labelledAt time.Time) bool {
+	return !last.InFlight && !labelledAt.IsZero() && labelledAt.After(last.At)
 }
 
 // IssueKey names an issue in Runs: "owner/name#N", with the repo lower-cased because GitHub
@@ -118,9 +142,14 @@ type Intake struct {
 	// Runs is how intake sees an issue that already has a run. It is required: a nil Runs fails
 	// closed, because a redelivery would then start a second run (#182).
 	Runs Runs
+	// Labels lets intake re-run an issue whose label was added again after its last run (Rerun).
+	// With nil Labels an issue with any run is never queued again.
+	Labels LabelReader
 	// Log, when set, records each skipped duplicate. The skip is otherwise visible only as the
 	// reason in the intake run's result.
 	Log *slog.Logger
+	// Notify, when set, gets a Queued event for each issue intake queues (#235).
+	Notify *notify.Safe
 }
 
 // Handle takes one delivery to a result. An issue that already has a run, of any status, is not
@@ -150,15 +179,27 @@ func (i Intake) Handle(ctx context.Context, p WebhookPayload) (IntakeResult, err
 	if err != nil {
 		return IntakeResult{}, fmt.Errorf("list runs: %w", err)
 	}
-	if ran[IssueKey(in.Repo, in.Issue.Number)] {
-		if i.Log != nil {
-			i.Log.Info("intake skipped: issue already has a run", "issue", IssueKey(in.Repo, in.Issue.Number))
+	if last, ok := ran[IssueKey(in.Repo, in.Issue.Number)]; ok {
+		rerun := false
+		if !last.InFlight && i.Labels != nil {
+			at, err := i.Labels.LabelledAt(ctx, in.Repo, in.Issue.Number, ReadyLabel)
+			if err != nil {
+				return IntakeResult{}, fmt.Errorf("when was %s#%d labelled: %w", in.Repo, in.Issue.Number, err)
+			}
+			rerun = Rerun(last, at)
 		}
-		return IntakeResult{Reason: "already has a run", Repo: in.Repo, Issue: in.Issue.Number}, nil
+		if !rerun {
+			if i.Log != nil {
+				i.Log.Info("intake skipped: issue already has a run", "issue", IssueKey(in.Repo, in.Issue.Number))
+			}
+			return IntakeResult{Reason: "already has a run", Repo: in.Repo, Issue: in.Issue.Number}, nil
+		}
 	}
 	if err := i.Events.Push(ctx, EventIssue, in); err != nil {
 		return IntakeResult{}, fmt.Errorf("queue %s#%d: %w", in.Repo, in.Issue.Number, err)
 	}
+	i.Notify.Send(ctx, notify.Event{State: notify.Queued, Repo: in.Repo, Issue: in.Issue.Number, IssueTitle: in.Issue.Title, Lane: in.Lane,
+		Source: "webhook", GlobalCap: i.Config.Limits.Global, RepoCap: i.Config.Limits.PerRepo})
 	return IntakeResult{Queued: true, Repo: in.Repo, Issue: in.Issue.Number}, nil
 }
 

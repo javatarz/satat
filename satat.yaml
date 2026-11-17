@@ -31,6 +31,23 @@ poller:
   cron: "*/5 * * * *"
   repos: []
 
+# Where run states go (#235, ADR 0035). Every channel is off unless set here. The worker sends an
+# event at every state of an issue run (queued, started, skipped, cloned, step started and finished,
+# rate limited, published, completed, failed); agent runs send none.
+#   github: a comment on the issue at every state, so watchers are notified each time, and
+#     ready-for-agent swapped for satat:failed when a run fails. Needs SATAT_NOTIFY_TOKEN under deploy.secrets, a
+#     token with Issues: write on every polled repo.
+#   ntfy.server: an ntfy server (https://ntfy.sh or your own) that gets one message per state, for a
+#     phone. The topic is the secret SATAT_NTFY_TOPIC under deploy.secrets: anyone who knows it can
+#     read and post (ADR 0019), so use a long random one.
+#   dashboard: Hatchet's dashboard as a browser reaches it (http://localhost:8888 for Compose); each
+#     notification then links to its run's page.
+notify:
+  github: false
+  ntfy:
+    server: ""
+  dashboard: ""
+
 # Where Satat is deployed and where each secret comes from. Every name a lane passes (pass_env) and
 # every secret the worker uses must be listed, so a missing one fails at load, not at the first
 # run. Values are references, never secrets: "op://..." is a 1Password item resolved when

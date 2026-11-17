@@ -461,3 +461,41 @@ func TestShippedLanesMarkWhichRunAnAgent(t *testing.T) {
 		}
 	}
 }
+
+func TestNotifyIsOffByDefault(t *testing.T) {
+	c, err := Parse(strings.NewReader(lane("")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Notify.GitHub || c.Notify.NtfyServer != "" || len(c.WorkerSecretNames()) != 2 {
+		t.Fatalf("notify = %+v, worker secrets %v", c.Notify, c.WorkerSecretNames())
+	}
+}
+
+func TestEachNotifyChannelNeedsItsSecret(t *testing.T) {
+	y := lane("") + "notify:\n  github: true\n  ntfy:\n    server: https://ntfy.sh/\n"
+	deploy := "deploy:\n  target: compose\n  secrets:\n    SATAT_GITHUB_TOKEN: env\n    SATAT_PUSH_TOKEN: env\n"
+	msg := parseErr(t, y+deploy)
+	if !strings.Contains(msg, NotifyTokenSecret) || !strings.Contains(msg, NtfyTopicSecret) {
+		t.Fatalf("error should name both notify secrets: %s", msg)
+	}
+	c, err := Parse(strings.NewReader(y + deploy + "    SATAT_NOTIFY_TOKEN: env\n    SATAT_NTFY_TOPIC: op://V/topic\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.Notify.NtfyServer != "https://ntfy.sh" || !c.Notify.GitHub {
+		t.Errorf("notify = %+v", c.Notify)
+	}
+	if got := strings.Join(c.SecretNames(), ","); got != "SATAT_GITHUB_TOKEN,SATAT_NOTIFY_TOKEN,SATAT_NTFY_TOPIC,SATAT_PUSH_TOKEN" {
+		t.Errorf("SecretNames = %s", got)
+	}
+}
+
+func TestNotifyRefusesABadServerAndLanesThatPassItsSecrets(t *testing.T) {
+	if msg := parseErr(t, lane("")+"notify:\n  ntfy:\n    server: ntfy.sh\n"); !strings.Contains(msg, "ntfy.server") {
+		t.Errorf("bad server: %s", msg)
+	}
+	if msg := parseErr(t, lane("    pass_env: [SATAT_NOTIFY_TOKEN]\n")); !strings.Contains(msg, "notifier") {
+		t.Errorf("lane passing the notify token: %s", msg)
+	}
+}

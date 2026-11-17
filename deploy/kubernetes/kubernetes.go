@@ -331,7 +331,7 @@ func (t *Target) applySecrets(ctx context.Context, cfg config.Config, secrets de
 			return err
 		}
 	}
-	data, err := pick(config.WorkerSecrets)
+	data, err := pick(cfg.WorkerSecretNames())
 	if err != nil {
 		return fmt.Errorf("worker: %w", err)
 	}

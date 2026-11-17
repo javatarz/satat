@@ -97,7 +97,8 @@ Only a repo listed under `poller.repos` in `satat.yaml` can run. The GitHub toke
 `gh` login, so the branch and the draft PR are yours. Each step's `out/` (result, transcript,
 bundle) is kept under `$TMPDIR/satat-local`. **Local mode is not a sandbox:** the agent runs as you
 with permissions bypassed, so use it only on repos you trust. Don't run it beside `just run`, or
-two workers will take the same queue.
+two workers will take the same queue. With `notify.ntfy.server` set, `just watch` in another shell
+alerts when no worker is running (`just up` starts it as the `watch` service).
 
 ## Docs
 

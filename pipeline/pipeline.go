@@ -13,14 +13,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"time"
 
 	"github.com/javatarz/satat/launcher"
+	"github.com/javatarz/satat/notify"
 	"github.com/javatarz/satat/pusher"
 	"github.com/javatarz/satat/runner"
 )
 
 // StepName is the name of the one step Run launches.
 const StepName = "claude"
+
+// AgentName is the coding agent the runner drives, as notifications name it.
+const AgentName = "Claude Code"
 
 // Publisher turns a finished step's commits into a pushed branch and a draft PR.
 // *pusher.Pusher is the real one.
@@ -42,6 +47,15 @@ type Options struct {
 
 	// Log, when set, gets one line per stage, so the worker's log shows where a run is.
 	Log *slog.Logger
+	// Notify, when set, gets an event per stage (#235).
+	Notify *notify.Safe
+}
+
+// note sends ev with the run's identity filled in.
+func (o Options) note(ctx context.Context, ev notify.Event) {
+	ev.Run, ev.Repo, ev.Issue, ev.Lane = o.Run, o.Repo, o.Issue.Number, o.Lane
+	ev.IssueTitle, ev.Agent, ev.Base = o.Issue.Title, AgentName, o.Base
+	o.Notify.Send(ctx, ev)
 }
 
 func (o Options) log(msg string, args ...any) {
@@ -75,12 +89,15 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	}
 	defer ck.Close()
 	o.log("cloned", "base_sha", ck.BaseSHA)
+	o.note(ctx, notify.Event{State: notify.Cloned, SHA: ck.BaseSHA})
 	// The commands are the base commit's, read by the worker. The step gets them as input.
 	input, err := json.Marshal(runner.Input{Repo: o.Repo, Base: o.Base, Issue: o.Issue, Commands: ck.Commands})
 	if err != nil {
 		return rep, err
 	}
 	o.log("step starting", "lane", o.Lane)
+	o.note(ctx, notify.Event{State: notify.StepStarted})
+	stepStart := time.Now()
 	rep.Launch, err = o.Launcher.Launch(ctx, launcher.Step{
 		Run: o.Run, Name: StepName, Lane: o.Lane, Input: input, Checkout: ck.Tar, CacheScope: launcher.CacheScope(o.Repo),
 	})
@@ -99,6 +116,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 		status = rep.Runner.Status
 	}
 	o.log("step finished", "exit_code", rep.Launch.ExitCode, "status", status, "timed_out", rep.Launch.TimedOut, "oom_killed", rep.Launch.OOMKilled, "cancelled", rep.Launch.Cancelled)
+	o.note(ctx, stepFinished(rep, time.Since(stepStart)))
 	if o.Pusher == nil || rep.Runner == nil || rep.Launch.ExitCode != 0 || rep.Runner.Status != "changes" {
 		return rep, nil
 	}
@@ -107,6 +125,7 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if rep.Runner.BaseSHA != ck.BaseSHA {
 		rep.PushErr = &pusher.Refusal{Reason: fmt.Sprintf("the step reports base %q but the worker cloned %q", rep.Runner.BaseSHA, ck.BaseSHA)}
 		o.log("not published", "err", rep.PushErr)
+		o.note(ctx, notify.Event{State: notify.NotPublished, Reason: rep.PushErr.Error(), Detail: rep.PushErr.Error()})
 		return rep, nil
 	}
 	out, err := o.Pusher.Push(ctx, pusher.Request{
@@ -118,11 +137,38 @@ func Run(ctx context.Context, o Options) (Report, error) {
 	if err != nil {
 		rep.PushErr = err
 		o.log("not published", "err", err)
+		o.note(ctx, notify.Event{State: notify.NotPublished, Reason: err.Error(), Detail: err.Error()})
 		return rep, nil
 	}
 	rep.Push = &out
 	o.log("published", "branch", out.Branch, "pr_url", out.PRURL, "reused", out.Reused)
+	pub := notify.Event{State: notify.Published, Branch: out.Branch, PRURL: out.PRURL, PRNumber: out.PRNumber, PRTitle: out.Title, Files: out.Files}
+	if out.Reused {
+		pub.Reason = "the PR already existed (a re-delivered step)"
+	}
+	o.note(ctx, pub)
 	return rep, nil
+}
+
+// stepFinished is the StepFinished event for a step that took took.
+func stepFinished(rep Report, took time.Duration) notify.Event {
+	ev := notify.Event{State: notify.StepFinished, Took: took, Outcome: "failed"}
+	l := rep.Launch
+	switch {
+	case l.TimedOut:
+		ev.Outcome = "timed_out"
+	case l.OOMKilled:
+		ev.Outcome = "out_of_memory"
+	case l.Cancelled:
+		ev.Outcome = "cancelled"
+	case rep.Runner != nil:
+		r := rep.Runner
+		ev.Outcome, ev.Commits, ev.Rehearsal, ev.Rehearsals, ev.Summary = r.Status, r.Commits, r.Rehearsal, r.RehearsalRuns, Summary(r)
+		if r.Status == "failed" {
+			ev.Reason, ev.Detail = r.Error, r.Error
+		}
+	}
+	return ev
 }
 
 // Summary is the agent's final message from the runner's result event.

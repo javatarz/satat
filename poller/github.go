@@ -98,6 +98,30 @@ func (g GitHub) OpenPRIssues(ctx context.Context, repo string) (map[int]bool, er
 	return set, err
 }
 
+// LabelledAt returns when label was last added to the issue, or the zero time if it never was.
+func (g GitHub) LabelledAt(ctx context.Context, repo string, number int, label string) (time.Time, error) {
+	var at time.Time
+	err := g.pages(ctx, fmt.Sprintf("/repos/%s/issues/%d/events", repo, number), url.Values{}, func(page json.RawMessage) (int, error) {
+		var evs []struct {
+			Event     string    `json:"event"`
+			CreatedAt time.Time `json:"created_at"`
+			Label     struct {
+				Name string `json:"name"`
+			} `json:"label"`
+		}
+		if err := json.Unmarshal(page, &evs); err != nil {
+			return 0, err
+		}
+		for _, e := range evs {
+			if e.Event == "labeled" && e.Label.Name == label && e.CreatedAt.After(at) {
+				at = e.CreatedAt
+			}
+		}
+		return len(evs), nil
+	})
+	return at, err
+}
+
 // pages GETs path page by page and hands each page to each, which returns how many items it
 // held. It stops at a short page. A full page at maxPages is an error: an incomplete list of open
 // PRs would let an issue with a PR be queued, and an incomplete list of issues hides some.
