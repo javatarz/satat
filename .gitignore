@@ -4,6 +4,7 @@
 terraform.tfvars
 secrets.*
 !secrets.example.env
+!secrets/secrets.go
 *.pem
 
 # IDE
