@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"net/netip"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -18,6 +19,7 @@ import (
 	"github.com/moby/moby/client"
 
 	"github.com/javatarz/satat/config"
+	"github.com/javatarz/satat/deploy"
 	"github.com/javatarz/satat/launcher"
 )
 
@@ -58,22 +60,27 @@ type knownGap struct {
 }
 
 // probeScript is the "arbitrary process" the step runs. It prints one tagged line per
-// observation; analyze turns them into findings. Positional arguments: $1 is an address on a
-// network standing in for the secret store's `secrets` network, $2 one standing in for the
-// Docker API network. Neither network is the step's own, so neither must be reachable.
+// observation; analyze turns them into findings. Positional arguments: $1 is the address of a
+// running OpenBao on a network laid out like the secret store's `secrets` network (also named
+// openbao there), $2 one standing in for the Docker API network. Neither network is the step's
+// own, so neither must be reachable. /run/satat/cred is where the worker has its store credential.
 const probeScript = `
 for f in /proc/[0-9]*/environ; do tr '\0' '\n' < "$f" 2>/dev/null; done | sed 's/^/ENV /'
 env | sed 's/^/ENV /'
 for p in /var/run/docker.sock /run/docker.sock /run/secrets /var/run/secrets /root/.docker /root/.config/gh \
-	/root/.git-credentials /root/.netrc "$HOME/.netrc" "$HOME/.git-credentials" "$HOME/.config/gh" "$HOME/.docker"; do
+	/root/.git-credentials /root/.netrc "$HOME/.netrc" "$HOME/.git-credentials" "$HOME/.config/gh" "$HOME/.docker" \
+	/run/satat/cred "$HOME/.vault-token" /root/.vault-token; do
 	[ -e "$p" ] && echo "FILE $p"
 done
+find / \( -path /proc -o -path /sys \) -prune -o \( -name role_id -o -name secret_id \) -print 2>/dev/null | sed 's/^/FILE /'
 grep -rIlE "$PATTERN" /etc/satat /workspace /tmp /home /root /run /var/run /cache 2>/dev/null | sed 's/^/FILEHIT /'
 sed 's/^/MOUNT /' /proc/self/mountinfo
 gw=$(ip route 2>/dev/null | awk '/^default/{print $3; exit}')
 echo "GATEWAY ${gw:-none}"
 reach() { nc -w 2 "$2" "$3" </dev/null >/dev/null 2>&1 && echo "REACH $1 $2:$3"; }
 reach secrets-network "$1" 8200
+reach secrets-name openbao 8200
+nslookup openbao >/dev/null 2>&1 && echo "REACH dns openbao"
 reach docker-api-network "$2" 2375
 reach external-host 1.1.1.1 443
 if [ -n "$gw" ]; then reach host-gateway "$gw" 2375; reach host-gateway "$gw" 2376; reach host-gateway "$gw" 8200; fi
@@ -91,6 +98,11 @@ var (
 	credentialNameRE = regexp.MustCompile(`(?i)(TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|API_?KEY|PRIVATE_?KEY)|^(DOCKER_HOST|VAULT_.*|BAO_.*|OPENBAO_.*|AWS_.*|GH_.*|GITHUB_.*)$`)
 )
 
+// stepEnv are the names every step's environment holds besides its lane's pass_env and
+// optional_env: the launcher's own (HOME and SATAT_*), the image's PATH, Docker's HOSTNAME and the
+// probe shell's PWD and SHLVL. Each holds a fixed, non-secret value.
+var stepEnv = []string{"HOME", "SATAT_RUN", "SATAT_STEP", "SATAT_INPUT", "SATAT_OUTPUT", "PATH", "HOSTNAME", "PWD", "SHLVL"}
+
 // allowedMountTargets are the only places a step's filesystem is assembled from, besides the
 // kernel's own /proc, /dev and /sys and the lane's declared /cache paths.
 var allowedMountTargets = map[string]bool{
@@ -101,15 +113,22 @@ var allowedMountTargets = map[string]bool{
 
 // analyze reads the probe's output and returns the sorted, de-duplicated findings. sentinels are
 // values the test planted in the worker's environment: seeing one in the step is a leak whatever
-// the variable is called. It never returns a credential's value.
-func analyze(out string, sentinels []string) []string {
+// the variable is called. env is the lane's pass_env and optional_env: any other name, besides
+// stepEnv, is a finding even with a harmless value. It never returns a credential's value.
+func analyze(out string, sentinels, env []string) []string {
 	found := map[string]bool{}
 	for _, line := range strings.Split(out, "\n") {
 		tag, rest, _ := strings.Cut(strings.TrimRight(line, "\r"), " ")
 		switch tag {
 		case "ENV":
 			name, value, ok := strings.Cut(rest, "=")
-			if !ok || value == "" {
+			if !ok {
+				continue
+			}
+			if !contains(stepEnv, name) && !contains(env, name) {
+				found["env "+name+" (not in pass_env)"] = true
+			}
+			if value == "" {
 				continue
 			}
 			if credentialNameRE.MatchString(name) || credentialValueRE.MatchString(value) || containsAny(value, sentinels) {
@@ -181,7 +200,9 @@ func TestAnalyzeFlagsEveryKindOfLeak(t *testing.T) {
 		"ENV RENAMED=planted-value-1234",
 		"ENV EMPTY_TOKEN=",
 		"ENV DOCKER_HOST=tcp://docker-proxy:2375",
+		"ENV EXTRA=harmless",
 		"FILE /var/run/docker.sock",
+		"FILE /run/satat/cred",
 		"FILEHIT /workspace/.netrc",
 		"MOUNT 1 2 0:1 / /workspace rw - tmpfs tmpfs rw",
 		"MOUNT 1 2 0:1 / /proc/bus ro - proc proc rw",
@@ -190,19 +211,22 @@ func TestAnalyzeFlagsEveryKindOfLeak(t *testing.T) {
 		"MOUNT 1 2 0:1 /docker.sock /x rw - ext4 /dev/vda rw",
 		"GATEWAY 172.18.0.1",
 		"REACH secrets-network 172.19.0.2:8200",
+		"REACH dns openbao",
 		"garbage line",
 	}, "\n")
 	want := []string{
-		"env CLAUDE_CODE_OAUTH_TOKEN", "env DOCKER_HOST", "env INNOCENT_NAME", "env RENAMED",
-		"file /var/run/docker.sock", "file with a credential: /workspace/.netrc",
+		"env CLAUDE_CODE_OAUTH_TOKEN", "env DOCKER_HOST", "env EMPTY_TOKEN (not in pass_env)",
+		"env EXTRA (not in pass_env)", "env INNOCENT_NAME", "env RENAMED",
+		"file /run/satat/cred", "file /var/run/docker.sock", "file with a credential: /workspace/.netrc",
 		"mount /openbao-creds (not a mount the launcher defines)", "mount /x (Docker socket)",
-		"reach secrets-network 172.19.0.2:8200", "route: default route (open egress)",
+		"reach dns openbao", "reach secrets-network 172.19.0.2:8200", "route: default route (open egress)",
 	}
-	got := analyze(out, []string{"planted-value-1234"})
+	passed := []string{"SATAT_GIT_NAME", "CLAUDE_CODE_OAUTH_TOKEN", "INNOCENT_NAME", "RENAMED", "DOCKER_HOST"}
+	got := analyze(out, []string{"planted-value-1234"}, passed)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("findings\n got: %q\nwant: %q", got, want)
 	}
-	if clean := analyze("ENV PATH=/usr/bin\nENV HOME=/workspace\nGATEWAY none\nMOUNT 1 2 0:1 / /etc/satat rw - ext4 v rw", nil); len(clean) != 0 {
+	if clean := analyze("ENV PATH=/usr/bin\nENV HOME=/workspace\nGATEWAY none\nMOUNT 1 2 0:1 / /etc/satat rw - ext4 v rw", nil, nil); len(clean) != 0 {
 		t.Errorf("a clean step produced findings: %q", clean)
 	}
 }
@@ -287,7 +311,7 @@ func newHarness(t *testing.T, api *client.Client) *harness {
 		"SATAT_GIT_EMAIL": "satat@example.invalid",
 	}}
 	sweepDecoys(api)
-	h.secretsIP = decoy(t, api, "secrets", 8200)
+	h.secretsIP = secretStore(t, api)
 	h.dockerIP = decoy(t, api, "docker-api", 2375)
 
 	// Every credential the worker holds or will hold, as a fake the test made up. Built at run
@@ -328,7 +352,7 @@ func (h *harness) probe(t *testing.T, lane launcher.Lane) []string {
 	if !strings.Contains(out, "GATEWAY ") || !strings.Contains(out, "MOUNT ") {
 		t.Fatalf("probe did not run to the end; the test would prove nothing:\n%s", redact(out, h.sentinels))
 	}
-	return analyze(out, h.sentinels)
+	return analyze(out, h.sentinels, append(append([]string{}, lane.PassEnv...), lane.OptionalEnv...))
 }
 
 func (h *harness) checkoutTar() io.Reader {
@@ -345,27 +369,67 @@ func redact(s string, secrets []string) string {
 	return s
 }
 
-// decoy starts a listener on its own network and returns its address: a stand-in for a service
-// that lives on a network the step must not be on (the secret store's, the Docker API's). It is
-// not labelled satat.managed, so the launcher's reaper leaves it alone; the test removes it.
-func decoy(t *testing.T, api *client.Client, name string, port int) string {
+var decoyLabels = map[string]string{"satat.test": "exposure"}
+
+// Where the test's OpenBao listens: compose.yaml's layout (an internal network, a /24 under
+// 10.157.0.0/16, the store named openbao) in its own subnet, so a running Satat stack, which holds
+// 10.157.0.0/24, is left alone. TestSecretStore in deploy/compose uses 10.157.1.0/24.
+var (
+	storeSubnet = netip.MustParsePrefix("10.157.2.0/24")
+	storeAddr   = netip.MustParseAddr("10.157.2.2")
+)
+
+// secretStore starts a real OpenBao (the image compose.yaml runs, in dev mode) on a network laid
+// out like the store's, reachable as openbao and at storeAddr, and returns that address.
+func secretStore(t *testing.T, api *client.Client) string {
 	t.Helper()
 	ctx := context.Background()
-	labels := map[string]string{"satat.test": "exposure"}
+	netName := "satat-test-secrets-" + randHex(4)
+	_, err := api.NetworkCreate(ctx, netName, client.NetworkCreateOptions{
+		Driver: "bridge", Internal: true, Labels: decoyLabels,
+		IPAM: &network.IPAM{Config: []network.IPAMConfig{{Subnet: storeSubnet}}},
+	})
+	if err != nil {
+		t.Fatalf("create the store's network: %v", err)
+	}
+	t.Cleanup(func() { _, _ = api.NetworkRemove(context.Background(), netName, client.NetworkRemoveOptions{}) })
+	if _, err := api.ImageInspect(ctx, deploy.OpenBaoImage); err != nil {
+		pull, err := api.ImagePull(ctx, deploy.OpenBaoImage, client.ImagePullOptions{})
+		if err != nil {
+			t.Fatalf("pull %s: %v", deploy.OpenBaoImage, err)
+		}
+		if err := pull.Wait(ctx); err != nil {
+			t.Fatalf("pull %s: %v", deploy.OpenBaoImage, err)
+		}
+	}
+	return serve(t, api, netName, 8200,
+		&container.Config{Image: deploy.OpenBaoImage, Cmd: []string{"server", "-dev"}, Labels: decoyLabels},
+		&network.EndpointSettings{Aliases: []string{"openbao"}, IPAMConfig: &network.EndpointIPAMConfig{IPv4Address: storeAddr}})
+}
+
+// decoy starts a listener on its own network and returns its address: a stand-in for a service
+// that lives on a network the step must not be on (the Docker API's). It is not labelled
+// satat.managed, so the launcher's reaper leaves it alone; the test removes it.
+func decoy(t *testing.T, api *client.Client, name string, port int) string {
+	t.Helper()
 	netName := "satat-test-" + name + "-" + randHex(4)
-	if _, err := api.NetworkCreate(ctx, netName, client.NetworkCreateOptions{Driver: "bridge", Labels: labels}); err != nil {
+	if _, err := api.NetworkCreate(context.Background(), netName, client.NetworkCreateOptions{Driver: "bridge", Labels: decoyLabels}); err != nil {
 		t.Fatalf("create decoy network: %v", err)
 	}
 	t.Cleanup(func() { _, _ = api.NetworkRemove(context.Background(), netName, client.NetworkRemoveOptions{}) })
+	cfg := &container.Config{Image: pinned, Cmd: []string{"nc", "-lk", "-p", fmt.Sprint(port), "-e", "echo", "ok"}, Labels: decoyLabels}
+	return serve(t, api, netName, port, cfg, &network.EndpointSettings{})
+}
 
+// serve starts a container on netName that listens on port, checks it is reachable there, and
+// returns its address.
+func serve(t *testing.T, api *client.Client, netName string, port int, cfg *container.Config, ep *network.EndpointSettings) string {
+	t.Helper()
+	ctx := context.Background()
 	c, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
-		Config: &container.Config{
-			Image:  pinned,
-			Cmd:    []string{"nc", "-lk", "-p", fmt.Sprint(port), "-e", "echo", "ok"},
-			Labels: labels,
-		},
+		Config:           cfg,
 		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName)},
-		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}},
+		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: ep}},
 	})
 	if err != nil {
 		t.Fatalf("create decoy: %v", err)
@@ -380,19 +444,19 @@ func decoy(t *testing.T, api *client.Client, name string, port int) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	ep := info.Container.NetworkSettings.Networks[netName]
-	if ep == nil || !ep.IPAddress.IsValid() {
+	got := info.Container.NetworkSettings.Networks[netName]
+	if got == nil || !got.IPAddress.IsValid() {
 		t.Fatalf("decoy has no address on %s", netName)
 	}
-	ip := ep.IPAddress.String()
+	ip := got.IPAddress.String()
 
 	// Control: a container on the decoy's own network does reach it, so a step that cannot is
 	// kept out by the network and not by a dead listener.
 	ctl, err := api.ContainerCreate(ctx, client.ContainerCreateOptions{
 		Config: &container.Config{
 			Image:  pinned,
-			Cmd:    []string{"sh", "-c", fmt.Sprintf("for i in 1 2 3 4 5; do nc -w 2 %s %d </dev/null && exit 0; sleep 1; done; exit 1", ip, port)},
-			Labels: labels,
+			Cmd:    []string{"sh", "-c", fmt.Sprintf("for i in $(seq 10); do nc -w 2 %s %d </dev/null && exit 0; sleep 1; done; exit 1", ip, port)},
+			Labels: decoyLabels,
 		},
 		HostConfig:       &container.HostConfig{NetworkMode: container.NetworkMode(netName)},
 		NetworkingConfig: &network.NetworkingConfig{EndpointsConfig: map[string]*network.EndpointSettings{netName: {}}},
