@@ -53,3 +53,18 @@ jobs:
           SATAT_PUSH_TOKEN: unused
           POSTGRES_PASSWORD: unused
         run: docker compose build worker
+
+  # The whole stack on the runner's Docker, driven through the satat CLI (e2e/, #224). Its own job:
+  # it needs a Docker daemon with no other Satat containers, and runs alongside the tests above.
+  e2e:
+    name: end-to-end
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e  # v7
+        with:
+          go-version-file: go.mod
+
+      - run: go test -tags e2e -count=1 -timeout 25m -v ./e2e/

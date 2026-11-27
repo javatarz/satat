@@ -31,6 +31,7 @@ just doctor   # check this machine can run Satat; names what is missing
 just run      # bring the platform up on Docker Compose
 just lint     # what CI runs: pre-commit, gofmt, go vet and the Docker socket check
 just test     # Go tests (needs Docker); just test-short skips the container tests
+just e2e      # bring a throwaway stack up, run it end to end, take it down
 just build    # build the Go binaries; just build-images builds the images
 ```
 
